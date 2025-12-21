@@ -2,6 +2,14 @@
   <v-container fluid>
     <h1 class="text-h4 mb-4">Market</h1>
 
+    <!-- Invoice Tabs Bar -->
+    <InvoiceTabsBar
+      :partners="tradingPartners"
+      :show-create-button="true"
+      @invoice-selected="onInvoiceSelected"
+      @invoice-deleted="onInvoiceDeleted"
+    />
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000">
       {{ snackbar.message }}
     </v-snackbar>
@@ -670,6 +678,11 @@
       @updated="loadMarketItems"
       @edit="onEditFromDetail"
     />
+
+    <!-- Invoice Summary Panel (slides in from right) -->
+    <v-navigation-drawer v-model="showInvoicePanel" location="right" temporary width="350">
+      <InvoiceSummaryPanel @invoice-submitted="onInvoiceSubmitted" />
+    </v-navigation-drawer>
   </v-container>
 </template>
 
@@ -703,11 +716,15 @@ import OrderTypeChip from '../components/OrderTypeChip.vue'
 import PricingModeChip from '../components/PricingModeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
+import InvoiceTabsBar from '../components/invoices/InvoiceTabsBar.vue'
+import InvoiceSummaryPanel from '../components/invoices/InvoiceSummaryPanel.vue'
 import { localizeMaterialCategory } from '../utils/materials'
 import { locationService } from '../services/locationService'
 import type { CommodityCategory } from '@kawakawa/types'
+import { useInvoicesStore } from '../stores/invoices'
 
 const userStore = useUserStore()
+const invoicesStore = useInvoicesStore()
 const settingsStore = useSettingsStore()
 const { snackbar, showSnackbar } = useSnackbar()
 const { getLocationDisplay, getCommodityDisplay, getCommodityCategory, getCommodityName } =
@@ -964,6 +981,63 @@ const userOptions = computed(() => {
   const users = new Set(marketItems.value.map(l => l.userName))
   return Array.from(users).sort()
 })
+
+// Trading partners for invoice creation (unique users from market items, excluding current user)
+// Note: We use userName since MarketItem doesn't include userId, and isOwn to filter current user
+const tradingPartners = computed(() => {
+  const uniqueUsers = new Map<string, { id: number; displayName: string }>()
+
+  // We need to track by userName since that's what MarketItem has
+  // The "id" here is just for the interface - we'll use the counterparty lookup in the API
+  let pseudoId = 1
+  for (const item of marketItems.value) {
+    if (!item.isOwn && !uniqueUsers.has(item.userName)) {
+      uniqueUsers.set(item.userName, {
+        id: pseudoId++, // Placeholder - actual userId comes from API
+        displayName: item.userName,
+      })
+    }
+  }
+
+  return Array.from(uniqueUsers.values()).sort((a, b) => a.displayName.localeCompare(b.displayName))
+})
+
+// Invoice-related event handlers
+const onInvoiceSelected = async (invoiceId: number | null) => {
+  if (invoiceId !== null) {
+    // When an invoice is selected, filter market to show only that partner's orders
+    const counterpartyName = invoicesStore.activeCounterpartyName.value
+    if (counterpartyName) {
+      filters.value.userName = counterpartyName
+    }
+  } else {
+    // When "All" is selected, clear the user filter if it was set by invoice
+    if (invoicesStore.activeInvoice.value === null) {
+      filters.value.userName = null
+    }
+  }
+}
+
+const onInvoiceDeleted = (_invoiceId: number) => {
+  // Clear user filter when invoice is deleted
+  filters.value.userName = null
+}
+
+// Invoice summary panel visibility - show when an active invoice is selected
+const showInvoicePanel = computed({
+  get: () => invoicesStore.hasActiveInvoice.value,
+  set: (value: boolean) => {
+    if (!value) {
+      invoicesStore.clearActiveInvoice()
+      filters.value.userName = null
+    }
+  },
+})
+
+const onInvoiceSubmitted = (_invoiceId: number) => {
+  showSnackbar('Invoice submitted successfully!', 'success')
+  loadMarketItems()
+}
 
 // XIT state for quantity requirements highlighting
 const xitQuantities = ref<XitMaterials | null>(null)

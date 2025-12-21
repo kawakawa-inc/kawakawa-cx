@@ -7,14 +7,29 @@
  * - Space-separated tokens: "COF Katoa 1500"
  * - Limit modifiers: "reserve:1000", "r:1000", "max:500", "m:500"
  * - Bare numbers (context-dependent)
+ * - User detection for invoice mode:
+ *   - Discord mentions: <@123456789>
+ *   - Explicit prefix: user:alice
+ *   - Auto-detect: username, displayName, or FIO username
  */
 
 import { resolveCommodity, resolveLocation } from '../services/display.js'
+import { findUserByName } from '../services/invoiceService.js'
 
 /**
  * Limit mode for sell orders
  */
 export type LimitMode = 'none' | 'max_sell' | 'reserve'
+
+/**
+ * Resolved user information
+ */
+export interface ResolvedUser {
+  userId: number
+  username: string
+  displayName: string | null
+  fioUsername: string | null
+}
 
 /**
  * Parsed order input result
@@ -30,6 +45,8 @@ export interface ParsedOrderInput {
   limitMode: LimitMode
   /** Limit quantity when limitMode is not 'none' */
   limitQuantity: number | null
+  /** Resolved counterparty user for invoice mode (null = order mode) */
+  counterpartyUser: ResolvedUser | null
   /** Tokens that couldn't be resolved */
   unresolvedTokens: string[]
   /** Resolved commodity info (for display) */
@@ -48,6 +65,33 @@ export interface ParseOptions {
   forBuy?: boolean
   /** Parse for delete (no numeric processing) */
   forDelete?: boolean
+}
+
+/**
+ * Discord user mention regex pattern
+ * Matches <@123456789> or <@!123456789> (nickname mentions)
+ */
+const DISCORD_MENTION_REGEX = /^<@!?(\d+)>$/
+
+/**
+ * Check if a token is a Discord mention
+ */
+function isDiscordMention(token: string): boolean {
+  return DISCORD_MENTION_REGEX.test(token)
+}
+
+/**
+ * Check if a token has user: prefix
+ */
+function hasUserPrefix(token: string): boolean {
+  return token.toLowerCase().startsWith('user:')
+}
+
+/**
+ * Extract username from user: prefix
+ */
+function extractUserPrefix(token: string): string {
+  return token.slice('user:'.length)
 }
 
 /**
@@ -118,6 +162,7 @@ export async function parseOrderInput(
     quantity: null,
     limitMode: 'none',
     limitQuantity: null,
+    counterpartyUser: null,
     unresolvedTokens: [],
     resolvedCommodities: [],
     resolvedLocation: null,
@@ -190,13 +235,36 @@ export async function parseOrderInput(
       continue
     }
 
-    // Collect as potential location token
+    // Check for Discord mention (user detection for invoice mode)
+    if (isDiscordMention(token) && !result.counterpartyUser) {
+      // Discord mentions don't have username info directly
+      // We need to look up by Discord ID which requires the users table
+      // For now, skip and let it fall through to location/auto-detect
+      // In the actual command, the Discord ID will be resolved separately
+      continue
+    }
+
+    // Check for explicit user: prefix
+    if (hasUserPrefix(token) && !result.counterpartyUser) {
+      const username = extractUserPrefix(token)
+      const user = await findUserByName(username)
+      if (user) {
+        result.counterpartyUser = user
+        continue
+      }
+      // User not found - add to unresolved
+      result.unresolvedTokens.push(token)
+      continue
+    }
+
+    // Collect as potential location/user token
     potentialLocationTokens.push({ index: i, token })
   }
 
   // Try to resolve location from potential tokens (supports multi-word locations)
   if (potentialLocationTokens.length > 0) {
     const tokens = potentialLocationTokens.map(t => t.token)
+    let remainingTokens: string[] = []
 
     // Try progressively longer combinations starting from the first token
     for (let len = tokens.length; len > 0; len--) {
@@ -205,15 +273,28 @@ export async function parseOrderInput(
       if (location) {
         result.location = location.naturalId
         result.resolvedLocation = location
-        // Remaining tokens are unresolved
-        result.unresolvedTokens.push(...tokens.slice(len))
+        // Remaining tokens may be user or unresolved
+        remainingTokens = tokens.slice(len)
         break
       }
     }
 
-    // If no location found, all are unresolved
+    // If no location found, all tokens are candidates for user or unresolved
     if (!result.location) {
-      result.unresolvedTokens.push(...tokens)
+      remainingTokens = tokens
+    }
+
+    // Try to resolve remaining tokens as user (if no counterparty yet)
+    for (const token of remainingTokens) {
+      if (!result.counterpartyUser) {
+        const user = await findUserByName(token)
+        if (user) {
+          result.counterpartyUser = user
+          continue
+        }
+      }
+      // Token is truly unresolved
+      result.unresolvedTokens.push(token)
     }
   }
 
@@ -258,6 +339,8 @@ export interface ParsedMultiOrderInput {
   location: string | null
   /** Resolved location info (for display) */
   resolvedLocation: { naturalId: string; name: string; type: string } | null
+  /** Resolved counterparty user for invoice mode (null = order mode) */
+  counterpartyUser: ResolvedUser | null
   /** Tokens that couldn't be resolved */
   unresolvedTokens: string[]
   /** Whether the input was parsed as multi-ticker format */
@@ -300,6 +383,7 @@ export async function parseMultiOrderInput(input: string): Promise<ParsedMultiOr
     orders: [],
     location: null,
     resolvedLocation: null,
+    counterpartyUser: null,
     unresolvedTokens: [],
     isMultiFormat: false,
   }

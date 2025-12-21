@@ -13,6 +13,8 @@ import { query } from './market/query.js'
 import { reserve } from './market/reserve.js'
 import { fill } from './market/fill.js'
 import { reservations } from './market/reservations.js'
+import { invoicesCommand } from './market/invoices.js'
+import { close } from './market/close.js'
 // Inventory commands
 import { inventory } from './inventory/inventory.js'
 import { sync } from './inventory/sync.js'
@@ -42,6 +44,8 @@ export const commands: Command[] = [
   reserve,
   fill,
   reservations,
+  invoicesCommand,
+  close,
   // Inventory
   inventory,
   sync,

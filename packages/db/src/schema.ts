@@ -57,6 +57,13 @@ export const reservationStatusEnum = pgEnum('reservation_status', [
   'cancelled',
 ])
 
+export const invoiceStatusEnum = pgEnum('invoice_status', [
+  'draft', // Open invoice being accumulated
+  'submitted', // All reservations created, awaiting confirmations
+  'completed', // All reservations fulfilled
+  'cancelled', // Invoice cancelled
+])
+
 // ==================== PRICING SYSTEM ENUMS ====================
 export const priceSourceEnum = pgEnum('price_source', [
   'manual',
@@ -418,6 +425,70 @@ export const orderReservations = pgTable(
   })
 )
 
+// ==================== INVOICES (Container for grouped reservations between two parties) ====================
+// An invoice groups multiple line items (reservations) between two users
+// Status: draft (accumulating), submitted (reservations created), completed, cancelled
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    counterpartyUserId: integer('counterparty_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: invoiceStatusEnum('status').notNull().default('draft'),
+    name: varchar('name', { length: 100 }), // Optional custom name, defaults to counterparty display name
+    notes: text('notes'),
+    submittedAt: timestamp('submitted_at'), // When invoice was submitted
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('invoices_user_idx').on(table.userId),
+    counterpartyIdx: index('invoices_counterparty_idx').on(table.counterpartyUserId),
+    statusIdx: index('invoices_status_idx').on(table.status),
+  })
+)
+
+// ==================== INVOICE LINE ITEMS (Individual items within an invoice) ====================
+// Each line item represents a buy or sell action within the invoice
+// Before submission: stores intent (which order to reserve from / fill)
+// After submission: links to the created reservation
+export const invoiceLineItems = pgTable(
+  'invoice_line_items',
+  {
+    id: serial('id').primaryKey(),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    // Order reference - one of these is set to indicate intent
+    sellOrderId: integer('sell_order_id').references(() => sellOrders.id, { onDelete: 'set null' }),
+    buyOrderId: integer('buy_order_id').references(() => buyOrders.id, { onDelete: 'set null' }),
+    // After submission, links to created reservation
+    reservationId: integer('reservation_id').references(() => orderReservations.id, {
+      onDelete: 'set null',
+    }),
+    // Snapshot of order details at time of adding (for display and audit)
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    quantity: integer('quantity').notNull(),
+    unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull(),
+    currency: currencyEnum('currency').notNull(),
+    priceListCode: varchar('price_list_code', { length: 20 }), // null = custom price
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    invoiceIdx: index('invoice_line_items_invoice_idx').on(table.invoiceId),
+    sellOrderIdx: index('invoice_line_items_sell_order_idx').on(table.sellOrderId),
+    buyOrderIdx: index('invoice_line_items_buy_order_idx').on(table.buyOrderId),
+    reservationIdx: index('invoice_line_items_reservation_idx').on(table.reservationId),
+  })
+)
+
 // ==================== PRICE LISTS (Exchange definitions - CI1, KAWA, etc.) ====================
 // Defines available price lists/exchanges and their properties
 export const priceLists = pgTable('price_lists', {
@@ -540,6 +611,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   buyOrders: many(buyOrders),
   notifications: many(notifications),
   reservations: many(orderReservations), // Reservations where user is the counterparty
+  invoices: many(invoices), // Invoices created by this user
   discordProfile: one(userDiscordProfiles, {
     fields: [users.id],
     references: [userDiscordProfiles.userId],
@@ -707,6 +779,39 @@ export const orderReservationsRelations = relations(orderReservations, ({ one })
   counterpartyUser: one(users, {
     fields: [orderReservations.counterpartyUserId],
     references: [users.id],
+  }),
+}))
+
+// ==================== INVOICE RELATIONS ====================
+
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  user: one(users, {
+    fields: [invoices.userId],
+    references: [users.id],
+  }),
+  counterparty: one(users, {
+    fields: [invoices.counterpartyUserId],
+    references: [users.id],
+  }),
+  lineItems: many(invoiceLineItems),
+}))
+
+export const invoiceLineItemsRelations = relations(invoiceLineItems, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [invoiceLineItems.invoiceId],
+    references: [invoices.id],
+  }),
+  sellOrder: one(sellOrders, {
+    fields: [invoiceLineItems.sellOrderId],
+    references: [sellOrders.id],
+  }),
+  buyOrder: one(buyOrders, {
+    fields: [invoiceLineItems.buyOrderId],
+    references: [buyOrders.id],
+  }),
+  reservation: one(orderReservations, {
+    fields: [invoiceLineItems.reservationId],
+    references: [orderReservations.id],
   }),
 }))
 

@@ -28,6 +28,14 @@ import type {
   UpdateGlobalDefaultsRequest,
   ChannelConfigMap,
   UpdateChannelConfigRequest,
+  InvoiceStatus,
+  InvoiceSummary,
+  Invoice,
+  InvoiceLineItem,
+  CreateInvoiceRequest,
+  AddLineItemRequest,
+  UpdateLineItemRequest,
+  SubmitInvoiceResponse,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -3726,6 +3734,284 @@ const realApi = {
 
     return response.json()
   },
+
+  // Invoice methods
+  getInvoices: async (
+    status?: 'draft' | 'submitted' | 'completed' | 'cancelled'
+  ): Promise<InvoiceSummary[]> => {
+    const params = new URLSearchParams()
+    if (status) params.append('status', status)
+    const url = `/api/invoices${params.toString() ? `?${params}` : ''}`
+
+    const response = await fetchWithLogging(url, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      throw new Error(`Failed to get invoices: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getInvoice: async (id: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      throw new Error(`Failed to get invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getOrCreateInvoiceForPartner: async (counterpartyUserId: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/for-partner/${counterpartyUserId}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 404) {
+        throw new Error('User not found')
+      }
+      throw new Error(`Failed to get or create invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createInvoice: async (request: CreateInvoiceRequest): Promise<Invoice> => {
+    const response = await fetchWithLogging('/api/invoices', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 404) {
+        throw new Error('Counterparty user not found')
+      }
+      throw new Error(`Failed to create invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateInvoice: async (
+    id: number,
+    request: { name?: string; notes?: string }
+  ): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be updated')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to update invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteInvoice: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be deleted')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to delete invoice: ${response.statusText}`)
+    }
+  },
+
+  addInvoiceLineItem: async (
+    invoiceId: number,
+    request: AddLineItemRequest
+  ): Promise<InvoiceLineItem> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or order not found')
+      }
+      throw new Error(`Failed to add line item: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateInvoiceLineItem: async (
+    invoiceId: number,
+    itemId: number,
+    request: UpdateLineItemRequest
+  ): Promise<InvoiceLineItem> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or line item not found')
+      }
+      throw new Error(`Failed to update line item: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  removeInvoiceLineItem: async (invoiceId: number, itemId: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Can only remove items from draft invoices')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or line item not found')
+      }
+      throw new Error(`Failed to remove line item: ${response.statusText}`)
+    }
+  },
+
+  submitInvoice: async (id: number): Promise<SubmitInvoiceResponse> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}/submit`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be submitted')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to submit invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  cancelInvoice: async (id: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only submitted invoices can be cancelled')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to cancel invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
 }
 
 // Types for KAWA sheet preview and sync
@@ -3875,6 +4161,24 @@ export const api = {
       realApi.reopenReservation(id, request),
     delete: (id: number) => realApi.deleteReservation(id),
   },
+  invoices: {
+    list: (status?: InvoiceStatus) => realApi.getInvoices(status),
+    get: (id: number) => realApi.getInvoice(id),
+    getOrCreateForPartner: (counterpartyUserId: number) =>
+      realApi.getOrCreateInvoiceForPartner(counterpartyUserId),
+    create: (request: CreateInvoiceRequest) => realApi.createInvoice(request),
+    update: (id: number, request: { name?: string; notes?: string }) =>
+      realApi.updateInvoice(id, request),
+    delete: (id: number) => realApi.deleteInvoice(id),
+    addLineItem: (invoiceId: number, request: AddLineItemRequest) =>
+      realApi.addInvoiceLineItem(invoiceId, request),
+    updateLineItem: (invoiceId: number, itemId: number, request: UpdateLineItemRequest) =>
+      realApi.updateInvoiceLineItem(invoiceId, itemId, request),
+    removeLineItem: (invoiceId: number, itemId: number) =>
+      realApi.removeInvoiceLineItem(invoiceId, itemId),
+    submit: (id: number) => realApi.submitInvoice(id),
+    cancel: (id: number) => realApi.cancelInvoice(id),
+  },
   locations: {
     getDistance: (from: string, to: string) => realApi.getLocationDistance(from, to),
   },
@@ -3971,6 +4275,15 @@ export type {
   CreateSellOrderReservationRequest,
   CreateBuyOrderReservationRequest,
   UpdateReservationStatusRequest,
+  // Invoice types
+  InvoiceStatus,
+  InvoiceSummary,
+  Invoice,
+  InvoiceLineItem,
+  CreateInvoiceRequest,
+  AddLineItemRequest,
+  UpdateLineItemRequest,
+  SubmitInvoiceResponse,
   // Price types
   PriceSource,
   PriceListResponse,

@@ -6,12 +6,13 @@
  * - Space-separated input: /sell H Stella 1500
  * - Limit modifiers: reserve:X, max:X
  * - Auto-pricing from user's default price list
+ * - Invoice mode (with user detection): /sell COF 100 @bob BEN
  */
 import { SlashCommandBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
-import { db, sellOrders, priceLists } from '@kawakawa/db'
-import { eq } from 'drizzle-orm'
+import { db, sellOrders, priceLists, buyOrders } from '@kawakawa/db'
+import { eq, and } from 'drizzle-orm'
 import { searchLocations } from '../../autocomplete/index.js'
 import { formatCommodity, formatLocation, resolveLocation } from '../../services/display.js'
 import { getMarketSettings, getDisplaySettings } from '../../services/userSettings.js'
@@ -26,8 +27,16 @@ import {
   parseSmartOrderInput,
   formatLimitMode,
   type LimitMode,
+  type ResolvedUser,
 } from '../../utils/orderInputParser.js'
 import { calculateEffectivePriceWithFallback } from '@kawakawa/services/market'
+import { getOrderDisplayPrice } from '@kawakawa/services/market'
+import type { LocationDisplayMode } from '@kawakawa/types'
+import {
+  getOrCreateInvoice,
+  addLineItems,
+  type InvoiceLineItemInput,
+} from '../../services/invoiceService.js'
 import logger from '../../utils/logger.js'
 
 export const sell: Command = {
@@ -166,6 +175,27 @@ export const sell: Command = {
       return
     }
 
+    // Check for invoice mode (counterparty user detected)
+    const counterpartyUser: ResolvedUser | null = isMultiFormat
+      ? parsed.multi!.counterpartyUser
+      : parsed.single!.counterpartyUser
+
+    if (counterpartyUser) {
+      // INVOICE MODE: Sell to counterparty's buy orders
+      await handleInvoiceMode(
+        interaction,
+        userId,
+        counterpartyUser,
+        tickers,
+        isMultiFormat ? parsed.multi!.orders : null,
+        isMultiFormat ? null : parsed.single!.limitQuantity,
+        locationId,
+        displaySettings
+      )
+      return
+    }
+
+    // ORDER MODE: Create sell orders (original behavior)
     // Determine currency using channel defaults resolution
     const currency: ValidCurrency = resolveEffectiveValue(
       currencyOption,
@@ -473,4 +503,137 @@ export const sell: Command = {
       flags: MessageFlags.Ephemeral,
     })
   },
+}
+
+/**
+ * Handle invoice mode for /sell command
+ * Sells TO the counterparty's buy orders and adds to invoice
+ */
+async function handleInvoiceMode(
+  interaction: ChatInputCommandInteraction,
+  userId: number,
+  counterpartyUser: ResolvedUser,
+  tickers: string[],
+  multiOrders: Array<{ ticker: string; quantity: number; commodityName: string }> | null,
+  sharedQuantity: number | null,
+  locationId: string,
+  displaySettings: { locationDisplayMode: LocationDisplayMode }
+): Promise<void> {
+  // Get or create invoice with this counterparty
+  const { id: invoiceId, isNew } = await getOrCreateInvoice(userId, counterpartyUser.userId)
+
+  // Find counterparty's buy orders that match our criteria
+  const matchingBuyOrders = await db.query.buyOrders.findMany({
+    where: and(eq(buyOrders.userId, counterpartyUser.userId), eq(buyOrders.locationId, locationId)),
+  })
+
+  // Build line items for each ticker
+  const lineItems: InvoiceLineItemInput[] = []
+  const addedItems: Array<{ ticker: string; quantity: number; price: number; currency: string }> =
+    []
+  const notFound: string[] = []
+
+  for (const ticker of tickers) {
+    // Determine quantity for this ticker
+    const quantity = multiOrders
+      ? (multiOrders.find(o => o.ticker === ticker)?.quantity ?? 0)
+      : (sharedQuantity ?? 0)
+
+    if (quantity <= 0) {
+      notFound.push(`${ticker}: no quantity specified`)
+      continue
+    }
+
+    // Find matching buy order from counterparty
+    const buyOrder = matchingBuyOrders.find(o => o.commodityTicker === ticker)
+
+    if (!buyOrder) {
+      notFound.push(
+        `${ticker}: ${counterpartyUser.fioUsername ?? counterpartyUser.username} has no buy order`
+      )
+      continue
+    }
+
+    // Get the display price (handles dynamic pricing)
+    const priceInfo = await getOrderDisplayPrice(buyOrder)
+    const price = priceInfo?.price ?? 0
+
+    lineItems.push({
+      buyOrderId: buyOrder.id,
+      commodityTicker: ticker,
+      locationId,
+      quantity,
+      unitPrice: price,
+      currency: buyOrder.currency as 'CIS' | 'ICA' | 'AIC' | 'NCC',
+      priceListCode: buyOrder.priceListCode,
+    })
+
+    addedItems.push({
+      ticker,
+      quantity,
+      price,
+      currency: buyOrder.currency,
+    })
+  }
+
+  // Add line items to invoice
+  if (lineItems.length > 0) {
+    await addLineItems(invoiceId, lineItems)
+  }
+
+  // Build response
+  const locationDisplay = await formatLocation(locationId, displaySettings.locationDisplayMode)
+  const counterpartyName =
+    counterpartyUser.fioUsername ?? counterpartyUser.displayName ?? counterpartyUser.username
+
+  let response = ''
+
+  if (isNew) {
+    response = `📋 **Invoice #${invoiceId}** created with **${counterpartyName}**\n\n`
+  } else {
+    response = `✅ Added to **Invoice #${invoiceId}** (${counterpartyName})\n\n`
+  }
+
+  if (addedItems.length > 0) {
+    response += `Selling to ${counterpartyName} @ **${locationDisplay}**:\n`
+    for (const item of addedItems) {
+      const commodityDisplay = formatCommodity(item.ticker)
+      const priceDisplay =
+        item.price > 0 ? `${item.price.toFixed(2)} ${item.currency}` : `-- ${item.currency}`
+      response += `• ${commodityDisplay} x${item.quantity.toLocaleString()} @ ${priceDisplay}\n`
+    }
+  }
+
+  if (notFound.length > 0) {
+    response += `\n⚠️ Could not add:\n${notFound.map(n => `• ${n}`).join('\n')}`
+  }
+
+  // Calculate totals
+  const totals = new Map<string, number>()
+  for (const item of addedItems) {
+    const current = totals.get(item.currency) ?? 0
+    totals.set(item.currency, current + item.quantity * item.price)
+  }
+
+  if (totals.size > 0) {
+    const totalStr = Array.from(totals.entries())
+      .map(([currency, total]) => `${total.toFixed(2)} ${currency}`)
+      .join(', ')
+    response += `\n**Total added**: ${totalStr}`
+  }
+
+  await interaction.reply({
+    content: response,
+    flags: MessageFlags.Ephemeral,
+  })
+
+  logger.info(
+    {
+      userId,
+      counterpartyUserId: counterpartyUser.userId,
+      invoiceId,
+      itemsAdded: addedItems.length,
+    },
+    'Invoice mode: items added to invoice via /sell'
+  )
 }

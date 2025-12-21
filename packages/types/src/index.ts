@@ -549,6 +549,80 @@ export interface UpdateReservationStatusRequest {
   notes?: string
 }
 
+// ==================== INVOICES ====================
+
+export type InvoiceStatus = 'draft' | 'submitted' | 'completed' | 'cancelled'
+
+export const INVOICE_STATUSES: InvoiceStatus[] = ['draft', 'submitted', 'completed', 'cancelled']
+
+// Summary of an invoice for listing
+export interface InvoiceSummary {
+  id: number
+  counterpartyUserId: number
+  counterpartyName: string
+  status: InvoiceStatus
+  name: string | null
+  itemCount: number
+  totalsByCurrency: { currency: Currency; total: number }[]
+  createdAt: string // ISO date string
+  updatedAt: string // ISO date string
+}
+
+// Full invoice with line items
+export interface Invoice extends InvoiceSummary {
+  notes: string | null
+  submittedAt: string | null // ISO date string
+  lineItems: InvoiceLineItem[]
+}
+
+// Individual line item within an invoice
+export interface InvoiceLineItem {
+  id: number
+  invoiceId: number
+  sellOrderId: number | null
+  buyOrderId: number | null
+  reservationId: number | null // Set after invoice is submitted
+  commodityTicker: string
+  locationId: string
+  quantity: number
+  unitPrice: number
+  currency: Currency
+  priceListCode: string | null
+  notes: string | null
+  // Computed fields
+  orderType: 'sell' | 'buy' // Derived from which order ID is set
+  totalValue: number // quantity * unitPrice
+}
+
+// Request to create a new invoice
+export interface CreateInvoiceRequest {
+  counterpartyUserId: number
+  name?: string
+  notes?: string
+}
+
+// Request to add a line item to an invoice
+export interface AddLineItemRequest {
+  sellOrderId?: number // Set if buying from a sell order
+  buyOrderId?: number // Set if selling to a buy order
+  reservationId?: number // For adding existing reservations
+  quantity: number
+  notes?: string
+}
+
+// Request to update a line item
+export interface UpdateLineItemRequest {
+  quantity?: number
+  notes?: string
+}
+
+// Response after submitting an invoice
+export interface SubmitInvoiceResponse {
+  invoice: Invoice
+  reservationsCreated: number
+  errors: string[] // Any items that failed to convert to reservations
+}
+
 // ==================== USER SETTINGS ====================
 
 // Setting value types

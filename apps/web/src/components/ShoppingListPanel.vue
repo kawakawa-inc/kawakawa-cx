@@ -737,7 +737,7 @@ const getOrderCountTooltip = (item: ListItemStatus): string => {
 const handleOpenList = async (listId: number) => {
   await shoppingListStore.openList(listId)
   openListDialog.value = false
-  showAddInput.value = true // Show add input after loading
+  showAddInput.value = false // Hide add input when loading a list
 }
 
 // Handle save list
@@ -945,8 +945,8 @@ const handleClear = () => {
 }
 
 .edit-quantity-input {
-  width: 6ch;
-  max-width: 8ch;
+  width: 10ch;
+  max-width: 16ch;
   padding: 2px 4px;
   font-size: 12px;
   font-weight: 500;
@@ -971,6 +971,7 @@ const handleClear = () => {
 
 .edit-quantity-input[type='number'] {
   -moz-appearance: textfield;
+  appearance: initial;
 }
 
 /* Column 3: Commodity */

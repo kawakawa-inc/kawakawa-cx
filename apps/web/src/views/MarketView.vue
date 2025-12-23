@@ -25,6 +25,39 @@
     <!-- Shopping List Preference Dialog -->
     <ShoppingListPreferenceDialog v-model="showPreferenceDialog" @choice="onPreferenceChoice" />
 
+    <!-- New Invoice Dialog - Select counterparty -->
+    <v-dialog v-model="newInvoiceDialog" max-width="400">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon start color="primary">mdi-file-document-plus-outline</v-icon>
+          New Invoice
+        </v-card-title>
+        <v-card-text>
+          <p class="text-body-2 text-medium-emphasis mb-4">
+            Search for a member to create an invoice with:
+          </p>
+          <KeyValueAutocomplete
+            v-model="selectedCounterpartyId"
+            :items="counterpartyOptions"
+            label="Select member"
+            hide-favorite-stars
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeNewInvoiceDialog">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="elevated"
+            :disabled="!selectedCounterpartyId"
+            @click="confirmCreateInvoice"
+          >
+            Create Invoice
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Filters Card -->
     <v-card class="mb-4">
       <v-card-text class="py-2">
@@ -321,13 +354,13 @@
           icon
           variant="text"
           size="small"
-          :color="showSidePanel ? 'primary' : 'grey'"
+          :color="sidePanelOpen ? 'primary' : 'grey'"
           class="ml-1"
           @click="toggleSidePanel"
         >
-          <v-icon>{{ showSidePanel ? 'mdi-dock-right' : 'mdi-clipboard-list-outline' }}</v-icon>
+          <v-icon>{{ sidePanelOpen ? 'mdi-dock-right' : 'mdi-clipboard-list-outline' }}</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            {{ showSidePanel ? 'Hide side panel' : 'Show side panel' }}
+            {{ sidePanelOpen ? 'Hide side panel' : 'Show side panel' }}
           </v-tooltip>
         </v-btn>
       </v-card-title>
@@ -821,7 +854,7 @@
 
     <!-- Side Panel with Invoice and Shopping List (slides in from right) -->
     <v-navigation-drawer
-      v-model="showSidePanel"
+      v-model="sidePanelOpen"
       location="right"
       width="370"
       class="side-panel-drawer"
@@ -829,7 +862,7 @@
       <!-- Panel Header with close button (visible on smaller screens) -->
       <div class="side-panel-header d-lg-none">
         <span class="text-subtitle-2">Invoice & Shopping List</span>
-        <v-btn icon size="small" variant="text" @click="showSidePanel = false">
+        <v-btn icon size="small" variant="text" @click="sidePanelOpen = false">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </div>
@@ -1097,6 +1130,58 @@ const existingLineItem = computed(() => {
 
 const isUpdatingExisting = computed(() => existingLineItem.value !== null)
 
+// New Invoice dialog state
+const newInvoiceDialog = ref(false)
+const selectedCounterpartyId = ref<string | null>(null)
+
+// Available counterparties (all users with orders we can reserve - both buyers and sellers)
+const counterpartyOptions = computed((): KeyValueItem[] => {
+  const counterpartyMap = new Map<number, { userId: number; userName: string; orderCount: number }>()
+
+  for (const item of marketItems.value) {
+    // Include all orders we can reserve (not our own, with permission)
+    if (!item.isOwn && canReserveOrder(item)) {
+      const existing = counterpartyMap.get(item.userId)
+      if (existing) {
+        existing.orderCount++
+      } else {
+        counterpartyMap.set(item.userId, {
+          userId: item.userId,
+          userName: item.userName,
+          orderCount: 1,
+        })
+      }
+    }
+  }
+
+  // Convert to KeyValueItem format, sorted by name
+  return Array.from(counterpartyMap.values())
+    .sort((a, b) => a.userName.localeCompare(b.userName))
+    .map(cp => ({
+      key: String(cp.userId),
+      display: `${cp.userName} (${cp.orderCount} order${cp.orderCount === 1 ? '' : 's'})`,
+      name: cp.userName,
+    }))
+})
+
+// Close new invoice dialog and reset state
+const closeNewInvoiceDialog = () => {
+  newInvoiceDialog.value = false
+  selectedCounterpartyId.value = null
+}
+
+// Create invoice for selected counterparty
+const confirmCreateInvoice = async () => {
+  if (!selectedCounterpartyId.value) return
+  const counterpartyUserId = parseInt(selectedCounterpartyId.value, 10)
+  closeNewInvoiceDialog()
+  const invoice = await invoicesStore.getOrCreateForPartner(counterpartyUserId)
+  if (invoice) {
+    await invoicesStore.setActiveInvoice(invoice.id)
+    sidePanelOpen.value = true
+  }
+}
+
 // Filters with URL deep linking
 const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
   schema: {
@@ -1192,22 +1277,8 @@ const userNameOptions = computed(() => {
     }))
 })
 
-// Side panel visibility - can be toggled manually
+// Side panel visibility - manually controlled, no auto-open/close
 const sidePanelOpen = ref(false)
-
-// Auto-open panel when shopping list or invoice is active
-const showSidePanel = computed({
-  get: () =>
-    sidePanelOpen.value ||
-    invoicesStore.hasActiveInvoice.value ||
-    shoppingListStore.hasWorkingList.value,
-  set: (value: boolean) => {
-    sidePanelOpen.value = value
-    if (!value) {
-      invoicesStore.clearActiveInvoice()
-    }
-  },
-})
 
 // Toggle side panel
 const toggleSidePanel = () => {
@@ -1294,10 +1365,9 @@ const onFilterAdd = (userName: string) => {
   }
 }
 
-// Handle add-invoice from empty state - scroll to market table
+// Handle add-invoice from empty state - open counterparty selection dialog
 const onAddInvoice = () => {
-  const table = document.querySelector('.v-data-table')
-  table?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  newInvoiceDialog.value = true
 }
 
 // Handle filter-by-list from shopping list panel
@@ -1502,8 +1572,6 @@ const onShoppingListClear = () => {
   // Clear the shopping list chip from search
   tokenSearchRef.value?.clear()
   clearFilters()
-  // Keep the side panel open after clearing
-  sidePanelOpen.value = true
 }
 
 // Whether the TokenSearchInput has any chips

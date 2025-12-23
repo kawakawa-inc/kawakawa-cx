@@ -88,7 +88,7 @@ describe('InvoicesController', () => {
   let mockUpdate: any
   let mockDelete: any
   const mockUserRequest = { user: { userId: 1, username: 'user1', roles: ['member'] } }
-  const mockOtherUserRequest = { user: { userId: 2, username: 'user2', roles: ['member'] } }
+  const _mockOtherUserRequest = { user: { userId: 2, username: 'user2', roles: ['member'] } }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -99,6 +99,7 @@ describe('InvoicesController', () => {
     mockSelect = {} as any
     mockSelect.from = vi.fn().mockReturnValue(mockSelect)
     mockSelect.innerJoin = vi.fn().mockReturnValue(mockSelect)
+    mockSelect.leftJoin = vi.fn().mockReturnValue(mockSelect)
     mockSelect.where = vi.fn().mockReturnValue(mockSelect)
     mockSelect.orderBy = vi.fn().mockReturnValue(mockSelect)
     mockSelect.groupBy = vi.fn().mockReturnValue(mockSelect)
@@ -183,18 +184,23 @@ describe('InvoicesController', () => {
       // Query 1: .from(invoices).where().orderBy() -> invoices
       // Query 2: .from(users).where() -> counterparty names
       // Query 3: .from(lineItems).where().groupBy() -> stats
+      // Query 4: .from(lineItems).leftJoin().where() -> reservation statuses
       mockSelect.orderBy.mockResolvedValueOnce([mockInvoice])
       mockSelect.groupBy.mockResolvedValueOnce([
-        { invoiceId: 1, count: 2, currency: 'CIS', total: '500.00' },
+        { invoiceId: 1, count: 2, currency: 'CIS', total: '500.00', orderType: 'sell' },
       ])
-      // where() is called in query 1 and 3 as intermediate, and in query 2 as terminal
-      // So we need: return mockSelect (query 1), resolve [counterparties] (query 2), return mockSelect (query 3)
+      // where() is called in query 1 and 3 as intermediate, and in query 2 and 4 as terminal
+      // So we need: return mockSelect (query 1), resolve [counterparties] (query 2), return mockSelect (query 3), resolve [statuses] (query 4)
       let whereCallCount = 0
       mockSelect.where.mockImplementation(() => {
         whereCallCount++
         if (whereCallCount === 2) {
-          // Query 2 - terminal where, return promise
+          // Query 2 - terminal where for users, return promise
           return Promise.resolve([{ id: 2, displayName: 'Partner' }])
+        }
+        if (whereCallCount === 4) {
+          // Query 4 - terminal where for reservation statuses, return promise
+          return Promise.resolve([{ invoiceId: 1, reservationStatus: null }])
         }
         // Other calls - continue chain
         return mockSelect
@@ -418,6 +424,8 @@ describe('InvoicesController', () => {
     it('should add a line item from a sell order', async () => {
       // Get invoice
       mockSelect.where.mockResolvedValueOnce([mockInvoice])
+      // Check for existing line item (none found)
+      mockSelect.where.mockResolvedValueOnce([])
       // Get sell order
       mockSelect.where.mockResolvedValueOnce([mockSellOrder])
       // Insert line item
@@ -437,6 +445,38 @@ describe('InvoicesController', () => {
       expect(result.orderType).toBe('sell')
     })
 
+    it('should update existing line item quantity when order already in invoice', async () => {
+      const existingLineItem = { ...mockLineItem, quantity: 200 }
+      const updatedLineItem = { ...mockLineItem, quantity: 500 }
+      // Get invoice
+      mockSelect.where.mockResolvedValueOnce([mockInvoice])
+      // Check for existing line item (found!)
+      mockSelect.where.mockResolvedValueOnce([existingLineItem])
+      // Update line item - need proper chain mock for .update().set().where().returning()
+      let updateCallCount = 0
+      mockUpdate.returning.mockImplementation(() => {
+        return Promise.resolve([updatedLineItem])
+      })
+      mockUpdate.where.mockImplementation(() => {
+        updateCallCount++
+        if (updateCallCount === 1) {
+          // First where is part of the returning chain
+          return mockUpdate
+        }
+        // Second where is the timestamp update (no returning)
+        return Promise.resolve(undefined)
+      })
+
+      const result = await controller.addLineItem(
+        1,
+        { sellOrderId: 10, quantity: 500 },
+        mockUserRequest
+      )
+
+      expect(result.quantity).toBe(500)
+      expect(result.orderType).toBe('sell')
+    })
+
     it('should add a line item from a buy order', async () => {
       const buyLineItem = {
         ...mockLineItem,
@@ -447,6 +487,8 @@ describe('InvoicesController', () => {
       }
       // Get invoice
       mockSelect.where.mockResolvedValueOnce([mockInvoice])
+      // Check for existing line item (none found)
+      mockSelect.where.mockResolvedValueOnce([])
       // Get buy order
       mockSelect.where.mockResolvedValueOnce([mockBuyOrder])
       // Insert line item
@@ -506,6 +548,8 @@ describe('InvoicesController', () => {
 
     it('should throw BadRequest if sell order owner does not match counterparty', async () => {
       mockSelect.where.mockResolvedValueOnce([mockInvoice])
+      // Check for existing line item (none found)
+      mockSelect.where.mockResolvedValueOnce([])
       mockSelect.where.mockResolvedValueOnce([{ ...mockSellOrder, userId: 999 }])
 
       await expect(
@@ -609,7 +653,7 @@ describe('InvoicesController', () => {
       expect(result.errors).toEqual([])
       expect(notificationService.create).toHaveBeenCalledWith(
         2,
-        'reservation_placed',
+        'invoice_submitted',
         'Invoice Submitted',
         expect.stringContaining('User One'),
         expect.objectContaining({ invoiceId: 1 })
@@ -657,6 +701,8 @@ describe('InvoicesController', () => {
     it('should cancel pending reservations and update status', async () => {
       const submittedInvoice = { ...mockInvoice, status: 'submitted' as const }
       const lineItemWithReservation = { ...mockLineItem, reservationId: 200 }
+      // After cancellation, line item should have cancelled reservation status
+      const cancelledLineItem = { ...lineItemWithReservation, reservationStatus: 'cancelled' }
 
       // Get invoice
       mockSelect.where.mockResolvedValueOnce([submittedInvoice])
@@ -669,17 +715,18 @@ describe('InvoicesController', () => {
       // Get user name for notification
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'User One' }])
       vi.mocked(notificationService.create).mockResolvedValue({} as any)
-      // getInvoice flow
+      // getInvoice flow - now includes leftJoin for reservation status
       mockSelect.where.mockResolvedValueOnce([{ ...submittedInvoice, status: 'cancelled' }])
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
-      mockSelect.orderBy.mockResolvedValueOnce([lineItemWithReservation])
+      // getInvoice uses orderBy as terminal for line items with reservation status joined
+      mockSelect.orderBy.mockResolvedValueOnce([cancelledLineItem])
 
       const result = await controller.cancelInvoice(1, mockUserRequest)
 
       expect(result.status).toBe('cancelled')
       expect(notificationService.create).toHaveBeenCalledWith(
         2,
-        'reservation_cancelled',
+        'invoice_cancelled',
         'Invoice Cancelled',
         expect.any(String),
         expect.objectContaining({ invoiceId: 1 })

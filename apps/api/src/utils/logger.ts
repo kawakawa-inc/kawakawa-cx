@@ -7,6 +7,8 @@ const MAX_STRING_LENGTH = 500
 const MAX_ARRAY_ITEMS = 10
 const MAX_OBJECT_DEPTH = 5
 
+const isDevelopment = process.env.NODE_ENV !== 'production'
+
 /**
  * PII fields that should be redacted from logs
  */
@@ -103,8 +105,21 @@ const baseConfig: pino.LoggerOptions = {
 
 /**
  * Main application logger
+ * Uses pino-pretty for readable output in development, JSON in production
  */
-export const logger = pino(baseConfig)
+export const logger = isDevelopment
+  ? pino(
+      baseConfig,
+      pino.transport({
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'SYS:standard',
+          ignore: 'pid,hostname,service',
+        },
+      })
+    )
+  : pino(baseConfig)
 
 /**
  * Create a child logger with additional context

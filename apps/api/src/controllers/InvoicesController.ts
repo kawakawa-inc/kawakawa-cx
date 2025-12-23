@@ -18,6 +18,7 @@ import type {
   InvoiceSummary,
   InvoiceLineItem,
   InvoiceStatus,
+  InvoiceDirection,
   CreateInvoiceRequest,
   AddLineItemRequest,
   UpdateLineItemRequest,
@@ -39,10 +40,80 @@ import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '../services/notificationService.js'
 import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
 
+import type { ReservationStatus } from '@kawakawa/types'
+
 // Request to update invoice
 interface UpdateInvoiceRequest {
   name?: string
   notes?: string
+}
+
+// Stored status in database (subset of calculated InvoiceStatus)
+// The full InvoiceStatus is calculated from reservation states
+type StoredInvoiceStatus = 'draft' | 'submitted' | 'completed' | 'cancelled'
+
+/**
+ * Calculate display status from reservation states
+ * - draft: Invoice not yet submitted (no reservations)
+ * - pending: Submitted but some reservations still pending
+ * - confirmed: All reservations confirmed (but not fulfilled)
+ * - fulfilled: All reservations fulfilled
+ * - partially_fulfilled: Some reservations fulfilled, some in other states
+ * - cancelled: All reservations cancelled
+ */
+function calculateInvoiceStatus(
+  dbStatus: 'draft' | 'submitted' | 'completed' | 'cancelled',
+  reservationStatuses: (ReservationStatus | null)[]
+): InvoiceStatus {
+  // Draft invoices stay draft
+  if (dbStatus === 'draft') {
+    return 'draft'
+  }
+
+  // If no line items or no reservations yet, treat as pending
+  const statuses = reservationStatuses.filter((s): s is ReservationStatus => s !== null)
+  if (statuses.length === 0) {
+    return 'pending'
+  }
+
+  // Count by status
+  const counts = {
+    pending: 0,
+    confirmed: 0,
+    fulfilled: 0,
+    cancelled: 0,
+    rejected: 0,
+    expired: 0,
+  }
+  for (const status of statuses) {
+    counts[status]++
+  }
+
+  const total = statuses.length
+
+  // All cancelled (including rejected/expired as "cancelled-like")
+  const cancelledLike = counts.cancelled + counts.rejected + counts.expired
+  if (cancelledLike === total) {
+    return 'cancelled'
+  }
+
+  // All fulfilled
+  if (counts.fulfilled === total) {
+    return 'fulfilled'
+  }
+
+  // Some fulfilled, some in other states
+  if (counts.fulfilled > 0) {
+    return 'partially_fulfilled'
+  }
+
+  // All confirmed (none pending, none fulfilled)
+  if (counts.confirmed === total - cancelledLike && counts.pending === 0) {
+    return 'confirmed'
+  }
+
+  // Otherwise pending (some still pending)
+  return 'pending'
 }
 
 @Route('invoices')
@@ -50,15 +121,54 @@ interface UpdateInvoiceRequest {
 @Security('jwt')
 export class InvoicesController extends Controller {
   /**
-   * Get all invoices for the current user
-   * @param status Filter by invoice status
+   * Get all invoices for the current user (both sent and received)
+   * @param status Filter by stored invoice status (draft, submitted, cancelled)
+   * @param direction Filter by direction: 'sent' (user created) or 'received' (sent to user)
    */
   @Get()
   public async getInvoices(
     @Request() request: { user: JwtPayload },
-    @Query() status?: InvoiceStatus
+    @Query() status?: StoredInvoiceStatus,
+    @Query() direction?: InvoiceDirection
   ): Promise<InvoiceSummary[]> {
     const userId = request.user.userId
+
+    // Build where conditions based on direction filter
+    // - sent: user is the owner (userId)
+    // - received: user is the counterparty AND status is not draft (only show submitted+)
+    // - no filter: both sent and received
+    let whereCondition
+    if (direction === 'sent') {
+      whereCondition = status
+        ? and(eq(invoices.userId, userId), eq(invoices.status, status))
+        : eq(invoices.userId, userId)
+    } else if (direction === 'received') {
+      // Only show received invoices that are submitted or later (not drafts)
+      const receivedCondition = and(
+        eq(invoices.counterpartyUserId, userId),
+        or(
+          eq(invoices.status, 'submitted'),
+          eq(invoices.status, 'completed'),
+          eq(invoices.status, 'cancelled')
+        )
+      )
+      whereCondition = status
+        ? and(receivedCondition, eq(invoices.status, status))
+        : receivedCondition
+    } else {
+      // Both sent and received
+      const sentCondition = eq(invoices.userId, userId)
+      const receivedCondition = and(
+        eq(invoices.counterpartyUserId, userId),
+        or(
+          eq(invoices.status, 'submitted'),
+          eq(invoices.status, 'completed'),
+          eq(invoices.status, 'cancelled')
+        )
+      )
+      const bothCondition = or(sentCondition, receivedCondition)
+      whereCondition = status ? and(bothCondition, eq(invoices.status, status)) : bothCondition
+    }
 
     // Get invoices with line item counts and totals
     const invoiceRows = await db
@@ -74,27 +184,28 @@ export class InvoicesController extends Controller {
         updatedAt: invoices.updatedAt,
       })
       .from(invoices)
-      .where(
-        status
-          ? and(eq(invoices.userId, userId), eq(invoices.status, status))
-          : eq(invoices.userId, userId)
-      )
+      .where(whereCondition)
       .orderBy(sql`${invoices.updatedAt} DESC`)
 
     if (invoiceRows.length === 0) {
       return []
     }
 
-    // Get counterparty names
-    const counterpartyIds = [...new Set(invoiceRows.map(i => i.counterpartyUserId))]
-    const counterpartyRows = await db
+    // Get all user names needed (both owners and counterparties)
+    const allUserIds = [
+      ...new Set([
+        ...invoiceRows.map(i => i.userId),
+        ...invoiceRows.map(i => i.counterpartyUserId),
+      ]),
+    ]
+    const userRows = await db
       .select({ id: users.id, displayName: users.displayName })
       .from(users)
-      .where(or(...counterpartyIds.map(id => eq(users.id, id)))!)
+      .where(or(...allUserIds.map(id => eq(users.id, id)))!)
 
-    const counterpartyMap = new Map(counterpartyRows.map(u => [u.id, u.displayName]))
+    const userMap = new Map(userRows.map(u => [u.id, u.displayName]))
 
-    // Get line item counts and totals per invoice
+    // Get line item counts and totals per invoice, grouped by order type
     const invoiceIds = invoiceRows.map(i => i.id)
     const lineItemStats = await db
       .select({
@@ -102,43 +213,114 @@ export class InvoicesController extends Controller {
         count: sql<number>`COUNT(*)::int`,
         currency: invoiceLineItems.currency,
         total: sql<number>`SUM(${invoiceLineItems.quantity} * ${invoiceLineItems.unitPrice})::numeric`,
+        // 'sell' when sellOrderId is set (user buying), 'buy' when buyOrderId is set (user selling)
+        orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
       })
       .from(invoiceLineItems)
       .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
-      .groupBy(invoiceLineItems.invoiceId, invoiceLineItems.currency)
+      .groupBy(
+        invoiceLineItems.invoiceId,
+        invoiceLineItems.currency,
+        sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
+      )
 
-    // Group totals by invoice
+    // Group totals by invoice with buy/sell breakdown
     const invoiceStatsMap = new Map<
       number,
-      { itemCount: number; totalsByCurrency: { currency: Currency; total: number }[] }
+      {
+        itemCount: number
+        totalsByCurrency: { currency: Currency; total: number }[]
+        buyTotalsByCurrency: { currency: Currency; total: number }[]
+        sellTotalsByCurrency: { currency: Currency; total: number }[]
+      }
     >()
     for (const stat of lineItemStats) {
       if (!invoiceStatsMap.has(stat.invoiceId)) {
-        invoiceStatsMap.set(stat.invoiceId, { itemCount: 0, totalsByCurrency: [] })
+        invoiceStatsMap.set(stat.invoiceId, {
+          itemCount: 0,
+          totalsByCurrency: [],
+          buyTotalsByCurrency: [],
+          sellTotalsByCurrency: [],
+        })
       }
       const stats = invoiceStatsMap.get(stat.invoiceId)!
       stats.itemCount += stat.count
-      stats.totalsByCurrency.push({
-        currency: stat.currency,
-        total: parseFloat(String(stat.total)),
-      })
+      const currencyTotal = { currency: stat.currency, total: parseFloat(String(stat.total)) }
+      stats.totalsByCurrency.push(currencyTotal)
+
+      // Separate buy vs sell totals
+      // orderType='sell' means user is BUYING (from a sell order)
+      // orderType='buy' means user is SELLING (to a buy order)
+      if (stat.orderType === 'sell') {
+        stats.buyTotalsByCurrency.push(currencyTotal)
+      } else {
+        stats.sellTotalsByCurrency.push(currencyTotal)
+      }
     }
 
-    return invoiceRows.map(inv => ({
-      id: inv.id,
-      counterpartyUserId: inv.counterpartyUserId,
-      counterpartyName: counterpartyMap.get(inv.counterpartyUserId) ?? 'Unknown',
-      status: inv.status,
-      name: inv.name,
-      itemCount: invoiceStatsMap.get(inv.id)?.itemCount ?? 0,
-      totalsByCurrency: invoiceStatsMap.get(inv.id)?.totalsByCurrency ?? [],
-      createdAt: inv.createdAt.toISOString(),
-      updatedAt: inv.updatedAt.toISOString(),
-    }))
+    // Merge currency totals (in case same currency appears in both buy and sell)
+    for (const stats of invoiceStatsMap.values()) {
+      const mergedTotals = new Map<Currency, number>()
+      for (const t of stats.totalsByCurrency) {
+        mergedTotals.set(t.currency, (mergedTotals.get(t.currency) ?? 0) + t.total)
+      }
+      stats.totalsByCurrency = Array.from(mergedTotals.entries()).map(([currency, total]) => ({
+        currency,
+        total,
+      }))
+    }
+
+    // Get reservation statuses per invoice (for calculating invoice status)
+    const reservationStatusRows = await db
+      .select({
+        invoiceId: invoiceLineItems.invoiceId,
+        reservationStatus: orderReservations.status,
+      })
+      .from(invoiceLineItems)
+      .leftJoin(orderReservations, eq(invoiceLineItems.reservationId, orderReservations.id))
+      .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
+
+    // Group reservation statuses by invoice ID
+    const invoiceReservationStatuses = new Map<number, (ReservationStatus | null)[]>()
+    for (const row of reservationStatusRows) {
+      if (!invoiceReservationStatuses.has(row.invoiceId)) {
+        invoiceReservationStatuses.set(row.invoiceId, [])
+      }
+      invoiceReservationStatuses.get(row.invoiceId)!.push(row.reservationStatus)
+    }
+
+    return invoiceRows.map(inv => {
+      // Determine direction and the "other party" based on who the current user is
+      const isSent = inv.userId === userId
+      const direction: InvoiceDirection = isSent ? 'sent' : 'received'
+      // For sent invoices, counterparty is who we're sending to
+      // For received invoices, counterparty is who sent it to us
+      const otherPartyId = isSent ? inv.counterpartyUserId : inv.userId
+
+      // Calculate status from reservation states
+      const reservationStatuses = invoiceReservationStatuses.get(inv.id) ?? []
+      const calculatedStatus = calculateInvoiceStatus(inv.status, reservationStatuses)
+
+      return {
+        id: inv.id,
+        counterpartyUserId: otherPartyId,
+        counterpartyName: userMap.get(otherPartyId) ?? 'Unknown',
+        status: calculatedStatus,
+        direction,
+        name: inv.name,
+        itemCount: invoiceStatsMap.get(inv.id)?.itemCount ?? 0,
+        totalsByCurrency: invoiceStatsMap.get(inv.id)?.totalsByCurrency ?? [],
+        buyTotalsByCurrency: invoiceStatsMap.get(inv.id)?.buyTotalsByCurrency ?? [],
+        sellTotalsByCurrency: invoiceStatsMap.get(inv.id)?.sellTotalsByCurrency ?? [],
+        createdAt: inv.createdAt.toISOString(),
+        updatedAt: inv.updatedAt.toISOString(),
+      }
+    })
   }
 
   /**
    * Get a specific invoice by ID with all line items
+   * Invoice owner can always view. Counterparty can view submitted+ invoices.
    */
   @Get('{id}')
   public async getInvoice(
@@ -153,21 +335,49 @@ export class InvoicesController extends Controller {
       throw NotFound('Invoice not found')
     }
 
-    // Only invoice owner can view
-    if (invoice.userId !== userId) {
+    // Determine if user is owner or counterparty
+    const isOwner = invoice.userId === userId
+    const isCounterparty = invoice.counterpartyUserId === userId
+
+    if (!isOwner && !isCounterparty) {
       throw Forbidden('You do not have access to this invoice')
     }
 
-    // Get counterparty name
-    const [counterparty] = await db
+    // Counterparty can only view submitted+ invoices (not drafts)
+    if (isCounterparty && invoice.status === 'draft') {
+      throw Forbidden('You do not have access to this invoice')
+    }
+
+    // Determine direction and who the "other party" is from current user's perspective
+    const direction: InvoiceDirection = isOwner ? 'sent' : 'received'
+    const otherPartyId = isOwner ? invoice.counterpartyUserId : invoice.userId
+
+    // Get the other party's name
+    const [otherParty] = await db
       .select({ displayName: users.displayName })
       .from(users)
-      .where(eq(users.id, invoice.counterpartyUserId))
+      .where(eq(users.id, otherPartyId))
 
-    // Get line items
+    // Get line items with reservation status
     const lineItemRows = await db
-      .select()
+      .select({
+        id: invoiceLineItems.id,
+        invoiceId: invoiceLineItems.invoiceId,
+        sellOrderId: invoiceLineItems.sellOrderId,
+        buyOrderId: invoiceLineItems.buyOrderId,
+        reservationId: invoiceLineItems.reservationId,
+        commodityTicker: invoiceLineItems.commodityTicker,
+        locationId: invoiceLineItems.locationId,
+        quantity: invoiceLineItems.quantity,
+        unitPrice: invoiceLineItems.unitPrice,
+        currency: invoiceLineItems.currency,
+        priceListCode: invoiceLineItems.priceListCode,
+        notes: invoiceLineItems.notes,
+        createdAt: invoiceLineItems.createdAt,
+        reservationStatus: orderReservations.status,
+      })
       .from(invoiceLineItems)
+      .leftJoin(orderReservations, eq(invoiceLineItems.reservationId, orderReservations.id))
       .where(eq(invoiceLineItems.invoiceId, id))
       .orderBy(invoiceLineItems.createdAt)
 
@@ -177,6 +387,7 @@ export class InvoicesController extends Controller {
       sellOrderId: li.sellOrderId,
       buyOrderId: li.buyOrderId,
       reservationId: li.reservationId,
+      reservationStatus: li.reservationStatus ?? null,
       commodityTicker: li.commodityTicker,
       locationId: li.locationId,
       quantity: li.quantity,
@@ -188,26 +399,56 @@ export class InvoicesController extends Controller {
       totalValue: li.quantity * parseFloat(li.unitPrice),
     }))
 
-    // Calculate totals by currency
-    const totalsByCurrency: { currency: Currency; total: number }[] = []
+    // Calculate totals by currency with buy/sell breakdown
     const currencyTotals = new Map<Currency, number>()
+    const buyCurrencyTotals = new Map<Currency, number>()
+    const sellCurrencyTotals = new Map<Currency, number>()
+
     for (const li of lineItems) {
       const current = currencyTotals.get(li.currency) ?? 0
       currencyTotals.set(li.currency, current + li.totalValue)
+
+      // orderType='sell' means user is BUYING (from a sell order)
+      // orderType='buy' means user is SELLING (to a buy order)
+      if (li.orderType === 'sell') {
+        const buyCurrent = buyCurrencyTotals.get(li.currency) ?? 0
+        buyCurrencyTotals.set(li.currency, buyCurrent + li.totalValue)
+      } else {
+        const sellCurrent = sellCurrencyTotals.get(li.currency) ?? 0
+        sellCurrencyTotals.set(li.currency, sellCurrent + li.totalValue)
+      }
     }
-    for (const [currency, total] of currencyTotals) {
-      totalsByCurrency.push({ currency, total })
-    }
+
+    const totalsByCurrency = Array.from(currencyTotals.entries()).map(([currency, total]) => ({
+      currency,
+      total,
+    }))
+    const buyTotalsByCurrency = Array.from(buyCurrencyTotals.entries()).map(
+      ([currency, total]) => ({
+        currency,
+        total,
+      })
+    )
+    const sellTotalsByCurrency = Array.from(sellCurrencyTotals.entries()).map(
+      ([currency, total]) => ({ currency, total })
+    )
+
+    // Calculate status from reservation states
+    const reservationStatuses = lineItems.map(li => li.reservationStatus)
+    const calculatedStatus = calculateInvoiceStatus(invoice.status, reservationStatuses)
 
     return {
       id: invoice.id,
-      counterpartyUserId: invoice.counterpartyUserId,
-      counterpartyName: counterparty?.displayName ?? 'Unknown',
-      status: invoice.status,
+      counterpartyUserId: otherPartyId,
+      counterpartyName: otherParty?.displayName ?? 'Unknown',
+      status: calculatedStatus,
+      direction,
       name: invoice.name,
       notes: invoice.notes,
       itemCount: lineItems.length,
       totalsByCurrency,
+      buyTotalsByCurrency,
+      sellTotalsByCurrency,
       submittedAt: invoice.submittedAt?.toISOString() ?? null,
       createdAt: invoice.createdAt.toISOString(),
       updatedAt: invoice.updatedAt.toISOString(),
@@ -272,11 +513,14 @@ export class InvoicesController extends Controller {
       id: newInvoice.id,
       counterpartyUserId: newInvoice.counterpartyUserId,
       counterpartyName: counterparty.displayName,
-      status: newInvoice.status,
+      status: 'draft' as const, // New invoices are always draft
+      direction: 'sent' as const,
       name: newInvoice.name,
       notes: newInvoice.notes,
       itemCount: 0,
       totalsByCurrency: [],
+      buyTotalsByCurrency: [],
+      sellTotalsByCurrency: [],
       submittedAt: null,
       createdAt: newInvoice.createdAt.toISOString(),
       updatedAt: newInvoice.updatedAt.toISOString(),
@@ -327,11 +571,14 @@ export class InvoicesController extends Controller {
       id: invoice.id,
       counterpartyUserId: invoice.counterpartyUserId,
       counterpartyName: counterparty.displayName,
-      status: invoice.status,
+      status: 'draft' as const, // New invoices are always draft
+      direction: 'sent' as const,
       name: invoice.name,
       notes: invoice.notes,
       itemCount: 0,
       totalsByCurrency: [],
+      buyTotalsByCurrency: [],
+      sellTotalsByCurrency: [],
       submittedAt: null,
       createdAt: invoice.createdAt.toISOString(),
       updatedAt: invoice.updatedAt.toISOString(),
@@ -440,6 +687,55 @@ export class InvoicesController extends Controller {
     // Must specify either sellOrderId or buyOrderId (or reservationId for existing)
     if (!body.sellOrderId && !body.buyOrderId && !body.reservationId) {
       throw BadRequest('Must specify sellOrderId, buyOrderId, or reservationId')
+    }
+
+    // Check if this order already exists in the invoice - if so, update quantity instead
+    if (body.sellOrderId || body.buyOrderId) {
+      const existingConditions = [eq(invoiceLineItems.invoiceId, id)]
+      if (body.sellOrderId) {
+        existingConditions.push(eq(invoiceLineItems.sellOrderId, body.sellOrderId))
+      } else {
+        existingConditions.push(eq(invoiceLineItems.buyOrderId, body.buyOrderId!))
+      }
+
+      const [existingLineItem] = await db
+        .select()
+        .from(invoiceLineItems)
+        .where(and(...existingConditions))
+
+      if (existingLineItem) {
+        // Update existing line item quantity instead of creating duplicate
+        const [updated] = await db
+          .update(invoiceLineItems)
+          .set({
+            quantity: body.quantity,
+            notes: body.notes ?? existingLineItem.notes,
+            updatedAt: new Date(),
+          })
+          .where(eq(invoiceLineItems.id, existingLineItem.id))
+          .returning()
+
+        // Update invoice timestamp
+        await db.update(invoices).set({ updatedAt: new Date() }).where(eq(invoices.id, id))
+
+        return {
+          id: updated.id,
+          invoiceId: updated.invoiceId,
+          sellOrderId: updated.sellOrderId,
+          buyOrderId: updated.buyOrderId,
+          reservationId: updated.reservationId,
+          reservationStatus: null, // Draft line items have no reservation
+          commodityTicker: updated.commodityTicker,
+          locationId: updated.locationId,
+          quantity: updated.quantity,
+          unitPrice: parseFloat(updated.unitPrice),
+          currency: updated.currency,
+          priceListCode: updated.priceListCode,
+          notes: updated.notes,
+          orderType: updated.sellOrderId ? 'sell' : 'buy',
+          totalValue: updated.quantity * parseFloat(updated.unitPrice),
+        }
+      }
     }
 
     let commodityTicker: string
@@ -606,6 +902,7 @@ export class InvoicesController extends Controller {
       sellOrderId: lineItem.sellOrderId,
       buyOrderId: lineItem.buyOrderId,
       reservationId: lineItem.reservationId,
+      reservationStatus: null, // Newly added line items have no reservation yet
       commodityTicker: lineItem.commodityTicker,
       locationId: lineItem.locationId,
       quantity: lineItem.quantity,
@@ -676,6 +973,7 @@ export class InvoicesController extends Controller {
       sellOrderId: updated.sellOrderId,
       buyOrderId: updated.buyOrderId,
       reservationId: updated.reservationId,
+      reservationStatus: null, // Only draft invoices can update line items
       commodityTicker: updated.commodityTicker,
       locationId: updated.locationId,
       quantity: updated.quantity,
@@ -821,7 +1119,7 @@ export class InvoicesController extends Controller {
 
     await notificationService.create(
       invoice.counterpartyUserId,
-      'reservation_placed',
+      'invoice_submitted',
       'Invoice Submitted',
       `${user?.displayName ?? 'Someone'} submitted an invoice with ${lineItemRows.length} items`,
       {
@@ -899,7 +1197,7 @@ export class InvoicesController extends Controller {
 
     await notificationService.create(
       invoice.counterpartyUserId,
-      'reservation_cancelled',
+      'invoice_cancelled',
       'Invoice Cancelled',
       `${user?.displayName ?? 'Someone'} cancelled an invoice`,
       {

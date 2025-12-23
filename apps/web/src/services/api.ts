@@ -36,6 +36,10 @@ import type {
   AddLineItemRequest,
   UpdateLineItemRequest,
   SubmitInvoiceResponse,
+  SavedShoppingList,
+  ShoppingListSummary,
+  CreateShoppingListRequest,
+  UpdateShoppingListRequest,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -622,6 +626,7 @@ interface UpdateBuyOrderRequest {
 // Market listing types
 interface MarketListing {
   id: number
+  userId: number
   sellerName: string
   commodityTicker: string
   locationId: string
@@ -644,6 +649,7 @@ interface MarketListing {
 
 interface MarketBuyRequest {
   id: number
+  userId: number
   buyerName: string
   commodityTicker: string
   locationId: string
@@ -672,6 +678,8 @@ type NotificationType =
   | 'reservation_fulfilled'
   | 'reservation_cancelled'
   | 'reservation_expired'
+  | 'invoice_submitted'
+  | 'invoice_cancelled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
@@ -4012,6 +4020,117 @@ const realApi = {
 
     return response.json()
   },
+
+  // Shopping Lists API
+  getShoppingLists: async (): Promise<ShoppingListSummary[]> => {
+    const response = await fetchWithLogging('/api/lists', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      throw new Error(`Failed to get shopping lists: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getShoppingList: async (id: number): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      throw new Error(`Failed to get shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createShoppingList: async (request: CreateShoppingListRequest): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging('/api/lists', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      throw new Error(`Failed to create shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateShoppingList: async (
+    id: number,
+    request: UpdateShoppingListRequest
+  ): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      throw new Error(`Failed to update shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteShoppingList: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      throw new Error(`Failed to delete shopping list: ${response.statusText}`)
+    }
+  },
 }
 
 // Types for KAWA sheet preview and sync
@@ -4162,7 +4281,9 @@ export const api = {
     delete: (id: number) => realApi.deleteReservation(id),
   },
   invoices: {
-    list: (status?: InvoiceStatus) => realApi.getInvoices(status),
+    // Status filter uses stored DB status, not calculated display status
+    list: (status?: 'draft' | 'submitted' | 'completed' | 'cancelled') =>
+      realApi.getInvoices(status),
     get: (id: number) => realApi.getInvoice(id),
     getOrCreateForPartner: (counterpartyUserId: number) =>
       realApi.getOrCreateInvoiceForPartner(counterpartyUserId),
@@ -4178,6 +4299,14 @@ export const api = {
       realApi.removeInvoiceLineItem(invoiceId, itemId),
     submit: (id: number) => realApi.submitInvoice(id),
     cancel: (id: number) => realApi.cancelInvoice(id),
+  },
+  lists: {
+    list: () => realApi.getShoppingLists(),
+    get: (id: number) => realApi.getShoppingList(id),
+    create: (request: CreateShoppingListRequest) => realApi.createShoppingList(request),
+    update: (id: number, request: UpdateShoppingListRequest) =>
+      realApi.updateShoppingList(id, request),
+    delete: (id: number) => realApi.deleteShoppingList(id),
   },
   locations: {
     getDistance: (from: string, to: string) => realApi.getLocationDistance(from, to),

@@ -18,6 +18,7 @@ import { calculateEffectivePriceWithFallback } from '../services/price-calculato
 // Market listing with seller info and calculated availability
 interface MarketListing {
   id: number
+  userId: number // seller's user ID
   sellerName: string
   commodityTicker: string
   locationId: string
@@ -41,6 +42,7 @@ interface MarketListing {
 // Buy request from market (buy orders from all users)
 interface MarketBuyRequest {
   id: number
+  userId: number // buyer's user ID
   buyerName: string
   commodityTicker: string
   locationId: string
@@ -337,6 +339,7 @@ export class MarketController extends Controller {
 
       return {
         id: order.id,
+        userId: order.userId,
         sellerName: order.sellerName,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,
@@ -536,6 +539,7 @@ export class MarketController extends Controller {
 
       return {
         id: order.id,
+        userId: order.userId,
         buyerName: order.buyerName,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,

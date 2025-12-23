@@ -21,7 +21,14 @@ import type {
   ReservationStatus,
   NotificationType,
 } from '@kawakawa/types'
-import { db, orderReservations, buyOrders, sellOrders, users } from '../db/index.js'
+import {
+  db,
+  orderReservations,
+  buyOrders,
+  sellOrders,
+  users,
+  invoiceLineItems,
+} from '../db/index.js'
 import { eq, or } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
@@ -740,6 +747,14 @@ export class ReservationsController extends Controller {
       },
     }
 
+    // Find the invoiceId if this reservation is linked to an invoice
+    const [lineItem] = await db
+      .select({ invoiceId: invoiceLineItems.invoiceId })
+      .from(invoiceLineItems)
+      .where(eq(invoiceLineItems.reservationId, id))
+      .limit(1)
+    const invoiceId = lineItem?.invoiceId ?? null
+
     const notifConfig = notificationTypes[newStatus]
     await notificationService.create(
       otherPartyId,
@@ -753,6 +768,7 @@ export class ReservationsController extends Controller {
         quantity: reservation.quantity,
         commodityTicker,
         locationId,
+        ...(invoiceId && { invoiceId }),
       }
     )
 

@@ -43,6 +43,8 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'reservation_fulfilled',
   'reservation_cancelled',
   'reservation_expired',
+  'invoice_submitted',
+  'invoice_cancelled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',
@@ -452,6 +454,27 @@ export const invoices = pgTable(
   })
 )
 
+// ==================== SHOPPING LISTS (Saved shopping lists for users) ====================
+// Users can save shopping lists to the server for later use
+// Each list contains a set of materials (ticker -> quantity)
+export const shoppingLists = pgTable(
+  'shopping_lists',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    materials: jsonb('materials').notNull(), // Record<string, number> (ticker -> quantity)
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('shopping_lists_user_idx').on(table.userId),
+  })
+)
+
 // ==================== INVOICE LINE ITEMS (Individual items within an invoice) ====================
 // Each line item represents a buy or sell action within the invoice
 // Before submission: stores intent (which order to reserve from / fill)
@@ -612,6 +635,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   notifications: many(notifications),
   reservations: many(orderReservations), // Reservations where user is the counterparty
   invoices: many(invoices), // Invoices created by this user
+  shoppingLists: many(shoppingLists), // Shopping lists created by this user
   discordProfile: one(userDiscordProfiles, {
     fields: [users.id],
     references: [userDiscordProfiles.userId],
@@ -812,6 +836,15 @@ export const invoiceLineItemsRelations = relations(invoiceLineItems, ({ one }) =
   reservation: one(orderReservations, {
     fields: [invoiceLineItems.reservationId],
     references: [orderReservations.id],
+  }),
+}))
+
+// ==================== SHOPPING LIST RELATIONS ====================
+
+export const shoppingListsRelations = relations(shoppingLists, ({ one }) => ({
+  user: one(users, {
+    fields: [shoppingLists.userId],
+    references: [users.id],
   }),
 }))
 

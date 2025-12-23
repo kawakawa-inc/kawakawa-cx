@@ -1,214 +1,396 @@
 <template>
-  <v-card v-if="activeInvoice" class="invoice-panel">
-    <v-card-title class="d-flex align-center">
-      <v-icon start>mdi-file-document-outline</v-icon>
-      Invoice: {{ activeInvoice.counterpartyName }}
-      <v-spacer />
-      <v-chip v-if="activeInvoice.status === 'draft'" color="warning" size="small" variant="tonal">
-        Draft
-      </v-chip>
-      <v-chip
-        v-else-if="activeInvoice.status === 'submitted'"
-        color="info"
-        size="small"
-        variant="tonal"
-      >
-        Submitted
-      </v-chip>
-    </v-card-title>
-
-    <v-divider />
-
-    <v-card-text class="pa-0">
-      <!-- Empty state -->
-      <div
-        v-if="activeInvoice.lineItems.length === 0"
-        class="text-center pa-4 text-medium-emphasis"
-      >
-        <v-icon size="48" class="mb-2">mdi-cart-outline</v-icon>
-        <div>No items in this invoice yet.</div>
-        <div class="text-caption">Click on orders in the market to add them.</div>
+  <div class="invoice-panel-wrapper">
+    <!-- Empty State when no invoices -->
+    <div v-if="draftInvoices.length === 0" class="invoice-empty-state">
+      <v-icon size="48" color="grey-darken-1" class="mb-3">mdi-file-document-outline</v-icon>
+      <div class="text-body-1 text-grey-darken-1 mb-2">No Invoices</div>
+      <div class="text-caption text-grey mb-4 text-center px-4">
+        Click "+ Invoice" on market orders to create invoices
       </div>
+      <v-btn color="primary" variant="tonal" size="small" @click="emit('add-invoice')">
+        <v-icon start size="small">mdi-plus</v-icon>
+        Invoice
+      </v-btn>
+    </div>
 
-      <!-- Line items list -->
-      <v-list v-else density="compact" class="py-0">
-        <template v-for="(item, index) in activeInvoice.lineItems" :key="item.id">
-          <v-list-item class="line-item">
-            <template #prepend>
-              <v-chip
-                :color="item.orderType === 'buy' ? 'success' : 'warning'"
-                size="x-small"
-                variant="tonal"
-                class="mr-2"
-              >
-                {{ item.orderType === 'buy' ? 'BUY' : 'SELL' }}
-              </v-chip>
-            </template>
-
-            <v-list-item-title class="d-flex align-center">
-              <span class="font-weight-medium">{{ item.commodityTicker }}</span>
-              <span class="text-medium-emphasis mx-1">x</span>
-              <span>{{ item.quantity.toLocaleString() }}</span>
-            </v-list-item-title>
-
-            <v-list-item-subtitle class="d-flex align-center">
-              <span>{{ formatPrice(item.unitPrice, item.currency) }}/u</span>
-              <v-icon size="x-small" class="mx-1">mdi-arrow-right</v-icon>
-              <span class="font-weight-medium">{{
-                formatPrice(item.totalValue, item.currency)
-              }}</span>
-            </v-list-item-subtitle>
-
-            <template #append>
-              <v-btn
-                icon="mdi-close"
-                size="x-small"
-                variant="text"
-                color="error"
-                :loading="removingItemId === item.id"
-                @click="removeItem(item.id)"
-              >
-                <v-icon size="small">mdi-close</v-icon>
-                <v-tooltip activator="parent" location="left">Remove item</v-tooltip>
-              </v-btn>
-            </template>
-          </v-list-item>
-
-          <v-divider v-if="index < activeInvoice.lineItems.length - 1" />
-        </template>
-      </v-list>
-    </v-card-text>
-
-    <!-- Totals section -->
-    <template v-if="activeInvoice.lineItems.length > 0">
-      <v-divider />
-
-      <v-card-text class="py-2">
-        <div class="text-subtitle-2 mb-2">Totals</div>
-        <div
-          v-for="total in activeInvoice.totalsByCurrency"
-          :key="total.currency"
-          class="d-flex justify-space-between"
+    <!-- Accordion of all draft invoices -->
+    <div v-else class="invoice-accordion-container">
+      <v-expansion-panels v-model="expandedPanels" multiple variant="accordion">
+        <v-expansion-panel
+          v-for="invoice in draftInvoices"
+          :key="invoice.id"
+          :value="invoice.id"
+          class="invoice-panel"
         >
-          <span class="text-medium-emphasis">{{ total.currency }}:</span>
-          <span class="font-weight-medium">{{ formatPrice(total.total, total.currency) }}</span>
-        </div>
-        <div class="d-flex justify-space-between text-medium-emphasis mt-1">
-          <span>Items:</span>
-          <span>{{ activeInvoice.lineItems.length }}</span>
-        </div>
-      </v-card-text>
-    </template>
+          <v-expansion-panel-title class="invoice-header">
+            <div class="invoice-header-content">
+              <div class="invoice-title">
+                <span class="counterparty-name">{{ invoice.counterpartyName }}</span>
+                <v-chip size="x-small" variant="tonal" class="ml-2">
+                  {{ invoice.itemCount }} item{{ invoice.itemCount === 1 ? '' : 's' }}
+                </v-chip>
+                <v-btn
+                  icon
+                  size="x-small"
+                  variant="text"
+                  class="ml-1 filter-btn"
+                  title="Filter by this user"
+                  @click.stop="emitFilterAdd(invoice.counterpartyName)"
+                >
+                  <v-icon size="small">mdi-filter-plus</v-icon>
+                </v-btn>
+              </div>
+              <div class="invoice-totals">
+                <template v-if="invoice.buyTotalsByCurrency.length > 0">
+                  <span
+                    v-for="total in invoice.buyTotalsByCurrency"
+                    :key="`buy-${total.currency}`"
+                    class="total-chip buy"
+                  >
+                    -{{ formatPrice(total.total, total.currency) }}
+                  </span>
+                </template>
+                <template v-if="invoice.sellTotalsByCurrency.length > 0">
+                  <span
+                    v-for="total in invoice.sellTotalsByCurrency"
+                    :key="`sell-${total.currency}`"
+                    class="total-chip sell"
+                  >
+                    +{{ formatPrice(total.total, total.currency) }}
+                  </span>
+                </template>
+              </div>
+            </div>
+          </v-expansion-panel-title>
 
-    <!-- Actions -->
-    <template v-if="activeInvoice.status === 'draft' && activeInvoice.lineItems.length > 0">
-      <v-divider />
+          <v-expansion-panel-text class="invoice-content">
+            <!-- Loading state while fetching line items -->
+            <div v-if="loadingInvoiceId === invoice.id" class="text-center py-4">
+              <v-progress-circular indeterminate size="24" />
+            </div>
 
-      <v-card-actions>
+            <!-- Line items list -->
+            <template v-else-if="expandedInvoices[invoice.id]">
+              <div class="line-items-list">
+                <div
+                  v-for="item in expandedInvoices[invoice.id].lineItems"
+                  :key="item.id"
+                  class="line-item"
+                >
+                  <div class="line-item-left">
+                    <v-chip
+                      :color="item.orderType === 'sell' ? 'warning' : 'success'"
+                      size="x-small"
+                      variant="tonal"
+                      class="order-type-chip"
+                    >
+                      {{ item.orderType === 'sell' ? 'BUY' : 'SELL' }}
+                    </v-chip>
+                    <span class="commodity">{{ item.commodityTicker }}</span>
+                    <span class="quantity">x{{ item.quantity.toLocaleString() }}</span>
+                  </div>
+                  <div class="line-item-right">
+                    <span class="price">{{ formatPrice(item.totalValue, item.currency) }}</span>
+                    <v-btn
+                      icon
+                      size="x-small"
+                      variant="text"
+                      color="error"
+                      :loading="removingItemId === item.id"
+                      @click.stop="removeItem(invoice.id, item.id)"
+                    >
+                      <v-icon size="small">mdi-close</v-icon>
+                    </v-btn>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="invoice-actions">
+                <v-btn
+                  color="primary"
+                  variant="elevated"
+                  size="small"
+                  class="flex-grow-1"
+                  :loading="submittingInvoiceId === invoice.id"
+                  @click="openSubmitDialog(invoice)"
+                >
+                  <v-icon start size="small">mdi-send</v-icon>
+                  Submit
+                </v-btn>
+                <v-btn
+                  color="error"
+                  variant="outlined"
+                  size="small"
+                  :loading="deletingInvoiceId === invoice.id"
+                  @click="openDeleteDialog(invoice)"
+                >
+                  <v-icon size="small">mdi-delete</v-icon>
+                </v-btn>
+              </div>
+            </template>
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+      </v-expansion-panels>
+
+      <!-- Panel Footer -->
+      <div v-if="draftInvoices.length > 1" class="panel-footer">
         <v-btn
-          color="primary"
           variant="elevated"
-          block
-          :loading="submitting"
-          @click="submitDialog = true"
+          size="small"
+          color="primary"
+          :loading="submittingAll"
+          @click="openSubmitAllDialog"
         >
-          <v-icon start>mdi-send</v-icon>
-          Submit Invoice
+          <v-icon start size="small">mdi-send</v-icon>
+          Submit All
         </v-btn>
-      </v-card-actions>
-    </template>
+      </div>
+    </div>
 
     <!-- Submit Confirmation Dialog -->
-    <v-dialog v-model="submitDialog" max-width="500">
-      <v-card>
-        <v-card-title class="text-h6">
-          <v-icon start color="primary">mdi-send</v-icon>
-          Submit Invoice?
+    <v-dialog v-model="submitDialog" max-width="450">
+      <v-card v-if="submitInvoice">
+        <v-card-title class="text-subtitle-1 d-flex align-center">
+          <v-icon start color="primary" size="small">mdi-send</v-icon>
+          Submit Invoice to {{ submitInvoice.counterpartyName }}?
         </v-card-title>
 
-        <v-card-text>
-          <p>
-            You are about to submit this invoice to
-            <strong>{{ activeInvoice.counterpartyName }}</strong
-            >.
-          </p>
-          <p class="mt-2">
-            This will create <strong>{{ activeInvoice.lineItems.length }}</strong> reservation{{
-              activeInvoice.lineItems.length === 1 ? '' : 's'
+        <v-card-text class="py-3">
+          <p class="text-body-2 mb-2">
+            This will create {{ submitInvoice.itemCount }} reservation{{
+              submitInvoice.itemCount === 1 ? '' : 's'
             }}
-            for {{ activeInvoice.counterpartyName }} to confirm.
+            for {{ submitInvoice.counterpartyName }} to confirm.
           </p>
 
-          <v-alert
-            v-if="buyItems.length > 0 && sellItems.length > 0"
-            type="info"
-            variant="tonal"
-            class="mt-3"
-          >
-            <strong>Mixed Invoice:</strong> This invoice contains both buy and sell orders.
-            <ul class="mt-1 mb-0">
-              <li>
-                {{ buyItems.length }} item{{ buyItems.length === 1 ? '' : 's' }} you're buying FROM
-                {{ activeInvoice.counterpartyName }}
-              </li>
-              <li>
-                {{ sellItems.length }} item{{ sellItems.length === 1 ? '' : 's' }} you're selling TO
-                {{ activeInvoice.counterpartyName }}
-              </li>
-            </ul>
-          </v-alert>
-
-          <div class="mt-3">
-            <div
-              v-for="total in activeInvoice.totalsByCurrency"
-              :key="total.currency"
-              class="d-flex justify-space-between"
-            >
-              <span>Total ({{ total.currency }}):</span>
-              <strong>{{ formatPrice(total.total, total.currency) }}</strong>
-            </div>
+          <div class="totals-summary">
+            <template v-if="submitInvoice.buyTotalsByCurrency.length > 0">
+              <div class="total-row">
+                <span class="label">You pay:</span>
+                <span
+                  v-for="total in submitInvoice.buyTotalsByCurrency"
+                  :key="`buy-${total.currency}`"
+                  class="text-warning font-weight-medium"
+                >
+                  {{ formatPrice(total.total, total.currency) }}
+                </span>
+              </div>
+            </template>
+            <template v-if="submitInvoice.sellTotalsByCurrency.length > 0">
+              <div class="total-row">
+                <span class="label">You receive:</span>
+                <span
+                  v-for="total in submitInvoice.sellTotalsByCurrency"
+                  :key="`sell-${total.currency}`"
+                  class="text-success font-weight-medium"
+                >
+                  {{ formatPrice(total.total, total.currency) }}
+                </span>
+              </div>
+            </template>
           </div>
         </v-card-text>
 
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="submitDialog = false">Cancel</v-btn>
-          <v-btn color="primary" variant="elevated" :loading="submitting" @click="handleSubmit">
-            Submit Invoice
+          <v-btn variant="text" size="small" @click="submitDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="elevated"
+            size="small"
+            :loading="submittingInvoiceId === submitInvoice.id"
+            @click="handleSubmit"
+          >
+            Submit
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-card>
+
+    <!-- Delete Confirmation Dialog -->
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card v-if="deleteInvoice">
+        <v-card-title class="text-subtitle-1 d-flex align-center">
+          <v-icon start color="error" size="small">mdi-delete</v-icon>
+          Delete Invoice?
+        </v-card-title>
+
+        <v-card-text class="py-3">
+          <p class="text-body-2">
+            Are you sure you want to delete the invoice for
+            <strong>{{ deleteInvoice.counterpartyName }}</strong
+            >?
+          </p>
+          <p class="text-body-2 text-grey mt-2">
+            This will remove {{ deleteInvoice.itemCount }} item{{
+              deleteInvoice.itemCount === 1 ? '' : 's'
+            }}
+            from the invoice. This action cannot be undone.
+          </p>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" size="small" @click="deleteDialog = false">Cancel</v-btn>
+          <v-btn
+            color="error"
+            variant="elevated"
+            size="small"
+            :loading="deletingInvoiceId === deleteInvoice.id"
+            @click="handleDelete"
+          >
+            Delete
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Submit All Confirmation Dialog -->
+    <v-dialog v-model="submitAllDialog" max-width="450">
+      <v-card>
+        <v-card-title class="text-subtitle-1 d-flex align-center">
+          <v-icon start color="primary" size="small">mdi-send</v-icon>
+          Submit All Invoices?
+        </v-card-title>
+
+        <v-card-text class="py-3">
+          <p class="text-body-2 mb-2">
+            This will submit {{ draftInvoices.length }} invoice{{
+              draftInvoices.length === 1 ? '' : 's'
+            }}
+            to their respective counterparties.
+          </p>
+          <p class="text-body-2 text-grey">
+            Each counterparty will need to confirm their reservations.
+          </p>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" size="small" @click="submitAllDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="elevated"
+            size="small"
+            :loading="submittingAll"
+            @click="handleSubmitAll"
+          >
+            Submit All
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useInvoicesStore } from '../../stores/invoices'
-import type { Currency } from '@kawakawa/types'
+import type { Currency, Invoice, InvoiceSummary } from '@kawakawa/types'
 
 const emit = defineEmits<{
-  'invoice-submitted': [invoiceId: number]
+  'invoice-submitted': [invoiceId: number, invoicedQuantities: Record<string, number>]
+  'filter-add': [userName: string]
+  'add-invoice': []
 }>()
 
 const invoicesStore = useInvoicesStore()
-const { activeInvoice } = invoicesStore
+const { draftInvoices, loadDraftInvoices } = invoicesStore
 
-// Local state
-const submitDialog = ref(false)
-const submitting = ref(false)
+// Load draft invoices and prefetch their details on mount
+// Prefetching ensures allClaimedQuantities has complete data for shopping list sync
+onMounted(async () => {
+  await loadDraftInvoices()
+  // Prefetch all invoice details in the background
+  prefetchAllInvoices()
+})
+
+// Prefetch all invoice details (for shopping list sync)
+// Uses setActive: false to avoid auto-expanding panels
+const prefetchAllInvoices = async () => {
+  for (const invoice of draftInvoices.value) {
+    // Skip if already loaded
+    if (expandedInvoices.value[invoice.id]) continue
+    // Load in background without setting as active
+    try {
+      const details = await invoicesStore.loadInvoice(invoice.id, false)
+      if (details) {
+        expandedInvoices.value[invoice.id] = details
+      }
+    } catch {
+      // Silently fail - user can still expand manually
+    }
+  }
+}
+
+// Watch for new draft invoices and prefetch them
+watch(draftInvoices, newDrafts => {
+  for (const invoice of newDrafts) {
+    if (!expandedInvoices.value[invoice.id]) {
+      // Prefetch in background without setting as active
+      invoicesStore.loadInvoice(invoice.id, false).then(details => {
+        if (details) {
+          expandedInvoices.value[invoice.id] = details
+        }
+      })
+    }
+  }
+})
+
+// State
+const expandedPanels = ref<number[]>([])
+const expandedInvoices = ref<Record<number, Invoice>>({})
+const loadingInvoiceId = ref<number | null>(null)
 const removingItemId = ref<number | null>(null)
+const submittingInvoiceId = ref<number | null>(null)
+const deletingInvoiceId = ref<number | null>(null)
+const submitDialog = ref(false)
+const submitInvoice = ref<InvoiceSummary | null>(null)
+const deleteDialog = ref(false)
+const deleteInvoice = ref<InvoiceSummary | null>(null)
+const submitAllDialog = ref(false)
+const submittingAll = ref(false)
 
-// Computed
-const buyItems = computed(
-  () => activeInvoice.value?.lineItems.filter(item => item.orderType === 'buy') ?? []
+// Watch for panel expansion to load invoice details
+watch(expandedPanels, async newPanels => {
+  for (const invoiceId of newPanels) {
+    if (!expandedInvoices.value[invoiceId]) {
+      await loadInvoiceDetails(invoiceId)
+    }
+  }
+})
+
+// Watch for changes to the active invoice in the store
+// This keeps our local cache in sync when items are added/removed via the store
+watch(
+  () => invoicesStore.activeInvoice.value,
+  newActiveInvoice => {
+    if (newActiveInvoice) {
+      // Update the local cache with the new invoice data
+      expandedInvoices.value[newActiveInvoice.id] = newActiveInvoice
+      // Auto-expand the panel if not already expanded
+      if (!expandedPanels.value.includes(newActiveInvoice.id)) {
+        expandedPanels.value.push(newActiveInvoice.id)
+      }
+    }
+  }
 )
 
-const sellItems = computed(
-  () => activeInvoice.value?.lineItems.filter(item => item.orderType === 'sell') ?? []
-)
+// Load full invoice details when expanded
+const loadInvoiceDetails = async (invoiceId: number) => {
+  loadingInvoiceId.value = invoiceId
+  try {
+    const invoice = await invoicesStore.loadInvoice(invoiceId)
+    if (invoice) {
+      expandedInvoices.value[invoiceId] = invoice
+    }
+  } finally {
+    loadingInvoiceId.value = null
+  }
+}
 
-// Methods
+// Format price
 const formatPrice = (value: number, currency: Currency): string => {
   const formatted = value.toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -217,46 +399,289 @@ const formatPrice = (value: number, currency: Currency): string => {
   return `${formatted} ${currency}`
 }
 
-const removeItem = async (itemId: number) => {
-  if (!activeInvoice.value) return
-
+// Remove line item
+const removeItem = async (invoiceId: number, itemId: number) => {
   removingItemId.value = itemId
   try {
-    await invoicesStore.removeLineItem(activeInvoice.value.id, itemId)
+    await invoicesStore.removeLineItem(invoiceId, itemId)
+    // Reload the invoice details
+    await loadInvoiceDetails(invoiceId)
   } finally {
     removingItemId.value = null
   }
 }
 
-const handleSubmit = async () => {
-  if (!activeInvoice.value) return
+// Open submit dialog
+const openSubmitDialog = (invoice: InvoiceSummary) => {
+  submitInvoice.value = invoice
+  submitDialog.value = true
+}
 
-  submitting.value = true
+// Handle submit
+const handleSubmit = async () => {
+  if (!submitInvoice.value) return
+
+  const invoiceId = submitInvoice.value.id
+  // Capture invoiced quantities before submission (for shopping list updates)
+  // Only count sell orders (user is buying these commodities)
+  const invoicedQuantities: Record<string, number> = {}
+  const invoiceDetails = expandedInvoices.value[invoiceId]
+  if (invoiceDetails) {
+    for (const item of invoiceDetails.lineItems) {
+      if (item.orderType === 'sell') {
+        invoicedQuantities[item.commodityTicker] =
+          (invoicedQuantities[item.commodityTicker] ?? 0) + item.quantity
+      }
+    }
+  }
+
+  submittingInvoiceId.value = invoiceId
   try {
-    const result = await invoicesStore.submitInvoice(activeInvoice.value.id)
+    const result = await invoicesStore.submitInvoice(invoiceId)
     if (result) {
-      emit('invoice-submitted', activeInvoice.value.id)
+      emit('invoice-submitted', invoiceId, invoicedQuantities)
+      // Remove from expanded cache
+      delete expandedInvoices.value[invoiceId]
+      // Remove from expanded panels
+      expandedPanels.value = expandedPanels.value.filter(id => id !== invoiceId)
       submitDialog.value = false
     }
   } finally {
-    submitting.value = false
+    submittingInvoiceId.value = null
   }
+}
+
+// Open delete dialog
+const openDeleteDialog = (invoice: InvoiceSummary) => {
+  deleteInvoice.value = invoice
+  deleteDialog.value = true
+}
+
+// Handle delete
+const handleDelete = async () => {
+  if (!deleteInvoice.value) return
+
+  deletingInvoiceId.value = deleteInvoice.value.id
+  try {
+    const result = await invoicesStore.deleteInvoice(deleteInvoice.value.id)
+    if (result) {
+      // Remove from expanded cache
+      delete expandedInvoices.value[deleteInvoice.value.id]
+      // Remove from expanded panels
+      expandedPanels.value = expandedPanels.value.filter(id => id !== deleteInvoice.value?.id)
+      deleteDialog.value = false
+    }
+  } finally {
+    deletingInvoiceId.value = null
+  }
+}
+
+// Open submit all dialog
+const openSubmitAllDialog = () => {
+  submitAllDialog.value = true
+}
+
+// Handle submit all
+const handleSubmitAll = async () => {
+  submittingAll.value = true
+  try {
+    // Submit all invoices in sequence
+    for (const invoice of draftInvoices.value) {
+      // Capture invoiced quantities before submission
+      const invoicedQuantities: Record<string, number> = {}
+      const invoiceDetails = expandedInvoices.value[invoice.id]
+      if (invoiceDetails) {
+        for (const item of invoiceDetails.lineItems) {
+          if (item.orderType === 'sell') {
+            invoicedQuantities[item.commodityTicker] =
+              (invoicedQuantities[item.commodityTicker] ?? 0) + item.quantity
+          }
+        }
+      }
+
+      const result = await invoicesStore.submitInvoice(invoice.id)
+      if (result) {
+        emit('invoice-submitted', invoice.id, invoicedQuantities)
+        // Remove from expanded cache
+        delete expandedInvoices.value[invoice.id]
+      }
+    }
+    // Clear expanded panels
+    expandedPanels.value = []
+    submitAllDialog.value = false
+  } finally {
+    submittingAll.value = false
+  }
+}
+
+// Emit filter add event
+const emitFilterAdd = (userName: string) => {
+  emit('filter-add', userName)
 }
 </script>
 
 <style scoped>
-.invoice-panel {
-  max-height: 100%;
+.invoice-panel-wrapper {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
-.invoice-panel .v-card-text {
+.invoice-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.invoice-accordion-container {
   flex: 1;
   overflow-y: auto;
 }
 
+.invoice-panel {
+  background: transparent !important;
+}
+
+.invoice-header {
+  padding: 8px 12px !important;
+  min-height: 48px !important;
+}
+
+.invoice-header-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.invoice-title {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.counterparty-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-btn {
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.filter-btn:hover {
+  opacity: 1;
+}
+
+.invoice-totals {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.total-chip {
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.total-chip.buy {
+  background: rgba(var(--v-theme-warning), 0.15);
+  color: rgb(var(--v-theme-warning));
+}
+
+.total-chip.sell {
+  background: rgba(var(--v-theme-success), 0.15);
+  color: rgb(var(--v-theme-success));
+}
+
+.invoice-content {
+  padding: 0 !important;
+}
+
+.invoice-content :deep(.v-expansion-panel-text__wrapper) {
+  padding: 8px 12px;
+}
+
+.line-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .line-item {
-  min-height: 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.line-item-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.order-type-chip {
+  font-size: 10px !important;
+  height: 18px !important;
+}
+
+.commodity {
+  font-weight: 500;
+}
+
+.quantity {
+  color: rgba(var(--v-theme-on-surface), 0.6);
+}
+
+.line-item-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.price {
+  font-weight: 500;
+}
+
+.invoice-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.panel-footer {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.totals-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.total-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.total-row .label {
+  color: rgba(var(--v-theme-on-surface), 0.6);
 }
 </style>

@@ -25,10 +25,13 @@ const props = withDefaults(
     showIcon?: boolean
     /** Icon size in pixels */
     iconSize?: number
+    /** Maximum name length before truncation (null = no truncation) */
+    maxNameLength?: number | null
   }>(),
   {
     showIcon: undefined,
     iconSize: 48,
+    maxNameLength: null,
   }
 )
 
@@ -48,12 +51,17 @@ const commodity = computed((): Commodity | null => {
   }
 })
 
-// Display text based on user's preference
+// Display text based on user's preference, with optional truncation
 const displayText = computed(() => {
-  return commodityService.getCommodityDisplay(
+  let text = commodityService.getCommodityDisplay(
     props.ticker,
     settingsStore.commodityDisplayMode.value
   )
+  // Apply truncation if maxNameLength is set
+  if (props.maxNameLength !== null && text.length > props.maxNameLength) {
+    text = text.slice(0, props.maxNameLength) + '…'
+  }
+  return text
 })
 
 // Show icon based on setting or override

@@ -175,6 +175,16 @@ export const SETTING_DEFINITIONS = {
     description: 'Commodities that appear first in dropdown menus',
   } satisfies SettingDef<string[], 'string[]'>,
 
+  'market.updateShoppingList': {
+    key: 'market.updateShoppingList',
+    type: 'boolean',
+    defaultValue: null as boolean | null,
+    category: SETTING_CATEGORIES.MARKET,
+    label: 'Auto-Update Shopping List',
+    description:
+      'Automatically update the shopping list when submitting invoices (remove fulfilled items, reduce partial quantities)',
+  } satisfies SettingDef<boolean | null, 'boolean'>,
+
   // ==================== NOTIFICATION SETTINGS ====================
   'notifications.browserEnabled': {
     key: 'notifications.browserEnabled',

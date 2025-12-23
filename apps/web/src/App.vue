@@ -67,13 +67,29 @@
       </template>
       <v-tooltip location="bottom">
         <template #activator="{ props }">
-          <v-btn v-bind="props" icon size="small" class="mx-1" @click="logout">
+          <v-btn v-bind="props" icon size="small" class="mx-1" @click="logoutDialog = true">
             <v-icon>mdi-logout</v-icon>
           </v-btn>
         </template>
         Logout
       </v-tooltip>
     </v-app-bar>
+
+    <!-- Logout Confirmation Dialog -->
+    <v-dialog v-model="logoutDialog" max-width="350">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon start color="warning">mdi-logout</v-icon>
+          Logout
+        </v-card-title>
+        <v-card-text> Are you sure you want to logout? </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="logoutDialog = false">Cancel</v-btn>
+          <v-btn color="warning" variant="elevated" @click="confirmLogout">Logout</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-main>
       <!-- App Update Banner -->
@@ -108,6 +124,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
+import { useInvoicesStore } from './stores/invoices'
+import { useShoppingListStore } from './stores/shoppingList'
 import { commodityService } from './services/commodityService'
 import { locationService } from './services/locationService'
 import { roleService } from './services/roleService'
@@ -118,6 +136,8 @@ import type { SyncDataKey } from '@kawakawa/types'
 
 const router = useRouter()
 const userStore = useUserStore()
+const invoicesStore = useInvoicesStore()
+const shoppingListStore = useShoppingListStore()
 const isAuthenticated = ref(false)
 const pendingApprovalsCount = ref(0)
 
@@ -128,6 +148,9 @@ const appUpdateDismissed = ref(false)
 // Data update snackbar state
 const showDataUpdateSnackbar = ref(false)
 const dataUpdateMessage = ref('')
+
+// Logout dialog state
+const logoutDialog = ref(false)
 
 const isVerified = computed(() => {
   const user = userStore.getUser()
@@ -168,9 +191,12 @@ const checkAuth = () => {
   isAuthenticated.value = !!localStorage.getItem('jwt')
 }
 
-const logout = () => {
+const confirmLogout = () => {
+  logoutDialog.value = false
   localStorage.removeItem('jwt')
   userStore.clearUser()
+  invoicesStore.clearAll()
+  shoppingListStore.clearList()
   isAuthenticated.value = false
   router.push('/login')
 }
@@ -190,6 +216,8 @@ const validateSession = async () => {
     console.warn('Session invalid, clearing token:', error)
     localStorage.removeItem('jwt')
     userStore.clearUser()
+    invoicesStore.clearAll()
+    shoppingListStore.clearList()
     isAuthenticated.value = false
     router.push('/login')
   }

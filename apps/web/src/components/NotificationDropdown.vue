@@ -155,7 +155,17 @@ function getContextKey(notification: Notification): string {
   const data = notification.data as Record<string, unknown> | null
   if (!data) return `generic-${notification.id}`
 
-  // Group by reservation
+  // Group invoice notifications by invoiceId
+  if (notification.type.startsWith('invoice_') && data.invoiceId) {
+    return `invoice-${data.invoiceId}`
+  }
+
+  // Group reservation notifications by invoiceId if present (for invoice-related reservations)
+  if (notification.type.startsWith('reservation_') && data.invoiceId) {
+    return `invoice-${data.invoiceId}`
+  }
+
+  // Group by reservation (for standalone reservations without invoice)
   if (notification.type.startsWith('reservation_') && data.reservationId) {
     return `reservation-${data.reservationId}`
   }
@@ -307,6 +317,20 @@ async function handleNotificationClick(group: NotificationGroup) {
 
   // Determine what to open based on notification type
   if (data) {
+    // For invoice notifications, navigate to my-orders with invoice query param
+    if (notification.type.startsWith('invoice_') && data.invoiceId) {
+      router.push({ name: 'my-orders', query: { invoice: String(data.invoiceId) } })
+      closeMenu()
+      return
+    }
+
+    // For reservation notifications with invoiceId, navigate to my-orders
+    if (notification.type.startsWith('reservation_') && data.invoiceId) {
+      router.push({ name: 'my-orders', query: { invoice: String(data.invoiceId) } })
+      closeMenu()
+      return
+    }
+
     if (notification.type.startsWith('reservation_')) {
       // Open the order detail dialog
       if (data.sellOrderId) {
@@ -364,6 +388,10 @@ function getNotificationIcon(type: NotificationType): string {
       return 'mdi-cancel'
     case 'reservation_expired':
       return 'mdi-clock-alert'
+    case 'invoice_submitted':
+      return 'mdi-file-document-check'
+    case 'invoice_cancelled':
+      return 'mdi-file-document-remove'
     case 'user_needs_approval':
       return 'mdi-account-clock'
     case 'user_auto_approved':
@@ -379,6 +407,7 @@ function getNotificationIcon(type: NotificationType): string {
 function getNotificationColor(type: NotificationType): string {
   switch (type) {
     case 'reservation_placed':
+    case 'invoice_submitted':
       return 'info'
     case 'reservation_confirmed':
     case 'reservation_fulfilled':
@@ -388,6 +417,7 @@ function getNotificationColor(type: NotificationType): string {
     case 'reservation_rejected':
     case 'reservation_cancelled':
     case 'reservation_expired':
+    case 'invoice_cancelled':
     case 'user_rejected':
       return 'error'
     case 'user_needs_approval':

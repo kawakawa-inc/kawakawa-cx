@@ -43,6 +43,13 @@
       "when": 1766292290558,
       "tag": "0005_living_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1766386236602,
+      "tag": "0006_ordinary_kulan_gath",
+      "breakpoints": true
     }
   ]
 }

@@ -168,7 +168,7 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
   // Get FIO usernames
   const fioUsernameMap = await getFioUsernames(counterpartyIds)
 
-  // Get line item counts and totals for each invoice
+  // Get line item counts and totals for each invoice, grouped by order type
   const invoiceIds = drafts.map(d => d.id)
   const lineItemStats = await db
     .select({
@@ -176,26 +176,63 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       itemCount: sql<number>`count(*)::int`,
       currency: invoiceLineItems.currency,
       total: sql<number>`sum(${invoiceLineItems.quantity} * ${invoiceLineItems.unitPrice}::numeric)::numeric`,
+      // 'sell' when sellOrderId is set (user buying), 'buy' when buyOrderId is set (user selling)
+      orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
     })
     .from(invoiceLineItems)
     .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
-    .groupBy(invoiceLineItems.invoiceId, invoiceLineItems.currency)
+    .groupBy(
+      invoiceLineItems.invoiceId,
+      invoiceLineItems.currency,
+      sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
+    )
 
-  // Build stats map
-  const statsMap = new Map<number, { itemCount: number; totalsByCurrency: Map<Currency, number> }>()
+  // Build stats map with buy/sell breakdown
+  const statsMap = new Map<
+    number,
+    {
+      itemCount: number
+      totalsByCurrency: Map<Currency, number>
+      buyTotalsByCurrency: Map<Currency, number>
+      sellTotalsByCurrency: Map<Currency, number>
+    }
+  >()
   for (const stat of lineItemStats) {
     if (!statsMap.has(stat.invoiceId)) {
-      statsMap.set(stat.invoiceId, { itemCount: 0, totalsByCurrency: new Map() })
+      statsMap.set(stat.invoiceId, {
+        itemCount: 0,
+        totalsByCurrency: new Map(),
+        buyTotalsByCurrency: new Map(),
+        sellTotalsByCurrency: new Map(),
+      })
     }
     const entry = statsMap.get(stat.invoiceId)!
     entry.itemCount += stat.itemCount
-    entry.totalsByCurrency.set(stat.currency, parseFloat(stat.total?.toString() ?? '0'))
+    const total = parseFloat(stat.total?.toString() ?? '0')
+    entry.totalsByCurrency.set(
+      stat.currency,
+      (entry.totalsByCurrency.get(stat.currency) ?? 0) + total
+    )
+
+    // Separate buy vs sell totals
+    // orderType='sell' means user is BUYING (from a sell order)
+    // orderType='buy' means user is SELLING (to a buy order)
+    if (stat.orderType === 'sell') {
+      entry.buyTotalsByCurrency.set(stat.currency, total)
+    } else {
+      entry.sellTotalsByCurrency.set(stat.currency, total)
+    }
   }
 
   return drafts.map(draft => {
     const counterparty = counterpartyMap.get(draft.counterpartyUserId)
     const fioUsername = fioUsernameMap.get(draft.counterpartyUserId)
-    const stats = statsMap.get(draft.id) ?? { itemCount: 0, totalsByCurrency: new Map() }
+    const stats = statsMap.get(draft.id) ?? {
+      itemCount: 0,
+      totalsByCurrency: new Map(),
+      buyTotalsByCurrency: new Map(),
+      sellTotalsByCurrency: new Map(),
+    }
 
     return {
       id: draft.id,
@@ -203,12 +240,19 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       counterpartyName:
         fioUsername ?? counterparty?.displayName ?? counterparty?.username ?? 'Unknown',
       status: draft.status as InvoiceStatus,
+      direction: 'sent' as const, // User's own drafts are always 'sent'
       name: draft.name,
       itemCount: stats.itemCount,
       totalsByCurrency: Array.from(stats.totalsByCurrency.entries()).map(([currency, total]) => ({
         currency,
         total,
       })),
+      buyTotalsByCurrency: Array.from(stats.buyTotalsByCurrency.entries()).map(
+        ([currency, total]) => ({ currency, total })
+      ),
+      sellTotalsByCurrency: Array.from(stats.sellTotalsByCurrency.entries()).map(
+        ([currency, total]) => ({ currency, total })
+      ),
       createdAt: draft.createdAt.toISOString(),
       updatedAt: draft.updatedAt.toISOString(),
     }

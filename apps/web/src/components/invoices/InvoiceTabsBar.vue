@@ -1,59 +1,79 @@
 <template>
-  <v-card class="mb-4">
-    <v-card-text class="py-2">
-      <div class="d-flex align-center flex-wrap ga-2">
-        <!-- All Tab -->
-        <v-chip
-          :color="!activeInvoiceId ? 'primary' : 'default'"
-          :variant="!activeInvoiceId ? 'elevated' : 'outlined'"
-          @click="onAllClick"
-        >
-          All Orders
-        </v-chip>
+  <div class="invoice-tabs-bar">
+    <v-tabs
+      :model-value="activeInvoiceId ?? 'all'"
+      density="compact"
+      show-arrows
+      class="invoice-tabs"
+    >
+      <!-- All Tab -->
+      <v-tab value="all" @click="onAllClick"> All </v-tab>
 
-        <!-- Invoice Tabs -->
-        <v-chip
-          v-for="invoice in draftInvoices"
-          :key="invoice.id"
-          :color="activeInvoiceId === invoice.id ? 'primary' : 'default'"
-          :variant="activeInvoiceId === invoice.id ? 'elevated' : 'outlined'"
-          closable
-          @click="onInvoiceClick(invoice.id)"
-          @click:close.stop="onCloseClick(invoice)"
-        >
-          <template #prepend>
-            <v-icon size="small" class="mr-1">mdi-file-document-outline</v-icon>
-          </template>
-          {{ invoice.counterpartyName }}
-          <template #append>
-            <v-badge
-              v-if="invoice.itemCount > 0"
-              :content="invoice.itemCount"
-              color="secondary"
-              inline
-              class="ml-1"
-            />
-          </template>
-        </v-chip>
-
-        <!-- Create New Invoice Button -->
+      <!-- Invoice Tabs -->
+      <v-tab
+        v-for="invoice in draftInvoices"
+        :key="invoice.id"
+        :value="invoice.id"
+        class="invoice-tab"
+        @click="onInvoiceClick(invoice.id)"
+      >
+        <v-icon size="small" class="mr-1">mdi-file-document-outline</v-icon>
+        {{ invoice.counterpartyName }}
+        <v-badge
+          v-if="invoice.itemCount > 0"
+          :content="invoice.itemCount"
+          color="secondary"
+          inline
+          class="ml-1"
+        />
         <v-btn
-          v-if="showCreateButton"
           icon
           size="x-small"
-          variant="outlined"
-          @click="onCreateClick"
+          variant="text"
+          class="ml-1 close-btn"
+          @click.stop="onCloseClick(invoice)"
         >
-          <v-icon size="small">mdi-plus</v-icon>
-          <v-tooltip activator="parent" location="top"> Create new invoice </v-tooltip>
+          <v-icon size="small">mdi-close</v-icon>
         </v-btn>
+      </v-tab>
 
-        <v-spacer />
+      <!-- + Invoice Tab -->
+      <v-tab
+        v-if="showCreateButton"
+        value="create"
+        class="create-tab"
+        @click.prevent="onCreateClick"
+      >
+        <v-icon size="small" class="mr-1">mdi-plus</v-icon>
+        Invoice
+      </v-tab>
+    </v-tabs>
 
-        <!-- Loading indicator -->
-        <v-progress-circular v-if="isLoading" indeterminate size="20" width="2" color="primary" />
-      </div>
-    </v-card-text>
+    <!-- Actions aligned right -->
+    <div class="d-flex align-center ml-2">
+      <!-- Close All Button (submit all draft invoices) -->
+      <v-btn
+        v-if="draftInvoices.length > 0"
+        size="small"
+        variant="tonal"
+        color="success"
+        prepend-icon="mdi-send-check"
+        :loading="closingAll"
+        @click="onCloseAllClick"
+      >
+        Close All ({{ draftInvoices.length }})
+      </v-btn>
+
+      <!-- Loading indicator -->
+      <v-progress-circular
+        v-if="isLoading"
+        indeterminate
+        size="20"
+        width="2"
+        color="primary"
+        class="ml-2"
+      />
+    </div>
 
     <!-- Delete Invoice Confirmation Dialog -->
     <v-dialog v-model="deleteDialog" max-width="400">
@@ -111,7 +131,39 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-card>
+
+    <!-- Close All Confirmation Dialog -->
+    <v-dialog v-model="closeAllDialog" max-width="450">
+      <v-card>
+        <v-card-title class="text-h6"> Submit All Invoices? </v-card-title>
+        <v-card-text>
+          <p>
+            Are you sure you want to submit all <strong>{{ draftInvoices.length }}</strong> draft
+            invoices?
+          </p>
+          <p class="text-medium-emphasis mt-2">
+            This will create reservations for each line item and notify the trading partners.
+          </p>
+          <v-list density="compact" class="mt-2">
+            <v-list-item v-for="inv in draftInvoices" :key="inv.id" class="px-0">
+              <template #prepend>
+                <v-icon size="small" color="primary">mdi-file-document-outline</v-icon>
+              </template>
+              <v-list-item-title>{{ inv.counterpartyName }}</v-list-item-title>
+              <v-list-item-subtitle>{{ inv.itemCount }} items</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeAllDialog = false">Cancel</v-btn>
+          <v-btn color="success" variant="elevated" :loading="closingAll" @click="confirmCloseAll">
+            Submit All
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -132,6 +184,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'invoice-selected': [invoiceId: number | null]
   'invoice-deleted': [invoiceId: number]
+  'all-invoices-submitted': []
 }>()
 
 const invoicesStore = useInvoicesStore()
@@ -147,6 +200,10 @@ const createDialog = ref(false)
 const selectedPartnerId = ref<number | null>(null)
 const loadingPartners = ref(false)
 const creating = ref(false)
+
+// Close all dialog state
+const closeAllDialog = ref(false)
+const closingAll = ref(false)
 
 // Compute available partners (exclude those with existing draft invoices)
 const availablePartners = computed(() => {
@@ -212,10 +269,51 @@ const confirmCreate = async () => {
     creating.value = false
   }
 }
+
+const onCloseAllClick = () => {
+  closeAllDialog.value = true
+}
+
+const confirmCloseAll = async () => {
+  closingAll.value = true
+  try {
+    // Submit all draft invoices sequentially
+    for (const invoice of draftInvoices.value) {
+      await invoicesStore.submitInvoice(invoice.id)
+    }
+    closeAllDialog.value = false
+    // Clear the active invoice since they're all submitted now
+    invoicesStore.clearActiveInvoice()
+    emit('all-invoices-submitted')
+    emit('invoice-selected', null)
+  } finally {
+    closingAll.value = false
+  }
+}
 </script>
 
 <style scoped>
-.ga-2 {
-  gap: 8px;
+.invoice-tabs-bar {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  margin-bottom: 16px;
+}
+
+.invoice-tabs {
+  flex: 1;
+}
+
+.invoice-tab .close-btn {
+  opacity: 0.6;
+  margin-left: 4px;
+}
+
+.invoice-tab .close-btn:hover {
+  opacity: 1;
+}
+
+.create-tab {
+  color: rgb(var(--v-theme-primary));
 }
 </style>

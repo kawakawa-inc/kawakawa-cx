@@ -511,6 +511,33 @@
 
                 <v-divider class="my-4" />
 
+                <div class="text-subtitle-1 font-weight-bold mb-3">Shopping List</div>
+
+                <v-switch
+                  :model-value="settingsStore.updateShoppingList.value ?? false"
+                  label="Auto-Update on Invoice Submit"
+                  color="primary"
+                  hide-details
+                  class="mb-2"
+                  @update:model-value="autoSaveSetting('market.updateShoppingList', $event)"
+                >
+                  <template #prepend>
+                    <v-icon>mdi-cart-check</v-icon>
+                  </template>
+                  <template #append>
+                    <v-tooltip
+                      location="top"
+                      text="Automatically update shopping list when invoices are submitted (remove fulfilled items, reduce partial quantities)"
+                    >
+                      <template #activator="{ props }">
+                        <v-icon v-bind="props" size="small">mdi-help-circle-outline</v-icon>
+                      </template>
+                    </v-tooltip>
+                  </template>
+                </v-switch>
+
+                <v-divider class="my-4" />
+
                 <div class="text-subtitle-1 font-weight-bold mb-3">Favorites</div>
 
                 <KeyValueAutocomplete

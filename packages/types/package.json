@@ -21,6 +21,10 @@
     "./xit": {
       "types": "./dist/xit.d.ts",
       "import": "./dist/xit.js"
+    },
+    "./shopping-list": {
+      "types": "./dist/shopping-list.d.ts",
+      "import": "./dist/shopping-list.js"
     }
   },
   "scripts": {

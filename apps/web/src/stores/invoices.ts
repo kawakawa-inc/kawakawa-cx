@@ -17,9 +17,33 @@ const activeInvoice = ref<Invoice | null>(null)
 const isLoading = ref(false)
 const error = ref<string | null>(null)
 
+// Cache of loaded invoice details (keyed by invoice ID)
+// Used to track line items across all loaded invoices for shopping list sync
+const loadedInvoiceDetails = ref<Map<number, Invoice>>(new Map())
+
 export const useInvoicesStore = () => {
   // Computed properties
   const hasActiveInvoice = computed(() => activeInvoiceId.value !== null)
+
+  // Aggregate all line items from all loaded invoices (for shopping list sync)
+  // Only counts draft invoices (submitted ones are not relevant for shopping list)
+  const allClaimedQuantities = computed((): Record<string, number> => {
+    const claimed: Record<string, number> = {}
+    const draftIds = new Set(draftInvoices.value.map(inv => inv.id))
+
+    for (const [invoiceId, invoice] of loadedInvoiceDetails.value) {
+      // Only count if it's still a draft invoice
+      if (!draftIds.has(invoiceId)) continue
+
+      for (const item of invoice.lineItems) {
+        // Only count items from sell orders (user is buying)
+        if (item.orderType === 'sell') {
+          claimed[item.commodityTicker] = (claimed[item.commodityTicker] ?? 0) + item.quantity
+        }
+      }
+    }
+    return claimed
+  })
 
   const activeCounterpartyUserId = computed(() => {
     return activeInvoice.value?.counterpartyUserId ?? null
@@ -64,13 +88,18 @@ export const useInvoicesStore = () => {
   }
 
   // Load a specific invoice by ID
-  const loadInvoice = async (id: number): Promise<Invoice | null> => {
+  // If setActive is false, only caches the invoice for shopping list sync without setting it as active
+  const loadInvoice = async (id: number, setActive = true): Promise<Invoice | null> => {
     isLoading.value = true
     error.value = null
     try {
       const invoice = await api.invoices.get(id)
-      activeInvoice.value = invoice
-      activeInvoiceId.value = id
+      if (setActive) {
+        activeInvoice.value = invoice
+        activeInvoiceId.value = id
+      }
+      // Cache the invoice details for shopping list sync
+      loadedInvoiceDetails.value.set(id, invoice)
       return invoice
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load invoice'
@@ -103,6 +132,16 @@ export const useInvoicesStore = () => {
     activeInvoice.value = null
   }
 
+  // Clear all invoice state (for logout)
+  const clearAll = (): void => {
+    draftInvoices.value = []
+    activeInvoiceId.value = null
+    activeInvoice.value = null
+    loadedInvoiceDetails.value.clear()
+    isLoading.value = false
+    error.value = null
+  }
+
   // Add a line item to an invoice
   const addLineItem = async (
     invoiceId: number,
@@ -125,7 +164,7 @@ export const useInvoicesStore = () => {
     }
   }
 
-  // Add to active invoice or create one for the partner
+  // Add to active invoice or get/create one for the partner
   const addToActiveOrCreate = async (
     counterpartyUserId: number,
     request: AddLineItemRequest
@@ -135,7 +174,7 @@ export const useInvoicesStore = () => {
       return addLineItem(activeInvoice.value.id, request)
     }
 
-    // Otherwise, get or create an invoice for this partner
+    // Otherwise, get or create an invoice for this partner (one draft per counterparty)
     const invoice = await getOrCreateForPartner(counterpartyUserId)
     if (!invoice) {
       return null
@@ -200,6 +239,8 @@ export const useInvoicesStore = () => {
       if (activeInvoiceId.value === id) {
         clearActiveInvoice()
       }
+      // Remove from cache (no longer a draft)
+      loadedInvoiceDetails.value.delete(id)
       // Reload draft list
       await loadDraftInvoices()
       return result
@@ -244,6 +285,8 @@ export const useInvoicesStore = () => {
       if (activeInvoiceId.value === id) {
         clearActiveInvoice()
       }
+      // Remove from cache
+      loadedInvoiceDetails.value.delete(id)
       // Reload draft list
       await loadDraftInvoices()
       return true
@@ -266,6 +309,22 @@ export const useInvoicesStore = () => {
     return draftInvoices.value.some(inv => inv.counterpartyUserId === counterpartyUserId)
   }
 
+  // Check if a sell order is in any loaded draft invoice
+  const isOrderInAnyDraftInvoice = (orderId: number, orderType: 'sell' | 'buy'): boolean => {
+    const draftIds = new Set(draftInvoices.value.map(inv => inv.id))
+
+    for (const [invoiceId, invoice] of loadedInvoiceDetails.value) {
+      // Only check draft invoices
+      if (!draftIds.has(invoiceId)) continue
+
+      const found = invoice.lineItems.some(li =>
+        orderType === 'sell' ? li.sellOrderId === orderId : li.buyOrderId === orderId
+      )
+      if (found) return true
+    }
+    return false
+  }
+
   return {
     // State
     draftInvoices,
@@ -279,6 +338,7 @@ export const useInvoicesStore = () => {
     activeCounterpartyUserId,
     activeCounterpartyName,
     invoiceCount,
+    allClaimedQuantities,
 
     // Actions
     loadDraftInvoices,
@@ -286,6 +346,7 @@ export const useInvoicesStore = () => {
     loadInvoice,
     setActiveInvoice,
     clearActiveInvoice,
+    clearAll,
     addLineItem,
     addToActiveOrCreate,
     updateLineItem,
@@ -295,5 +356,6 @@ export const useInvoicesStore = () => {
     deleteInvoice,
     findInvoiceForCounterparty,
     hasInvoiceForCounterparty,
+    isOrderInAnyDraftInvoice,
   }
 }

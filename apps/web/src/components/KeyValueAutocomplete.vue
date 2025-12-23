@@ -15,6 +15,7 @@
     :multiple="multiple"
     :chips="multiple"
     :closable-chips="multiple"
+    auto-select-first
     @focus="onFocus"
     @keydown="onKeydown"
     @update:model-value="onSelect"
@@ -128,6 +129,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string | null | string[]): void
   (e: 'update:favorites', value: string[]): void
+  (e: 'keydown', event: globalThis.KeyboardEvent): void
 }>()
 
 // Ref to the autocomplete component
@@ -212,9 +214,14 @@ const onFocus = () => {
   searchText.value = ''
 }
 
-// Handle Tab key to auto-fill selection or exact match
+// Handle keydown events - process Tab locally and forward all events to parent
 const onKeydown = (event: Event) => {
   const keyEvent = event as globalThis.KeyboardEvent
+
+  // Always emit to parent so they can handle Enter, Tab, etc.
+  emit('keydown', keyEvent)
+
+  // Only process Tab key locally for auto-fill behavior
   if (keyEvent.key !== 'Tab') return
 
   const search = searchText.value.toLowerCase().trim()

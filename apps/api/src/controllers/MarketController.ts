@@ -1,15 +1,11 @@
 import { Controller, Get, Query, Route, Security, Tags, Request } from 'tsoa'
 import type { Currency, OrderType, PricingMode } from '@kawakawa/types'
 import {
-  db,
-  sellOrders,
-  buyOrders,
-  fioInventory,
-  fioUserStorage,
-  users,
-  orderReservations,
-} from '../db/index.js'
-import { eq, inArray, sql } from 'drizzle-orm'
+  enrichSellOrdersWithQuantities,
+  getReservationStatsForBuyOrders,
+} from '@kawakawa/services/market'
+import { db, sellOrders, buyOrders, users } from '../db/index.js'
+import { eq } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
 import { fioClient } from '../services/fio/client.js'
@@ -105,26 +101,6 @@ interface FilteredBuyOrder {
   pricingMode: PricingMode
 }
 
-/**
- * Calculate available quantity based on FIO inventory and limit settings
- */
-function calculateAvailableQuantity(
-  fioQuantity: number,
-  limitMode: 'none' | 'max_sell' | 'reserve',
-  limitQuantity: number | null
-): number {
-  switch (limitMode) {
-    case 'none':
-      return fioQuantity
-    case 'max_sell':
-      return Math.min(fioQuantity, limitQuantity ?? 0)
-    case 'reserve':
-      return Math.max(0, fioQuantity - (limitQuantity ?? 0))
-    default:
-      return fioQuantity
-  }
-}
-
 @Route('market')
 @Tags('Market')
 @Security('jwt')
@@ -152,7 +128,7 @@ export class MarketController extends Controller {
       return []
     }
 
-    // Get all sell orders (including user's own)
+    // Get all sell orders with user info
     const orders = await db
       .select({
         id: sellOrders.id,
@@ -170,45 +146,23 @@ export class MarketController extends Controller {
       .from(sellOrders)
       .innerJoin(users, eq(sellOrders.userId, users.id))
 
-    // Get inventory for all sellers to calculate available quantities
-    const sellerIds = [...new Set(orders.map(o => o.userId))]
-
-    if (sellerIds.length === 0) {
+    if (orders.length === 0) {
       return []
     }
 
-    // Get all inventory data for sellers
-    const inventoryData = await db
-      .select({
-        userId: fioUserStorage.userId,
-        commodityTicker: fioInventory.commodityTicker,
-        quantity: fioInventory.quantity,
-        locationId: fioUserStorage.locationId,
-        fioUploadedAt: fioUserStorage.fioUploadedAt,
-      })
-      .from(fioInventory)
-      .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
-      .where(inArray(fioUserStorage.userId, sellerIds))
+    // Use shared service for quantity enrichment (handles FIO-aware expiration correctly)
+    const quantityInfo = await enrichSellOrdersWithQuantities(
+      orders.map(o => ({
+        id: o.id,
+        userId: o.userId,
+        commodityTicker: o.commodityTicker,
+        locationId: o.locationId,
+        limitMode: o.limitMode,
+        limitQuantity: o.limitQuantity,
+      }))
+    )
 
-    // Build inventory lookup map: "userId:ticker:locationId" -> { quantity, fioUploadedAt }
-    const inventoryMap = new Map<string, { quantity: number; fioUploadedAt: Date | null }>()
-    for (const item of inventoryData) {
-      if (item.locationId) {
-        const key = `${item.userId}:${item.commodityTicker}:${item.locationId}`
-        const existing = inventoryMap.get(key)
-        const newQuantity = (existing?.quantity ?? 0) + item.quantity
-        // Keep the most recent fioUploadedAt from any storage at this location
-        let fioUploadedAt = existing?.fioUploadedAt ?? null
-        if (item.fioUploadedAt) {
-          if (!fioUploadedAt || item.fioUploadedAt > fioUploadedAt) {
-            fioUploadedAt = item.fioUploadedAt
-          }
-        }
-        inventoryMap.set(key, { quantity: newQuantity, fioUploadedAt })
-      }
-    }
-
-    // Process orders and filter by permissions and availability
+    // Process orders and filter by permissions
     const filteredOrders: FilteredSellOrder[] = []
 
     for (const order of orders) {
@@ -226,60 +180,50 @@ export class MarketController extends Controller {
       // Filter by location if specified
       if (location && order.locationId !== location) continue
 
-      // Calculate available quantity
-      const key = `${order.userId}:${order.commodityTicker}:${order.locationId}`
-      const inventoryInfo = inventoryMap.get(key) ?? { quantity: 0, fioUploadedAt: null }
-      const availableQuantity = calculateAvailableQuantity(
-        inventoryInfo.quantity,
-        order.limitMode,
-        order.limitQuantity
-      )
+      // Get quantity info from shared service
+      const qty = quantityInfo.get(order.id)
 
-      // Only include if there's available quantity (always show user's own orders even if 0)
-      if (availableQuantity > 0 || isOwn) {
-        // Determine pricing mode and effective price
-        const orderPrice = parseFloat(order.price)
-        const pricingMode: PricingMode =
-          order.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
-        let effectivePrice: number | null = null
-        let isFallback = false
-        let priceLocationId: string | null = null
+      // Determine pricing mode and effective price
+      const orderPrice = parseFloat(order.price)
+      const pricingMode: PricingMode = order.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
+      let effectivePrice: number | null = null
+      let isFallback = false
+      let priceLocationId: string | null = null
 
-        if (pricingMode === 'dynamic' && order.priceListCode) {
-          // Calculate effective price from price list
-          const effPrice = await calculateEffectivePriceWithFallback(
-            order.priceListCode,
-            order.commodityTicker,
-            order.locationId,
-            order.currency
-          )
-          effectivePrice = effPrice?.finalPrice ?? null
-          isFallback = effPrice?.isFallback ?? false
-          priceLocationId = effPrice?.locationId ?? null
-        }
-
-        filteredOrders.push({
-          id: order.id,
-          userId: order.userId,
-          commodityTicker: order.commodityTicker,
-          locationId: order.locationId,
-          price: order.price,
-          currency: order.currency,
-          priceListCode: order.priceListCode,
-          orderType: order.orderType,
-          limitMode: order.limitMode,
-          limitQuantity: order.limitQuantity,
-          sellerName: order.sellerName,
-          fioQuantity: inventoryInfo.quantity,
-          availableQuantity,
-          isOwn,
-          fioUploadedAt: inventoryInfo.fioUploadedAt,
-          effectivePrice,
-          isFallback,
-          priceLocationId,
-          pricingMode,
-        })
+      if (pricingMode === 'dynamic' && order.priceListCode) {
+        // Calculate effective price from price list
+        const effPrice = await calculateEffectivePriceWithFallback(
+          order.priceListCode,
+          order.commodityTicker,
+          order.locationId,
+          order.currency
+        )
+        effectivePrice = effPrice?.finalPrice ?? null
+        isFallback = effPrice?.isFallback ?? false
+        priceLocationId = effPrice?.locationId ?? null
       }
+
+      filteredOrders.push({
+        id: order.id,
+        userId: order.userId,
+        commodityTicker: order.commodityTicker,
+        locationId: order.locationId,
+        price: order.price,
+        currency: order.currency,
+        priceListCode: order.priceListCode,
+        orderType: order.orderType,
+        limitMode: order.limitMode,
+        limitQuantity: order.limitQuantity,
+        sellerName: order.sellerName,
+        fioQuantity: qty?.fioQuantity ?? 0,
+        availableQuantity: qty?.availableQuantity ?? 0,
+        isOwn,
+        fioUploadedAt: qty?.fioUploadedAt ?? null,
+        effectivePrice,
+        isFallback,
+        priceLocationId,
+        pricingMode,
+      })
     }
 
     // Calculate jump counts if destination is provided
@@ -294,48 +238,9 @@ export class MarketController extends Controller {
       )
     }
 
-    // Get reservation counts for all sell orders (including fulfilled)
-    const sellOrderIds = filteredOrders.map(o => o.id)
-    const reservationMap = new Map<
-      number,
-      { count: number; quantity: number; fulfilledQuantity: number }
-    >()
-
-    if (sellOrderIds.length > 0) {
-      const reservationStats = await db
-        .select({
-          sellOrderId: orderReservations.sellOrderId,
-          count: sql<number>`count(*) filter (where ${orderReservations.status} in ('pending', 'confirmed'))::int`,
-          quantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} in ('pending', 'confirmed')), 0)::int`,
-          fulfilledQuantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} = 'fulfilled'), 0)::int`,
-        })
-        .from(orderReservations)
-        .where(inArray(orderReservations.sellOrderId, sellOrderIds))
-        .groupBy(orderReservations.sellOrderId)
-
-      for (const stat of reservationStats) {
-        if (stat.sellOrderId !== null) {
-          reservationMap.set(stat.sellOrderId, {
-            count: stat.count,
-            quantity: stat.quantity,
-            fulfilledQuantity: stat.fulfilledQuantity,
-          })
-        }
-      }
-    }
-
-    // Build final listings
+    // Build final listings using quantity info from shared service
     const listings: MarketListing[] = filteredOrders.map(order => {
-      const reservationData = reservationMap.get(order.id) ?? {
-        count: 0,
-        quantity: 0,
-        fulfilledQuantity: 0,
-      }
-      // Subtract both active reservations AND fulfilled from remaining quantity
-      const remainingQuantity = Math.max(
-        0,
-        order.availableQuantity - reservationData.quantity - reservationData.fulfilledQuantity
-      )
+      const qty = quantityInfo.get(order.id)
 
       return {
         id: order.id,
@@ -354,9 +259,9 @@ export class MarketController extends Controller {
         availableQuantity: order.availableQuantity,
         isOwn: order.isOwn,
         jumpCount: destination ? (jumpCountMap.get(order.locationId) ?? null) : null,
-        activeReservationCount: reservationData.count,
-        reservedQuantity: reservationData.quantity,
-        remainingQuantity,
+        activeReservationCount: qty?.activeReservationCount ?? 0,
+        reservedQuantity: qty?.reservedQuantity ?? 0,
+        remainingQuantity: qty?.remainingQuantity ?? 0,
         fioUploadedAt: order.fioUploadedAt?.toISOString() ?? null,
       }
     })
@@ -408,7 +313,7 @@ export class MarketController extends Controller {
       return []
     }
 
-    // Get all buy orders
+    // Get all buy orders with user info
     const orders = await db
       .select({
         id: buyOrders.id,
@@ -424,6 +329,13 @@ export class MarketController extends Controller {
       })
       .from(buyOrders)
       .innerJoin(users, eq(buyOrders.userId, users.id))
+
+    if (orders.length === 0) {
+      return []
+    }
+
+    // Use shared service for reservation stats (handles expiration correctly)
+    const reservationStats = await getReservationStatsForBuyOrders(orders.map(o => o.id))
 
     // Process orders and filter by permissions
     const filteredBuyOrders: FilteredBuyOrder[] = []
@@ -494,48 +406,15 @@ export class MarketController extends Controller {
       )
     }
 
-    // Get reservation counts for all buy orders (including fulfilled)
-    const buyOrderIds = filteredBuyOrders.map(o => o.id)
-    const buyReservationMap = new Map<
-      number,
-      { count: number; quantity: number; fulfilledQuantity: number }
-    >()
-
-    if (buyOrderIds.length > 0) {
-      const reservationStats = await db
-        .select({
-          buyOrderId: orderReservations.buyOrderId,
-          count: sql<number>`count(*) filter (where ${orderReservations.status} in ('pending', 'confirmed'))::int`,
-          quantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} in ('pending', 'confirmed')), 0)::int`,
-          fulfilledQuantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} = 'fulfilled'), 0)::int`,
-        })
-        .from(orderReservations)
-        .where(inArray(orderReservations.buyOrderId, buyOrderIds))
-        .groupBy(orderReservations.buyOrderId)
-
-      for (const stat of reservationStats) {
-        if (stat.buyOrderId !== null) {
-          buyReservationMap.set(stat.buyOrderId, {
-            count: stat.count,
-            quantity: stat.quantity,
-            fulfilledQuantity: stat.fulfilledQuantity,
-          })
-        }
-      }
-    }
-
-    // Build final requests
+    // Build final requests using reservation stats from shared service
     const requests: MarketBuyRequest[] = filteredBuyOrders.map(order => {
-      const reservationData = buyReservationMap.get(order.id) ?? {
+      const stats = reservationStats.get(order.id) ?? {
         count: 0,
         quantity: 0,
         fulfilledQuantity: 0,
       }
       // Subtract both active reservations AND fulfilled from remaining quantity
-      const remainingQuantity = Math.max(
-        0,
-        order.quantity - reservationData.quantity - reservationData.fulfilledQuantity
-      )
+      const remainingQuantity = order.quantity - stats.quantity - stats.fulfilledQuantity
 
       return {
         id: order.id,
@@ -554,8 +433,8 @@ export class MarketController extends Controller {
         orderType: order.orderType,
         isOwn: order.isOwn,
         jumpCount: destination ? (jumpCountMap.get(order.locationId) ?? null) : null,
-        activeReservationCount: reservationData.count,
-        reservedQuantity: reservationData.quantity,
+        activeReservationCount: stats.count,
+        reservedQuantity: stats.quantity,
         remainingQuantity,
         fioUploadedAt: null, // Not applicable for buy orders
       }

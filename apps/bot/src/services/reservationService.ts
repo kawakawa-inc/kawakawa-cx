@@ -3,8 +3,12 @@
  * Shared logic for /reserve and /fill commands
  */
 import { db, sellOrders, buyOrders, orderReservations, users } from '@kawakawa/db'
-import { eq, and, ne, desc, sql, inArray, or, isNull } from 'drizzle-orm'
-import { enrichSellOrdersWithQuantities, getOrderDisplayPrice } from '@kawakawa/services/market'
+import { eq, and, ne, desc, inArray, or, isNull } from 'drizzle-orm'
+import {
+  enrichSellOrdersWithQuantities,
+  getOrderDisplayPrice,
+  getReservationStatsForBuyOrders,
+} from '@kawakawa/services/market'
 import { formatLocation } from './locationService.js'
 import { getFioUsernames } from './userSettings.js'
 import type { LocationDisplayMode, Currency } from '@kawakawa/types'
@@ -48,8 +52,8 @@ export interface PriceListFilter {
 }
 
 /**
- * Get available sell orders for a commodity (excluding user's own orders)
- * Returns orders with remaining quantity > 0
+ * Get sell orders for a commodity (excluding user's own orders)
+ * Returns all orders with their remaining quantity (can be negative)
  */
 export async function getAvailableSellOrders(
   commodityTicker: string,
@@ -109,16 +113,12 @@ export async function getAvailableSellOrders(
   const userIds = [...new Set(ordersData.map(o => o.userId))]
   const fioUsernameMap = await getFioUsernames(userIds)
 
-  // Filter to orders with remaining quantity and format
-  const result: SelectableOrder[] = []
-
-  for (const order of ordersData) {
+  // Format orders with remaining quantity
+  const result: SelectableOrder[] = ordersData.map(order => {
     const qty = quantityInfo.get(order.id)
-    if (!qty || qty.remainingQuantity <= 0) continue
-
-    result.push({
+    return {
       id: order.id,
-      type: 'sell',
+      type: 'sell' as const,
       commodityTicker: order.commodityTicker,
       locationId: order.locationId,
       price: order.price,
@@ -129,52 +129,16 @@ export async function getAvailableSellOrders(
       ownerUsername: order.user.username,
       ownerDisplayName: order.user.displayName,
       ownerFioUsername: fioUsernameMap.get(order.userId) ?? null,
-      quantity: qty.remainingQuantity,
-    })
-  }
-
-  return result
-}
-
-/**
- * Get reservation stats for buy orders
- * Returns count and total quantity of active (pending/confirmed) reservations
- */
-async function getBuyOrderReservationStats(
-  buyOrderIds: number[]
-): Promise<Map<number, { count: number; quantity: number; fulfilledQuantity: number }>> {
-  if (buyOrderIds.length === 0) {
-    return new Map()
-  }
-
-  const stats = await db
-    .select({
-      buyOrderId: orderReservations.buyOrderId,
-      count: sql<number>`count(*) filter (where ${orderReservations.status} in ('pending', 'confirmed'))::int`,
-      quantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} in ('pending', 'confirmed')), 0)::int`,
-      fulfilledQuantity: sql<number>`coalesce(sum(${orderReservations.quantity}) filter (where ${orderReservations.status} = 'fulfilled'), 0)::int`,
-    })
-    .from(orderReservations)
-    .where(inArray(orderReservations.buyOrderId, buyOrderIds))
-    .groupBy(orderReservations.buyOrderId)
-
-  const result = new Map<number, { count: number; quantity: number; fulfilledQuantity: number }>()
-  for (const stat of stats) {
-    if (stat.buyOrderId !== null) {
-      result.set(stat.buyOrderId, {
-        count: stat.count,
-        quantity: stat.quantity,
-        fulfilledQuantity: stat.fulfilledQuantity,
-      })
+      quantity: qty?.remainingQuantity ?? 0,
     }
-  }
+  })
 
   return result
 }
 
 /**
- * Get available buy orders for a commodity (excluding user's own orders)
- * Returns orders with unfilled quantity > 0
+ * Get buy orders for a commodity (excluding user's own orders)
+ * Returns all orders with their remaining quantity (can be negative)
  */
 export async function getAvailableBuyOrders(
   commodityTicker: string,
@@ -215,23 +179,19 @@ export async function getAvailableBuyOrders(
 
   // Get reservation stats for these orders
   const orderIds = ordersData.map(o => o.id)
-  const reservationStats = await getBuyOrderReservationStats(orderIds)
+  const reservationStats = await getReservationStatsForBuyOrders(orderIds)
 
   // Get FIO usernames for all order owners
   const userIds = [...new Set(ordersData.map(o => o.userId))]
   const fioUsernameMap = await getFioUsernames(userIds)
 
-  // Filter to orders with remaining quantity and format
-  const result: SelectableOrder[] = []
-
-  for (const order of ordersData) {
+  // Format orders with remaining quantity
+  const result: SelectableOrder[] = ordersData.map(order => {
     const stats = reservationStats.get(order.id) ?? { count: 0, quantity: 0, fulfilledQuantity: 0 }
-    const remainingQuantity = Math.max(0, order.quantity - stats.quantity - stats.fulfilledQuantity)
-    if (remainingQuantity <= 0) continue
-
-    result.push({
+    const remainingQuantity = order.quantity - stats.quantity - stats.fulfilledQuantity
+    return {
       id: order.id,
-      type: 'buy',
+      type: 'buy' as const,
       commodityTicker: order.commodityTicker,
       locationId: order.locationId,
       price: order.price,
@@ -243,8 +203,8 @@ export async function getAvailableBuyOrders(
       ownerDisplayName: order.user.displayName,
       ownerFioUsername: fioUsernameMap.get(order.userId) ?? null,
       quantity: remainingQuantity,
-    })
-  }
+    }
+  })
 
   return result
 }

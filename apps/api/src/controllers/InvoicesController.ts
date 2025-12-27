@@ -224,11 +224,27 @@ export class InvoicesController extends Controller {
         sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
       )
 
+    // Get unique commodity tickers per invoice for search
+    const commodityTickersPerInvoice = await db
+      .select({
+        invoiceId: invoiceLineItems.invoiceId,
+        commodityTickers: sql<string[]>`ARRAY_AGG(DISTINCT ${invoiceLineItems.commodityTicker})`,
+      })
+      .from(invoiceLineItems)
+      .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
+      .groupBy(invoiceLineItems.invoiceId)
+
+    const commodityTickersMap = new Map(
+      commodityTickersPerInvoice.map(r => [r.invoiceId, r.commodityTickers])
+    )
+
     // Group totals by invoice with buy/sell breakdown
     const invoiceStatsMap = new Map<
       number,
       {
         itemCount: number
+        buyItemCount: number
+        sellItemCount: number
         totalsByCurrency: { currency: Currency; total: number }[]
         buyTotalsByCurrency: { currency: Currency; total: number }[]
         sellTotalsByCurrency: { currency: Currency; total: number }[]
@@ -238,6 +254,8 @@ export class InvoicesController extends Controller {
       if (!invoiceStatsMap.has(stat.invoiceId)) {
         invoiceStatsMap.set(stat.invoiceId, {
           itemCount: 0,
+          buyItemCount: 0,
+          sellItemCount: 0,
           totalsByCurrency: [],
           buyTotalsByCurrency: [],
           sellTotalsByCurrency: [],
@@ -248,12 +266,14 @@ export class InvoicesController extends Controller {
       const currencyTotal = { currency: stat.currency, total: parseFloat(String(stat.total)) }
       stats.totalsByCurrency.push(currencyTotal)
 
-      // Separate buy vs sell totals
+      // Separate buy vs sell totals and counts
       // orderType='sell' means user is BUYING (from a sell order)
       // orderType='buy' means user is SELLING (to a buy order)
       if (stat.orderType === 'sell') {
+        stats.buyItemCount += stat.count
         stats.buyTotalsByCurrency.push(currencyTotal)
       } else {
+        stats.sellItemCount += stat.count
         stats.sellTotalsByCurrency.push(currencyTotal)
       }
     }
@@ -301,6 +321,7 @@ export class InvoicesController extends Controller {
       const reservationStatuses = invoiceReservationStatuses.get(inv.id) ?? []
       const calculatedStatus = calculateInvoiceStatus(inv.status, reservationStatuses)
 
+      const stats = invoiceStatsMap.get(inv.id)
       return {
         id: inv.id,
         counterpartyUserId: otherPartyId,
@@ -308,10 +329,13 @@ export class InvoicesController extends Controller {
         status: calculatedStatus,
         direction,
         name: inv.name,
-        itemCount: invoiceStatsMap.get(inv.id)?.itemCount ?? 0,
-        totalsByCurrency: invoiceStatsMap.get(inv.id)?.totalsByCurrency ?? [],
-        buyTotalsByCurrency: invoiceStatsMap.get(inv.id)?.buyTotalsByCurrency ?? [],
-        sellTotalsByCurrency: invoiceStatsMap.get(inv.id)?.sellTotalsByCurrency ?? [],
+        itemCount: stats?.itemCount ?? 0,
+        buyItemCount: stats?.buyItemCount ?? 0,
+        sellItemCount: stats?.sellItemCount ?? 0,
+        totalsByCurrency: stats?.totalsByCurrency ?? [],
+        buyTotalsByCurrency: stats?.buyTotalsByCurrency ?? [],
+        sellTotalsByCurrency: stats?.sellTotalsByCurrency ?? [],
+        commodityTickers: commodityTickersMap.get(inv.id) ?? [],
         createdAt: inv.createdAt.toISOString(),
         updatedAt: inv.updatedAt.toISOString(),
       }
@@ -437,6 +461,13 @@ export class InvoicesController extends Controller {
     const reservationStatuses = lineItems.map(li => li.reservationStatus)
     const calculatedStatus = calculateInvoiceStatus(invoice.status, reservationStatuses)
 
+    // Calculate buy/sell counts
+    const buyItemCount = lineItems.filter(li => li.orderType === 'sell').length
+    const sellItemCount = lineItems.filter(li => li.orderType === 'buy').length
+
+    // Extract unique commodity tickers
+    const commodityTickers = [...new Set(lineItems.map(li => li.commodityTicker))]
+
     return {
       id: invoice.id,
       counterpartyUserId: otherPartyId,
@@ -446,9 +477,12 @@ export class InvoicesController extends Controller {
       name: invoice.name,
       notes: invoice.notes,
       itemCount: lineItems.length,
+      buyItemCount,
+      sellItemCount,
       totalsByCurrency,
       buyTotalsByCurrency,
       sellTotalsByCurrency,
+      commodityTickers,
       submittedAt: invoice.submittedAt?.toISOString() ?? null,
       createdAt: invoice.createdAt.toISOString(),
       updatedAt: invoice.updatedAt.toISOString(),
@@ -518,9 +552,12 @@ export class InvoicesController extends Controller {
       name: newInvoice.name,
       notes: newInvoice.notes,
       itemCount: 0,
+      buyItemCount: 0,
+      sellItemCount: 0,
       totalsByCurrency: [],
       buyTotalsByCurrency: [],
       sellTotalsByCurrency: [],
+      commodityTickers: [],
       submittedAt: null,
       createdAt: newInvoice.createdAt.toISOString(),
       updatedAt: newInvoice.updatedAt.toISOString(),
@@ -576,9 +613,12 @@ export class InvoicesController extends Controller {
       name: invoice.name,
       notes: invoice.notes,
       itemCount: 0,
+      buyItemCount: 0,
+      sellItemCount: 0,
       totalsByCurrency: [],
       buyTotalsByCurrency: [],
       sellTotalsByCurrency: [],
+      commodityTickers: [],
       submittedAt: null,
       createdAt: invoice.createdAt.toISOString(),
       updatedAt: invoice.updatedAt.toISOString(),

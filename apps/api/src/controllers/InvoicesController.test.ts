@@ -183,14 +183,17 @@ describe('InvoicesController', () => {
       // Track which query we're on based on terminal method
       // Query 1: .from(invoices).where().orderBy() -> invoices
       // Query 2: .from(users).where() -> counterparty names
-      // Query 3: .from(lineItems).where().groupBy() -> stats
-      // Query 4: .from(lineItems).leftJoin().where() -> reservation statuses
+      // Query 3: .from(lineItems).where().groupBy() -> stats (buy/sell totals)
+      // Query 4: .from(lineItems).where().groupBy() -> commodity tickers
+      // Query 5: .from(lineItems).leftJoin().where() -> reservation statuses
       mockSelect.orderBy.mockResolvedValueOnce([mockInvoice])
-      mockSelect.groupBy.mockResolvedValueOnce([
-        { invoiceId: 1, count: 2, currency: 'CIS', total: '500.00', orderType: 'sell' },
-      ])
-      // where() is called in query 1 and 3 as intermediate, and in query 2 and 4 as terminal
-      // So we need: return mockSelect (query 1), resolve [counterparties] (query 2), return mockSelect (query 3), resolve [statuses] (query 4)
+      mockSelect.groupBy
+        .mockResolvedValueOnce([
+          { invoiceId: 1, count: 2, currency: 'CIS', total: '500.00', orderType: 'sell' },
+        ])
+        .mockResolvedValueOnce([{ invoiceId: 1, commodityTickers: ['H2O'] }])
+      // where() is called in query 1, 3, 4 as intermediate, and in query 2 and 5 as terminal
+      // So we need: return mockSelect (query 1), resolve [counterparties] (query 2), return mockSelect (query 3 & 4), resolve [statuses] (query 5)
       let whereCallCount = 0
       mockSelect.where.mockImplementation(() => {
         whereCallCount++
@@ -198,8 +201,8 @@ describe('InvoicesController', () => {
           // Query 2 - terminal where for users, return promise
           return Promise.resolve([{ id: 2, displayName: 'Partner' }])
         }
-        if (whereCallCount === 4) {
-          // Query 4 - terminal where for reservation statuses, return promise
+        if (whereCallCount === 5) {
+          // Query 5 - terminal where for reservation statuses, return promise
           return Promise.resolve([{ invoiceId: 1, reservationStatus: null }])
         }
         // Other calls - continue chain
@@ -212,7 +215,10 @@ describe('InvoicesController', () => {
       expect(result[0].id).toBe(1)
       expect(result[0].counterpartyName).toBe('Partner')
       expect(result[0].itemCount).toBe(2)
+      expect(result[0].buyItemCount).toBe(2)
+      expect(result[0].sellItemCount).toBe(0)
       expect(result[0].totalsByCurrency).toEqual([{ currency: 'CIS', total: 500 }])
+      expect(result[0].commodityTickers).toEqual(['H2O'])
     })
 
     it('should filter by status when provided', async () => {

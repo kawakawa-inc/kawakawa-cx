@@ -447,18 +447,17 @@
         <v-card>
           <v-card-title>
             <v-row align="center">
-              <v-col cols="12" md="6">
-                <v-text-field
-                  v-model="invoiceSearch"
-                  prepend-icon="mdi-magnify"
-                  label="Search invoices..."
-                  single-line
-                  hide-details
-                  clearable
-                  density="compact"
+              <v-col cols="12" md="8">
+                <TokenSearchInput
+                  placeholder="Search: user, commodity..."
+                  :available-user-names="availableInvoiceUserNames"
+                  :get-commodity-display="getCommodityDisplay"
+                  :get-location-display="getLocationDisplay"
+                  :get-commodity-name="getCommodityName"
+                  @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="4">
                 <v-select
                   v-model="invoiceStatusFilter"
                   :items="invoiceStatusOptions"
@@ -558,12 +557,26 @@
           <v-divider v-if="invoiceSummary.totalItems > 0" />
 
           <v-data-table
+            v-model:expanded="expandedInvoices"
             :headers="invoiceHeaders"
             :items="filteredInvoices"
             :loading="loadingInvoices"
             :items-per-page="25"
-            class="elevation-0"
+            :row-props="getInvoiceRowProps"
+            class="elevation-0 clickable-rows"
+            show-expand
+            item-value="id"
+            @click:row="toggleInvoiceExpand"
           >
+            <!-- Custom expand toggle with right/down chevron -->
+            <template #item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+              <v-btn icon variant="text" size="small" @click.stop="toggleExpand(internalItem)">
+                <v-icon>{{
+                  isExpanded(internalItem) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+                }}</v-icon>
+              </v-btn>
+            </template>
+
             <template #item.direction="{ item }">
               <v-chip
                 :color="item.direction === 'sent' ? 'primary' : 'info'"
@@ -588,12 +601,15 @@
               <InvoiceStatusChip :status="item.status" size="small" />
             </template>
 
-            <template #item.itemCount="{ item }">
-              <span class="font-weight-medium">{{ item.itemCount }}</span>
+            <template #item.buyItemCount="{ item }">
+              <span class="font-weight-medium">{{ getMyBuyItemCount(item) }}</span>
+            </template>
+
+            <template #item.sellItemCount="{ item }">
+              <span class="font-weight-medium">{{ getMySellItemCount(item) }}</span>
             </template>
 
             <template #item.buyTotals="{ item }">
-              <!-- For received invoices, invert: sender's buy = my sell, so show sender's sell as my buy -->
               <div class="text-right">
                 <div
                   v-for="total in getMyBuyTotals(item)"
@@ -610,7 +626,6 @@
             </template>
 
             <template #item.sellTotals="{ item }">
-              <!-- For received invoices, invert: sender's sell = my buy, so show sender's buy as my sell -->
               <div class="text-right">
                 <div
                   v-for="total in getMySellTotals(item)"
@@ -626,12 +641,8 @@
               </div>
             </template>
 
-            <template #item.updatedAt="{ item }">
-              <span class="text-caption">{{ formatDate(item.updatedAt) }}</span>
-            </template>
-
             <template #item.actions="{ item }">
-              <div class="d-flex ga-1">
+              <div class="d-flex ga-1 align-center">
                 <v-tooltip location="top">
                   <template #activator="{ props }">
                     <v-btn
@@ -646,6 +657,87 @@
                   </template>
                   View invoice
                 </v-tooltip>
+
+                <!-- Bulk actions for received invoices -->
+                <template v-if="item.direction === 'received' && item.status !== 'draft'">
+                  <v-tooltip v-if="canConfirmAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="success"
+                        :loading="invoiceActionLoading === `confirm-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="confirmAllReservations(item)"
+                      >
+                        <v-icon>mdi-check-all</v-icon>
+                      </v-btn>
+                    </template>
+                    Confirm All
+                  </v-tooltip>
+
+                  <v-tooltip v-if="canRejectAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="error"
+                        :loading="invoiceActionLoading === `reject-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="rejectAllReservations(item)"
+                      >
+                        <v-icon>mdi-close-circle</v-icon>
+                      </v-btn>
+                    </template>
+                    Reject All
+                  </v-tooltip>
+
+                  <v-tooltip v-if="canFulfillAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="primary"
+                        :loading="invoiceActionLoading === `fulfill-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="fulfillAllReservations(item)"
+                      >
+                        <v-icon>mdi-package-variant-closed-check</v-icon>
+                      </v-btn>
+                    </template>
+                    Fulfill All
+                  </v-tooltip>
+                </template>
+
+                <!-- Cancel for sent invoices -->
+                <v-tooltip
+                  v-if="item.direction === 'sent' && item.status === 'pending'"
+                  location="top"
+                >
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      icon
+                      size="small"
+                      variant="text"
+                      color="warning"
+                      :loading="invoiceActionLoading === `cancel-${item.id}`"
+                      :disabled="invoiceActionLoading !== null"
+                      @click.stop="cancelInvoice(item)"
+                    >
+                      <v-icon>mdi-cancel</v-icon>
+                    </v-btn>
+                  </template>
+                  Cancel Invoice
+                </v-tooltip>
+
+                <!-- Delete for drafts -->
                 <v-tooltip v-if="item.status === 'draft'" location="top">
                   <template #activator="{ props }">
                     <v-btn
@@ -654,7 +746,7 @@
                       size="small"
                       variant="text"
                       color="error"
-                      @click="confirmDeleteInvoice(item)"
+                      @click.stop="confirmDeleteInvoice(item)"
                     >
                       <v-icon>mdi-delete</v-icon>
                     </v-btn>
@@ -662,6 +754,19 @@
                   Delete draft
                 </v-tooltip>
               </div>
+            </template>
+
+            <!-- Expanded row content -->
+            <template #expanded-row="{ columns, item }">
+              <tr class="expanded-row">
+                <td :colspan="columns.length" class="pa-0">
+                  <InvoiceExpandedRow
+                    :invoice-id="item.id"
+                    :direction="item.direction"
+                    @updated="loadInvoices"
+                  />
+                </td>
+              </tr>
             </template>
 
             <template #no-data>
@@ -802,6 +907,8 @@ import OrderTypeChip from '../components/OrderTypeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import InvoiceStatusChip from '../components/invoices/InvoiceStatusChip.vue'
+import InvoiceExpandedRow from '../components/invoices/InvoiceExpandedRow.vue'
+import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
 import { useSettingsStore } from '../stores/settings'
 
 const userStore = useUserStore()
@@ -858,21 +965,24 @@ const buyHeaders = [
 ]
 
 const invoiceHeaders = [
+  { title: '', key: 'data-table-expand', width: 40 },
   { title: 'Direction', key: 'direction', sortable: true, width: 100 },
-  { title: 'Partner', key: 'counterpartyName', sortable: true },
+  { title: 'User', key: 'counterpartyName', sortable: true },
   { title: 'Status', key: 'status', sortable: true },
-  { title: 'Items', key: 'itemCount', sortable: true, align: 'center' as const },
+  { title: 'Buy #', key: 'buyItemCount', sortable: true, align: 'center' as const, width: 80 },
+  { title: 'Sell #', key: 'sellItemCount', sortable: true, align: 'center' as const, width: 80 },
   { title: 'Buying', key: 'buyTotals', sortable: false, align: 'end' as const },
   { title: 'Selling', key: 'sellTotals', sortable: false, align: 'end' as const },
-  { title: 'Updated', key: 'updatedAt', sortable: true },
-  { title: 'Actions', key: 'actions', sortable: false, width: 80 },
+  { title: 'Actions', key: 'actions', sortable: false, width: 200 },
 ]
 
 const invoiceStatusOptions = [
   { title: 'All Statuses', value: null },
   { title: 'Draft', value: 'draft' },
-  { title: 'Submitted', value: 'submitted' },
-  { title: 'Completed', value: 'completed' },
+  { title: 'Pending', value: 'pending' },
+  { title: 'Confirmed', value: 'confirmed' },
+  { title: 'Fulfilled', value: 'fulfilled' },
+  { title: 'Partially Fulfilled', value: 'partially_fulfilled' },
   { title: 'Cancelled', value: 'cancelled' },
 ]
 
@@ -891,10 +1001,12 @@ const orderDialogTab = ref<'buy' | 'sell'>('buy')
 // Invoices state
 const invoices = ref<InvoiceSummary[]>([])
 const loadingInvoices = ref(false)
-const invoiceSearch = ref('')
+const invoiceSearchChips = ref<SearchChip[]>([])
 const invoiceStatusFilter = ref<InvoiceStatus | null>(null)
 const invoiceDetailDialog = ref(false)
 const selectedInvoice = ref<Invoice | null>(null)
+const expandedInvoices = ref<string[]>([])
+const invoiceActionLoading = ref<string | null>(null)
 
 // Order detail dialog with deep linking
 const {
@@ -978,6 +1090,20 @@ const filteredBuyOrders = computed(() => {
   )
 })
 
+// Helper for TokenSearchInput - get localized commodity name for search matching
+const getCommodityName = (ticker: string): string => {
+  return commodityService.getCommodityDisplay(ticker, 'name-only')
+}
+
+// Available user names for TokenSearchInput autocomplete
+const availableInvoiceUserNames = computed(() => {
+  const names = new Set<string>()
+  for (const inv of invoices.value) {
+    names.add(inv.counterpartyName)
+  }
+  return Array.from(names).sort()
+})
+
 const filteredInvoices = computed(() => {
   let result = invoices.value
 
@@ -986,10 +1112,24 @@ const filteredInvoices = computed(() => {
     result = result.filter(inv => inv.status === invoiceStatusFilter.value)
   }
 
-  // Filter by search
-  if (invoiceSearch.value) {
-    const searchLower = invoiceSearch.value.toLowerCase()
-    result = result.filter(inv => inv.counterpartyName.toLowerCase().includes(searchLower))
+  // Filter by search chips
+  if (invoiceSearchChips.value.length > 0) {
+    const userChips = invoiceSearchChips.value.filter(c => c.type === 'user')
+    const commodityChips = invoiceSearchChips.value.filter(c => c.type === 'commodity')
+
+    result = result.filter(inv => {
+      // All user chips must match (AND logic)
+      const matchesUsers = userChips.every(
+        chip => inv.counterpartyName.toLowerCase() === chip.value.toLowerCase()
+      )
+
+      // All commodity chips must be present in the invoice (AND logic)
+      const matchesCommodities = commodityChips.every(chip =>
+        inv.commodityTickers.some(ticker => ticker.toLowerCase() === chip.value.toLowerCase())
+      )
+
+      return matchesUsers && matchesCommodities
+    })
   }
 
   return result
@@ -1074,6 +1214,120 @@ const getMySellTotals = (inv: InvoiceSummary) => {
   return inv.buyTotalsByCurrency
 }
 
+// Get the buy item count for the current user
+// For sent invoices: buyItemCount (from sell orders = I'm buying)
+// For received invoices: sellItemCount (sender's sell = my buy)
+const getMyBuyItemCount = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.buyItemCount
+  }
+  return inv.sellItemCount
+}
+
+// Get the sell item count for the current user
+// For sent invoices: sellItemCount (from buy orders = I'm selling)
+// For received invoices: buyItemCount (sender's buy = my sell)
+const getMySellItemCount = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.sellItemCount
+  }
+  return inv.buyItemCount
+}
+
+// Bulk action availability checks
+const canConfirmAll = (inv: InvoiceSummary) => inv.status === 'pending'
+const canRejectAll = (inv: InvoiceSummary) => inv.status === 'pending'
+const canFulfillAll = (inv: InvoiceSummary) => inv.status === 'confirmed'
+
+// Bulk action handlers
+async function confirmAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `confirm-${inv.id}`
+  try {
+    // Load full invoice to get line items with reservation IDs
+    const fullInvoice = await api.invoices.get(inv.id)
+    for (const item of fullInvoice.lineItems) {
+      if (item.reservationId && item.reservationStatus === 'pending') {
+        await api.reservations.confirm(item.reservationId)
+      }
+    }
+    showSnackbar('All reservations confirmed')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to confirm reservations', error)
+    showSnackbar('Failed to confirm reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function rejectAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `reject-${inv.id}`
+  try {
+    const fullInvoice = await api.invoices.get(inv.id)
+    for (const item of fullInvoice.lineItems) {
+      if (item.reservationId && item.reservationStatus === 'pending') {
+        await api.reservations.reject(item.reservationId)
+      }
+    }
+    showSnackbar('All reservations rejected')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to reject reservations', error)
+    showSnackbar('Failed to reject reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function fulfillAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `fulfill-${inv.id}`
+  try {
+    const fullInvoice = await api.invoices.get(inv.id)
+    for (const item of fullInvoice.lineItems) {
+      if (item.reservationId && item.reservationStatus === 'confirmed') {
+        await api.reservations.fulfill(item.reservationId)
+      }
+    }
+    showSnackbar('All reservations fulfilled')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to fulfill reservations', error)
+    showSnackbar('Failed to fulfill reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function cancelInvoice(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `cancel-${inv.id}`
+  try {
+    await api.invoices.cancel(inv.id)
+    showSnackbar('Invoice cancelled')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to cancel invoice', error)
+    showSnackbar('Failed to cancel invoice', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+// Toggle invoice row expansion
+function toggleInvoiceExpand(_event: Event, { item }: { item: InvoiceSummary }) {
+  const id = String(item.id)
+  const index = expandedInvoices.value.indexOf(id)
+  if (index === -1) {
+    expandedInvoices.value.push(id)
+  } else {
+    expandedInvoices.value.splice(index, 1)
+  }
+}
+
+// Row props for alternating row colors
+const getInvoiceRowProps = ({ index }: { index: number }) => {
+  return { class: index % 2 === 1 ? 'alt-row' : '' }
+}
+
 // Get the display price for a sell order - uses effectivePrice for dynamic pricing
 const getSellOrderDisplayPrice = (item: SellOrderResponse): number | null => {
   if (item.pricingMode === 'dynamic') {
@@ -1088,16 +1342,6 @@ const getBuyOrderDisplayPrice = (item: BuyOrderResponse): number | null => {
     return item.effectivePrice
   }
   return item.price > 0 ? item.price : null
-}
-
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 const getLimitModeLabel = (mode: SellOrderLimitMode): string => {
@@ -1357,5 +1601,19 @@ onMounted(() => {
 /* Unscoped: taller rows when icons are enabled */
 .icon-rows tbody tr td {
   height: 64px !important;
+}
+
+/* Clickable rows for expanding */
+.clickable-rows tbody tr:not(.expanded-row) {
+  cursor: pointer;
+}
+
+.clickable-rows tbody tr:not(.expanded-row):hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+/* Alternating row colors */
+.alt-row {
+  background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
 }
 </style>

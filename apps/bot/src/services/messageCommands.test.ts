@@ -460,6 +460,127 @@ describe('messageCommands', () => {
     })
   })
 
+  describe('partial command matching', () => {
+    it('executes command when partial input matches exactly one command', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const message = createMockMessage({
+        content: '!que',
+      })
+      const queryCommand = createMockCommand('query')
+      const helpCommand = createMockCommand('help')
+      const client = createMockClient(
+        new Map([
+          ['query', queryCommand],
+          ['help', helpCommand],
+        ])
+      )
+
+      await handleMessageCommand(message, client)
+
+      expect(queryCommand.execute).toHaveBeenCalled()
+      expect(helpCommand.execute).not.toHaveBeenCalled()
+    })
+
+    it('shows disambiguation message when partial input matches multiple commands', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!re', // matches 'register', 'reserve', 'reservations'
+        reply: mockReply,
+      })
+      const registerCommand = createMockCommand('register')
+      const reserveCommand = createMockCommand('reserve')
+      const reservationsCommand = createMockCommand('reservations')
+      const client = createMockClient(
+        new Map([
+          ['register', registerCommand],
+          ['reserve', reserveCommand],
+          ['reservations', reservationsCommand],
+        ])
+      )
+
+      await handleMessageCommand(message, client)
+
+      // No commands should be executed
+      expect(registerCommand.execute).not.toHaveBeenCalled()
+      expect(reserveCommand.execute).not.toHaveBeenCalled()
+      expect(reservationsCommand.execute).not.toHaveBeenCalled()
+
+      // Disambiguation message should be sent
+      expect(mockReply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('Did you mean one of these commands?'),
+          allowedMentions: { repliedUser: false },
+        })
+      )
+    })
+
+    it('excludes commands with prefixEnabled: false from partial matching', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const message = createMockMessage({
+        content: '!pass', // would match 'password' but it has prefixEnabled: false
+      })
+      const passwordCommand = createMockCommand('password')
+      passwordCommand.prefixEnabled = false
+      const client = createMockClient(new Map([['password', passwordCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(passwordCommand.execute).not.toHaveBeenCalled()
+    })
+
+    it('ignores silently when no partial matches found', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!xyz',
+        reply: mockReply,
+      })
+      const helpCommand = createMockCommand('help')
+      const client = createMockClient(new Map([['help', helpCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(helpCommand.execute).not.toHaveBeenCalled()
+      expect(mockReply).not.toHaveBeenCalled()
+    })
+
+    it('prefers exact match over partial match', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const message = createMockMessage({
+        content: '!help',
+      })
+      const helpCommand = createMockCommand('help')
+      const helperCommand = createMockCommand('helper') // partial match
+      const client = createMockClient(
+        new Map([
+          ['help', helpCommand],
+          ['helper', helperCommand],
+        ])
+      )
+
+      await handleMessageCommand(message, client)
+
+      expect(helpCommand.execute).toHaveBeenCalled()
+      expect(helperCommand.execute).not.toHaveBeenCalled()
+    })
+  })
+
   describe('findMatchingPrefix', () => {
     it('returns matching prefix', () => {
       const result = findMatchingPrefix('!help', ['!', '?', '.'])

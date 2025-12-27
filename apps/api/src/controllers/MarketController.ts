@@ -184,13 +184,13 @@ export class MarketController extends Controller {
       const qty = quantityInfo.get(order.id)
 
       // Determine pricing mode and effective price
-      const orderPrice = parseFloat(order.price)
-      const pricingMode: PricingMode = order.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
+      // Price list takes precedence over custom price when both are set
+      const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
       let effectivePrice: number | null = null
       let isFallback = false
       let priceLocationId: string | null = null
 
-      if (pricingMode === 'dynamic' && order.priceListCode) {
+      if (order.priceListCode) {
         // Calculate effective price from price list
         const effPrice = await calculateEffectivePriceWithFallback(
           order.priceListCode,
@@ -356,13 +356,13 @@ export class MarketController extends Controller {
       if (location && order.locationId !== location) continue
 
       // Determine pricing mode and effective price
-      const orderPrice = parseFloat(order.price)
-      const pricingMode: PricingMode = order.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
+      // Price list takes precedence over custom price when both are set
+      const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
       let effectivePrice: number | null = null
       let isFallback = false
       let priceLocationId: string | null = null
 
-      if (pricingMode === 'dynamic' && order.priceListCode) {
+      if (order.priceListCode) {
         // Calculate effective price from price list
         const effPrice = await calculateEffectivePriceWithFallback(
           order.priceListCode,

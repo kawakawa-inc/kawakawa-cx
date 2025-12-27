@@ -1,44 +1,30 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
-import type { Command } from '../../client.js'
+import type { Command, BotClient } from '../../client.js'
 import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
-interface HelpCommand {
+interface HelpCommandEntry {
   /** Command name without prefix (e.g., 'register') */
   name: string
-  description: string
+  /** Extended help details (optional, shown below the command description) */
   details?: string
 }
 
 interface HelpSection {
   title: string
   emoji: string
-  commands: HelpCommand[]
+  commands: HelpCommandEntry[]
 }
 
-/** Command sections with command names (without prefix) */
-const COMMANDS: Record<string, HelpSection> = {
+/**
+ * Command sections - descriptions are pulled from registered commands at runtime.
+ * Only store command names and optional extended details here.
+ */
+const SECTIONS: Record<string, HelpSection> = {
   getting_started: {
     title: 'Getting Started',
     emoji: '🚀',
-    commands: [
-      {
-        name: 'register',
-        description: 'Create a new Kawakawa account linked to your Discord',
-      },
-      {
-        name: 'link',
-        description: 'Link your Discord to an existing Kawakawa account',
-      },
-      {
-        name: 'whoami',
-        description: 'View your linked account info and FIO status',
-      },
-      {
-        name: 'unlink',
-        description: 'Unlink your Discord from your Kawakawa account',
-      },
-    ],
+    commands: [{ name: 'register' }, { name: 'link' }, { name: 'whoami' }, { name: 'unlink' }],
   },
   inventory: {
     title: 'Inventory',
@@ -46,30 +32,19 @@ const COMMANDS: Record<string, HelpSection> = {
     commands: [
       {
         name: 'inventory',
-        description: 'View your synced FIO inventory with filtering options',
         details: 'Filter by commodity or location. Use the Share button to post publicly.',
       },
-      {
-        name: 'sync',
-        description: 'Sync your inventory from FIO (requires FIO credentials)',
-      },
+      { name: 'sync' },
     ],
   },
   orders: {
     title: 'Creating Orders',
     emoji: '💰',
     commands: [
-      {
-        name: 'sell',
-        description: 'Create a single sell order for a commodity at a location',
-      },
-      {
-        name: 'buy',
-        description: 'Create a single buy request for a commodity at a location',
-      },
+      { name: 'sell' },
+      { name: 'buy' },
       {
         name: 'bulksell',
-        description: 'Create multiple sell orders at once using multi-line input',
         details:
           'Format: `TICKER LOCATION [limit] PRICE [CURRENCY]`\n' +
           'Examples:\n' +
@@ -79,7 +54,6 @@ const COMMANDS: Record<string, HelpSection> = {
       },
       {
         name: 'bulkbuy',
-        description: 'Create multiple buy requests at once using multi-line input',
         details:
           'Format: `TICKER LOCATION QUANTITY PRICE [CURRENCY]`\n' +
           'Examples:\n' +
@@ -94,14 +68,12 @@ const COMMANDS: Record<string, HelpSection> = {
     commands: [
       {
         name: 'orders',
-        description: 'View and manage your orders (defaults to your own)',
         details:
           'Shows your orders by default. Add filters to search the market.\n' +
           'Use the Manage button to edit or delete your orders.',
       },
       {
         name: 'query',
-        description: 'Search the market for commodities or browse by location',
         details: 'Find what others are selling or buying.',
       },
     ],
@@ -112,21 +84,18 @@ const COMMANDS: Record<string, HelpSection> = {
     commands: [
       {
         name: 'reserve',
-        description: 'Reserve items from a sell order',
         details:
           'Browse available sell orders for a commodity, then reserve a quantity.\n' +
           'The seller will be notified and can confirm or reject.',
       },
       {
         name: 'fill',
-        description: 'Offer to fill a buy order',
         details:
           'Browse open buy orders for a commodity, then offer to supply.\n' +
           'The buyer will be notified and can confirm or reject.',
       },
       {
         name: 'reservations',
-        description: 'View and manage your reservations',
         details:
           'See reservations where you are the order owner or counterparty.\n' +
           'Confirm, reject, fulfill, or cancel reservations.',
@@ -139,7 +108,6 @@ const COMMANDS: Record<string, HelpSection> = {
     commands: [
       {
         name: 'settings',
-        description: 'View and manage your personal settings',
         details:
           '- Location/commodity display modes\n' +
           '- Preferred currency\n' +
@@ -153,6 +121,12 @@ const COMMANDS: Record<string, HelpSection> = {
 /** Format a command name with the appropriate prefix */
 function cmd(name: string, prefix: string): string {
   return `${prefix}${name}`
+}
+
+/** Get command description from registered commands */
+function getCommandDescription(client: BotClient, commandName: string): string {
+  const command = client.commands.get(commandName)
+  return command?.data.description ?? 'No description available'
 }
 
 export const help: Command = {
@@ -177,16 +151,18 @@ export const help: Command = {
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const topic = interaction.options.getString('topic')
     const prefix = getCommandPrefix(interaction)
+    const client = interaction.client as BotClient
 
-    if (topic && topic in COMMANDS) {
+    if (topic && topic in SECTIONS) {
       // Show specific topic
-      const section = COMMANDS[topic]
+      const section = SECTIONS[topic]
       const embed = new EmbedBuilder()
         .setTitle(`${section.emoji} ${section.title}`)
         .setColor(0x5865f2)
 
       for (const command of section.commands) {
-        let value = command.description
+        // Get description from the registered command
+        let value = getCommandDescription(client, command.name)
         if (command.details) {
           value += `\n\n${command.details}`
         }
@@ -211,7 +187,7 @@ export const help: Command = {
       )
 
     // Add sections overview
-    for (const section of Object.values(COMMANDS)) {
+    for (const section of Object.values(SECTIONS)) {
       const commandList = section.commands.map(c => `\`${cmd(c.name, prefix)}\``).join(', ')
       embed.addFields({
         name: `${section.emoji} ${section.title}`,
@@ -224,11 +200,11 @@ export const help: Command = {
     embed.addFields({
       name: '📋 Quick Start',
       value:
-        `1. \`${cmd('register', prefix)}\` - Create your account\n` +
-        `2. \`${cmd('settings', prefix)}\` - Set up your FIO credentials\n` +
-        `3. \`${cmd('sync', prefix)}\` - Import your inventory from FIO\n` +
-        `4. \`${cmd('bulksell', prefix)}\` - List items for sale\n` +
-        `5. \`${cmd('query', prefix)}\` - Browse the market`,
+        `1. \`${cmd('register', prefix)}\` - ${getCommandDescription(client, 'register')}\n` +
+        `2. \`${cmd('settings', prefix)}\` - ${getCommandDescription(client, 'settings')}\n` +
+        `3. \`${cmd('sync', prefix)}\` - ${getCommandDescription(client, 'sync')}\n` +
+        `4. \`${cmd('bulksell', prefix)}\` - ${getCommandDescription(client, 'bulksell')}\n` +
+        `5. \`${cmd('query', prefix)}\` - ${getCommandDescription(client, 'query')}`,
       inline: false,
     })
 

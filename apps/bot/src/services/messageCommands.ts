@@ -204,13 +204,35 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     return
   }
 
-  // Look up command
-  const command = client.commands.get(commandName)
+  // Look up command - try exact match first
+  let command = client.commands.get(commandName)
 
   if (!command) {
-    // Unknown command - ignore silently
-    // (Could optionally send an error message here)
-    return
+    // Try partial match - find all commands that start with the input
+    const partialMatches: Command[] = []
+    for (const [name, cmd] of client.commands) {
+      if (name.startsWith(commandName) && cmd.prefixEnabled !== false) {
+        partialMatches.push(cmd)
+      }
+    }
+
+    if (partialMatches.length === 1) {
+      // Exactly one match - use it
+      command = partialMatches[0]
+    } else if (partialMatches.length > 1) {
+      // Multiple matches - show disambiguation message
+      const matchList = partialMatches
+        .map(cmd => `• **${prefix}${cmd.data.name}** - ${cmd.data.description}`)
+        .join('\n')
+      await message.reply({
+        content: `Did you mean one of these commands?\n${matchList}`,
+        allowedMentions: { repliedUser: false },
+      })
+      return
+    } else {
+      // No matches at all - ignore silently
+      return
+    }
   }
 
   // Check if command allows prefix invocation
@@ -220,13 +242,17 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     return
   }
 
+  // Use the actual command name (may differ from input if partial match was used)
+  const actualCommandName = command.data.name
+
   // Create adapter to make message look like an interaction
-  const adapter = new MessageInteractionAdapter(message, commandName, options, prefix)
+  const adapter = new MessageInteractionAdapter(message, actualCommandName, options, prefix)
 
   // Log command invocation
   const startTime = Date.now()
   const logContext = {
-    command: commandName,
+    command: actualCommandName,
+    input: commandName !== actualCommandName ? commandName : undefined, // Log partial input if different
     userId: message.author.id,
     username: message.author.username,
     guildId: message.guildId,

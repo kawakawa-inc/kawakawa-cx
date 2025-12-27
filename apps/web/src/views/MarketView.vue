@@ -830,9 +830,7 @@
               class="text-warning"
             >
               (requesting
-              {{
-                (addToInvoiceQuantity - addingToInvoiceItem.remainingQuantity).toLocaleString()
-              }}
+              {{ (addToInvoiceQuantity - addingToInvoiceItem.remainingQuantity).toLocaleString() }}
               over listed amount)
             </span>
           </div>
@@ -1148,7 +1146,10 @@ const selectedCounterpartyId = ref<string | null>(null)
 
 // Available counterparties (all users with orders we can reserve - both buyers and sellers)
 const counterpartyOptions = computed((): KeyValueItem[] => {
-  const counterpartyMap = new Map<number, { userId: number; userName: string; orderCount: number }>()
+  const counterpartyMap = new Map<
+    number,
+    { userId: number; userName: string; orderCount: number }
+  >()
 
   for (const item of marketItems.value) {
     // Include all orders we can reserve (not our own, with permission)

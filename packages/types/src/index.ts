@@ -591,11 +591,17 @@ export interface InvoiceSummary {
   direction: InvoiceDirection // 'sent' = user created it, 'received' = sent to user
   name: string | null
   itemCount: number
+  // Buy item count = items from SELL orders (user is buying)
+  buyItemCount: number
+  // Sell item count = items from BUY orders (user is selling)
+  sellItemCount: number
   totalsByCurrency: { currency: Currency; total: number }[]
   // Buy totals = items from SELL orders (user is buying, money out)
   buyTotalsByCurrency: { currency: Currency; total: number }[]
   // Sell totals = items from BUY orders (user is selling, money in)
   sellTotalsByCurrency: { currency: Currency; total: number }[]
+  // Unique commodity tickers in this invoice for search
+  commodityTickers: string[]
   createdAt: string // ISO date string
   updatedAt: string // ISO date string
 }

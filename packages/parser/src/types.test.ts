@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import type { ResolvedCommodity, ResolvedLocation, ResolvedUser, ParseResult } from '../types.js'
+import type { ResolvedCommodity, ResolvedLocation, ResolvedUser, ParseResult } from './types.js'
 
 describe('types', () => {
   it('should allow creating ResolvedCommodity objects', () => {

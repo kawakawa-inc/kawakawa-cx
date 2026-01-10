@@ -9,8 +9,8 @@ import {
   validateForQuery,
   hasContent,
   summarizeParsed,
-} from '../validators.js'
-import type { ParseResult } from '../types.js'
+} from './validators.js'
+import type { ParseResult } from './types.js'
 
 // Helper to create a minimal ParseResult
 function createResult(overrides: Partial<ParseResult> = {}): ParseResult {

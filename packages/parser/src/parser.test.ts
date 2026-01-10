@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseTokens } from '../parser.js'
-import type { TokenResolvers, ResolvedCommodity, ResolvedLocation, ResolvedUser } from '../types.js'
+import { parseTokens } from './parser.js'
+import type { TokenResolvers, ResolvedCommodity, ResolvedLocation, ResolvedUser } from './types.js'
 
 // Mock data
 const COMMODITIES: Record<string, ResolvedCommodity> = {

@@ -9,7 +9,7 @@ import {
   extractExplicitValue,
   isCommaSeparatedList,
   splitCommaSeparatedList,
-} from '../tokenizer.js'
+} from './tokenizer.js'
 
 describe('tokenize', () => {
   describe('basic tokenization', () => {

@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { tokenize } from '../tokenizer.js'
-import { identifyTokens, resolveCommaSeparatedCommodities } from '../identifier.js'
-import type { TokenResolvers, ResolvedCommodity, ResolvedLocation, ResolvedUser } from '../types.js'
+import { tokenize } from './tokenizer.js'
+import { identifyTokens, resolveCommaSeparatedCommodities } from './identifier.js'
+import type { TokenResolvers, ResolvedCommodity, ResolvedLocation, ResolvedUser } from './types.js'
 
 // Mock data
 const COMMODITIES: Record<string, ResolvedCommodity> = {

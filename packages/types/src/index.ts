@@ -340,6 +340,13 @@ export interface DiscordCallbackRequest {
   state: string
 }
 
+// Discord test connection error codes
+export type DiscordConnectionErrorCode =
+  | 'no_bot_token'
+  | 'no_guild_id'
+  | 'not_in_guild'
+  | 'unknown_error'
+
 // Discord test connection response
 export interface DiscordTestConnectionResponse {
   success: boolean
@@ -350,6 +357,7 @@ export interface DiscordTestConnectionResponse {
     memberCount?: number
   }
   error?: string
+  errorCode?: DiscordConnectionErrorCode
 }
 
 // Settings history entry (for audit trail)

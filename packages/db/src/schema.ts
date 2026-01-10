@@ -61,8 +61,10 @@ export const reservationStatusEnum = pgEnum('reservation_status', [
 
 export const invoiceStatusEnum = pgEnum('invoice_status', [
   'draft', // Open invoice being accumulated
-  'submitted', // All reservations created, awaiting confirmations
-  'completed', // All reservations fulfilled
+  'pending', // Submitted, awaiting counterparty confirmation
+  'confirmed', // Counterparty confirmed, reservations active
+  'fulfilled', // All reservations fulfilled
+  'partially_fulfilled', // Some reservations fulfilled, some in other states
   'cancelled', // Invoice cancelled
 ])
 
@@ -429,7 +431,7 @@ export const orderReservations = pgTable(
 
 // ==================== INVOICES (Container for grouped reservations between two parties) ====================
 // An invoice groups multiple line items (reservations) between two users
-// Status: draft (accumulating), submitted (reservations created), completed, cancelled
+// Status: draft (accumulating), pending (submitted), confirmed, fulfilled, partially_fulfilled, cancelled
 export const invoices = pgTable(
   'invoices',
   {

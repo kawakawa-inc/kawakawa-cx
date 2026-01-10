@@ -429,6 +429,7 @@ export async function testConnection(): Promise<DiscordTestConnectionResponse> {
     return {
       success: false,
       error: 'Bot token not configured',
+      errorCode: 'no_bot_token',
     }
   }
 
@@ -436,6 +437,7 @@ export async function testConnection(): Promise<DiscordTestConnectionResponse> {
     return {
       success: false,
       error: 'Guild ID not configured',
+      errorCode: 'no_guild_id',
     }
   }
 
@@ -446,6 +448,7 @@ export async function testConnection(): Promise<DiscordTestConnectionResponse> {
       return {
         success: false,
         error: 'Bot is not a member of the specified guild',
+        errorCode: 'not_in_guild',
       }
     }
 
@@ -462,6 +465,7 @@ export async function testConnection(): Promise<DiscordTestConnectionResponse> {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
+      errorCode: 'unknown_error',
     }
   }
 }

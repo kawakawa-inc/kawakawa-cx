@@ -1,18 +1,20 @@
 /**
- * /sell command - Create sell orders with flexible input
+ * /sell command - Create sell orders or invoice line items
  *
- * Supports:
- * - Comma-separated tickers: /sell COF,CAF,H2O Katoa
- * - Space-separated input: /sell H Stella 1500
- * - Limit modifiers: reserve:X, max:X
- * - Auto-pricing from user's default price list
- * - Invoice mode (with user detection): /sell COF 100 @bob BEN
+ * Invoice mode (flexible token order):
+ * - /sell 100 COF 200 RAT Katoa bob send
+ * - /sell bob katoa COF 100 RAT 200 send
+ *
+ * Order mode (no counterparty):
+ * - /sell COF,CAF,H2O Katoa
+ * - /sell H Stella 1500
+ * - /sell DW Katoa reserve:1000
  */
 import { SlashCommandBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
-import { db, sellOrders, priceLists, buyOrders } from '@kawakawa/db'
-import { eq, and } from 'drizzle-orm'
+import { db, sellOrders, priceLists } from '@kawakawa/db'
+import { eq } from 'drizzle-orm'
 import { searchLocations } from '../../autocomplete/index.js'
 import { formatCommodity, formatLocation, resolveLocation } from '../../services/display.js'
 import { getMarketSettings, getDisplaySettings } from '../../services/userSettings.js'
@@ -23,20 +25,32 @@ import {
 } from '../../services/channelConfig.js'
 import { requireLinkedUser } from '../../utils/auth.js'
 import { isValidCurrency, VALID_CURRENCIES, type ValidCurrency } from '../../utils/validation.js'
-import {
-  parseSmartOrderInput,
-  formatLimitMode,
-  type LimitMode,
-  type ResolvedUser,
-} from '../../utils/orderInputParser.js'
+import { parseTokens } from '@kawakawa/parser'
+import { botResolvers } from '../../utils/resolvers.js'
+import { handleInvoiceCommand } from '../../services/invoiceCommandHandler.js'
+
+/** Limit mode for sell orders (includes 'none' when no limit is set) */
+type LimitMode = 'none' | 'max_sell' | 'reserve'
+
+/**
+ * Format limit mode for display
+ */
+function formatLimitMode(mode: LimitMode, quantity: number | null): string {
+  if (mode === 'none' || quantity === null) {
+    return ''
+  }
+
+  if (mode === 'reserve') {
+    return `reserve ${quantity.toLocaleString()}`
+  }
+
+  if (mode === 'max_sell') {
+    return `max ${quantity.toLocaleString()}`
+  }
+
+  return ''
+}
 import { calculateEffectivePriceWithFallback } from '@kawakawa/services/market'
-import { getOrderDisplayPrice } from '@kawakawa/services/market'
-import type { LocationDisplayMode } from '@kawakawa/types'
-import {
-  getOrCreateInvoice,
-  addLineItems,
-  type InvoiceLineItemInput,
-} from '../../services/invoiceService.js'
 import logger from '../../utils/logger.js'
 
 export const sell: Command = {
@@ -124,18 +138,38 @@ export const sell: Command = {
       | 'partner'
       | null
 
-    // Parse flexible input (supports both multi-format and single-format)
-    const parsed = await parseSmartOrderInput(input, { forSell: true })
+    // Parse input with unified parser
+    const parsed = await parseTokens(input, botResolvers)
 
-    // Extract tickers and check for errors based on format
-    const isMultiFormat = parsed.isMultiFormat
-    const unresolvedTokens = isMultiFormat
-      ? parsed.multi!.unresolvedTokens
-      : parsed.single!.unresolvedTokens
-    const tickers = isMultiFormat ? parsed.multi!.orders.map(o => o.ticker) : parsed.single!.tickers
+    // Check for invoice mode (counterparty user in input)
+    if (parsed.user) {
+      // INVOICE MODE: Sell to counterparty's buy orders
+      const result = await handleInvoiceCommand({
+        interaction,
+        userId,
+        input,
+        direction: 'sell',
+        locationDisplayMode: displaySettings.locationDisplayMode,
+      })
 
-    // Validate we have at least one ticker
-    if (tickers.length === 0) {
+      if (!result.success && result.errors) {
+        await interaction.reply({
+          content: `❌ ${result.errors.join('\n')}\n\nExample: \`/sell 100 COF 200 RAT Katoa bob send\``,
+          flags: MessageFlags.Ephemeral,
+        })
+      }
+      return
+    }
+
+    // ORDER MODE: Create sell orders (no counterparty)
+    const unresolvedTokens = parsed.unresolved
+
+    // For sell orders, we need at least one ticker (quantity optional for comma-separated)
+    // Comma-separated format: "COF,CAF Katoa reserve:1000" - no individual quantities needed
+    // Standard format: "COF 100 RAT 200 Katoa" - quantities from items
+    const hasTickers = parsed.items.length > 0
+
+    if (!hasTickers) {
       const errorMsg =
         unresolvedTokens.length > 0
           ? `Could not find commodities: ${unresolvedTokens.map(t => `"${t}"`).join(', ')}`
@@ -149,8 +183,7 @@ export const sell: Command = {
     }
 
     // Determine location (override takes precedence)
-    let locationId =
-      locationOverride || (isMultiFormat ? parsed.multi!.location : parsed.single!.location)
+    let locationId = locationOverride || parsed.location?.naturalId
 
     // If location override provided, validate it
     if (locationOverride) {
@@ -175,27 +208,10 @@ export const sell: Command = {
       return
     }
 
-    // Check for invoice mode (counterparty user detected)
-    const counterpartyUser: ResolvedUser | null = isMultiFormat
-      ? parsed.multi!.counterpartyUser
-      : parsed.single!.counterpartyUser
-
-    if (counterpartyUser) {
-      // INVOICE MODE: Sell to counterparty's buy orders
-      await handleInvoiceMode(
-        interaction,
-        userId,
-        counterpartyUser,
-        tickers,
-        isMultiFormat ? parsed.multi!.orders : null,
-        isMultiFormat ? null : parsed.single!.limitQuantity,
-        locationId,
-        displaySettings
-      )
-      return
-    }
-
-    // ORDER MODE: Create sell orders (original behavior)
+    // ORDER MODE: Create sell orders (no counterparty detected)
+    // For sell orders, limit mode is shared across all items from the parsed input
+    const sharedLimitMode: LimitMode = parsed.limit?.mode ?? 'none'
+    const sharedLimitQuantity: number | null = parsed.limit?.quantity ?? null
     // Determine currency using channel defaults resolution
     const currency: ValidCurrency = resolveEffectiveValue(
       currencyOption,
@@ -235,10 +251,6 @@ export const sell: Command = {
       channelSettings?.visibility,
       channelSettings?.visibilityEnforced ?? false
     )
-
-    // Determine limit mode (for single-format, from parsed input; for multi-format, per-ticker)
-    const sharedLimitMode: LimitMode = isMultiFormat ? 'reserve' : parsed.single!.limitMode
-    const sharedLimitQuantity = isMultiFormat ? null : parsed.single!.limitQuantity
 
     // Determine price list using channel defaults resolution
     const effectivePriceList: string | null = resolveEffectiveValue(
@@ -305,20 +317,15 @@ export const sell: Command = {
     }> = []
     const errors: string[] = []
 
-    // Build order items based on format
-    // For multi-format, each ticker has its own reserve quantity
-    // For single-format, all tickers share the same limit mode/quantity
-    const orderItems = isMultiFormat
-      ? parsed.multi!.orders.map(o => ({
-          ticker: o.ticker,
-          limitMode: 'reserve' as LimitMode,
-          limitQuantity: o.quantity,
-        }))
-      : tickers.map(ticker => ({
-          ticker,
-          limitMode: sharedLimitMode,
-          limitQuantity: sharedLimitQuantity,
-        }))
+    // Build order items from parsed items
+    // For standard format with quantities: use quantity as reserve
+    // For comma-separated format: use shared limit mode/quantity
+    const orderItems = parsed.items.map(item => ({
+      ticker: item.commodity.ticker,
+      // If item has its own quantity, use it as reserve; otherwise use shared limit
+      limitMode: item.quantity && item.quantity > 0 ? ('reserve' as LimitMode) : sharedLimitMode,
+      limitQuantity: item.quantity && item.quantity > 0 ? item.quantity : sharedLimitQuantity,
+    }))
 
     for (const item of orderItems) {
       const { ticker, limitMode, limitQuantity } = item
@@ -503,137 +510,4 @@ export const sell: Command = {
       flags: MessageFlags.Ephemeral,
     })
   },
-}
-
-/**
- * Handle invoice mode for /sell command
- * Sells TO the counterparty's buy orders and adds to invoice
- */
-async function handleInvoiceMode(
-  interaction: ChatInputCommandInteraction,
-  userId: number,
-  counterpartyUser: ResolvedUser,
-  tickers: string[],
-  multiOrders: Array<{ ticker: string; quantity: number; commodityName: string }> | null,
-  sharedQuantity: number | null,
-  locationId: string,
-  displaySettings: { locationDisplayMode: LocationDisplayMode }
-): Promise<void> {
-  // Get or create invoice with this counterparty
-  const { id: invoiceId, isNew } = await getOrCreateInvoice(userId, counterpartyUser.userId)
-
-  // Find counterparty's buy orders that match our criteria
-  const matchingBuyOrders = await db.query.buyOrders.findMany({
-    where: and(eq(buyOrders.userId, counterpartyUser.userId), eq(buyOrders.locationId, locationId)),
-  })
-
-  // Build line items for each ticker
-  const lineItems: InvoiceLineItemInput[] = []
-  const addedItems: Array<{ ticker: string; quantity: number; price: number; currency: string }> =
-    []
-  const notFound: string[] = []
-
-  for (const ticker of tickers) {
-    // Determine quantity for this ticker
-    const quantity = multiOrders
-      ? (multiOrders.find(o => o.ticker === ticker)?.quantity ?? 0)
-      : (sharedQuantity ?? 0)
-
-    if (quantity <= 0) {
-      notFound.push(`${ticker}: no quantity specified`)
-      continue
-    }
-
-    // Find matching buy order from counterparty
-    const buyOrder = matchingBuyOrders.find(o => o.commodityTicker === ticker)
-
-    if (!buyOrder) {
-      notFound.push(
-        `${ticker}: ${counterpartyUser.fioUsername ?? counterpartyUser.username} has no buy order`
-      )
-      continue
-    }
-
-    // Get the display price (handles dynamic pricing)
-    const priceInfo = await getOrderDisplayPrice(buyOrder)
-    const price = priceInfo?.price ?? 0
-
-    lineItems.push({
-      buyOrderId: buyOrder.id,
-      commodityTicker: ticker,
-      locationId,
-      quantity,
-      unitPrice: price,
-      currency: buyOrder.currency as 'CIS' | 'ICA' | 'AIC' | 'NCC',
-      priceListCode: buyOrder.priceListCode,
-    })
-
-    addedItems.push({
-      ticker,
-      quantity,
-      price,
-      currency: buyOrder.currency,
-    })
-  }
-
-  // Add line items to invoice
-  if (lineItems.length > 0) {
-    await addLineItems(invoiceId, lineItems)
-  }
-
-  // Build response
-  const locationDisplay = await formatLocation(locationId, displaySettings.locationDisplayMode)
-  const counterpartyName =
-    counterpartyUser.fioUsername ?? counterpartyUser.displayName ?? counterpartyUser.username
-
-  let response = ''
-
-  if (isNew) {
-    response = `📋 **Invoice #${invoiceId}** created with **${counterpartyName}**\n\n`
-  } else {
-    response = `✅ Added to **Invoice #${invoiceId}** (${counterpartyName})\n\n`
-  }
-
-  if (addedItems.length > 0) {
-    response += `Selling to ${counterpartyName} @ **${locationDisplay}**:\n`
-    for (const item of addedItems) {
-      const commodityDisplay = formatCommodity(item.ticker)
-      const priceDisplay =
-        item.price > 0 ? `${item.price.toFixed(2)} ${item.currency}` : `-- ${item.currency}`
-      response += `• ${commodityDisplay} x${item.quantity.toLocaleString()} @ ${priceDisplay}\n`
-    }
-  }
-
-  if (notFound.length > 0) {
-    response += `\n⚠️ Could not add:\n${notFound.map(n => `• ${n}`).join('\n')}`
-  }
-
-  // Calculate totals
-  const totals = new Map<string, number>()
-  for (const item of addedItems) {
-    const current = totals.get(item.currency) ?? 0
-    totals.set(item.currency, current + item.quantity * item.price)
-  }
-
-  if (totals.size > 0) {
-    const totalStr = Array.from(totals.entries())
-      .map(([currency, total]) => `${total.toFixed(2)} ${currency}`)
-      .join(', ')
-    response += `\n**Total added**: ${totalStr}`
-  }
-
-  await interaction.reply({
-    content: response,
-    flags: MessageFlags.Ephemeral,
-  })
-
-  logger.info(
-    {
-      userId,
-      counterpartyUserId: counterpartyUser.userId,
-      invoiceId,
-      itemsAdded: addedItems.length,
-    },
-    'Invoice mode: items added to invoice via /sell'
-  )
 }

@@ -2,7 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import type { MessageVisibility } from '@kawakawa/types'
-import { parseXitJson, type XitMaterials } from '@kawakawa/types/xit'
+import { parseXitJson } from '@kawakawa/parser/xit'
 import { db, sellOrders, buyOrders, users } from '@kawakawa/db'
 import { eq, and, desc, inArray, or, isNull } from 'drizzle-orm'
 import { searchUsers } from '../../autocomplete/index.js'
@@ -221,17 +221,23 @@ export const query: Command = {
       (interaction.options.getString('type') as 'all' | 'sell' | 'buy' | null) || 'sell'
 
     // Check for XIT JSON input
-    let xitQuantities: XitMaterials | undefined
+    // XitMaterials is Record<string, number> for compatibility
+    let xitQuantities: Record<string, number> | undefined
     let xitName: string | undefined
     let xitCommodities: string[] = []
     let xitOriginLocation: { naturalId: string; name: string; type: string } | null = null
 
     if (queryInput?.trim().startsWith('{')) {
       const xitResult = parseXitJson(queryInput)
-      if (xitResult.success) {
-        xitQuantities = xitResult.materials
-        xitName = xitResult.name
-        xitCommodities = Object.keys(xitResult.materials)
+      if (xitResult.valid) {
+        // Convert array of XitMaterial to Record<string, number>
+        xitQuantities = {}
+        for (const mat of xitResult.materials) {
+          xitQuantities[mat.ticker] = (xitQuantities[mat.ticker] ?? 0) + mat.amount
+        }
+        xitCommodities = Object.keys(xitQuantities)
+        // Get name from global if available
+        xitName = xitResult.data?.groups?.[0]?.name
         // Force sell orders when using XIT (XIT is always a buying context)
         orderType = 'sell'
         // Extract origin location from actions

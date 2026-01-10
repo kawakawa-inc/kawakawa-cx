@@ -438,7 +438,6 @@ onMounted(async () => {
   padding: 6px 8px;
   vertical-align: middle;
 }
-
 </style>
 
 <style>

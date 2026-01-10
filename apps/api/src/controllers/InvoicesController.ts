@@ -48,9 +48,14 @@ interface UpdateInvoiceRequest {
   notes?: string
 }
 
-// Stored status in database (subset of calculated InvoiceStatus)
-// The full InvoiceStatus is calculated from reservation states
-type StoredInvoiceStatus = 'draft' | 'submitted' | 'completed' | 'cancelled'
+// Stored status in database (matches invoiceStatusEnum in schema)
+type StoredInvoiceStatus =
+  | 'draft'
+  | 'pending'
+  | 'confirmed'
+  | 'fulfilled'
+  | 'partially_fulfilled'
+  | 'cancelled'
 
 /**
  * Calculate display status from reservation states
@@ -62,7 +67,7 @@ type StoredInvoiceStatus = 'draft' | 'submitted' | 'completed' | 'cancelled'
  * - cancelled: All reservations cancelled
  */
 function calculateInvoiceStatus(
-  dbStatus: 'draft' | 'submitted' | 'completed' | 'cancelled',
+  dbStatus: StoredInvoiceStatus,
   reservationStatuses: (ReservationStatus | null)[]
 ): InvoiceStatus {
   // Draft invoices stay draft
@@ -143,12 +148,14 @@ export class InvoicesController extends Controller {
         ? and(eq(invoices.userId, userId), eq(invoices.status, status))
         : eq(invoices.userId, userId)
     } else if (direction === 'received') {
-      // Only show received invoices that are submitted or later (not drafts)
+      // Only show received invoices that are pending or later (not drafts)
       const receivedCondition = and(
         eq(invoices.counterpartyUserId, userId),
         or(
-          eq(invoices.status, 'submitted'),
-          eq(invoices.status, 'completed'),
+          eq(invoices.status, 'pending'),
+          eq(invoices.status, 'confirmed'),
+          eq(invoices.status, 'fulfilled'),
+          eq(invoices.status, 'partially_fulfilled'),
           eq(invoices.status, 'cancelled')
         )
       )
@@ -161,8 +168,10 @@ export class InvoicesController extends Controller {
       const receivedCondition = and(
         eq(invoices.counterpartyUserId, userId),
         or(
-          eq(invoices.status, 'submitted'),
-          eq(invoices.status, 'completed'),
+          eq(invoices.status, 'pending'),
+          eq(invoices.status, 'confirmed'),
+          eq(invoices.status, 'fulfilled'),
+          eq(invoices.status, 'partially_fulfilled'),
           eq(invoices.status, 'cancelled')
         )
       )
@@ -1145,7 +1154,7 @@ export class InvoicesController extends Controller {
     await db
       .update(invoices)
       .set({
-        status: 'submitted',
+        status: 'pending',
         submittedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -1180,7 +1189,7 @@ export class InvoicesController extends Controller {
   }
 
   /**
-   * Cancel a submitted invoice
+   * Cancel a pending invoice
    */
   @Post('{id}/cancel')
   public async cancelInvoice(
@@ -1199,8 +1208,8 @@ export class InvoicesController extends Controller {
       throw Forbidden('You do not have access to this invoice')
     }
 
-    if (invoice.status !== 'submitted') {
-      throw BadRequest('Only submitted invoices can be cancelled')
+    if (invoice.status !== 'pending') {
+      throw BadRequest('Only pending invoices can be cancelled')
     }
 
     // Cancel all pending reservations

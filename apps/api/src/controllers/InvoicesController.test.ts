@@ -383,7 +383,7 @@ describe('InvoicesController', () => {
     })
 
     it('should throw BadRequest if invoice is not draft', async () => {
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
 
       await expect(controller.updateInvoice(1, { name: 'Test' }, mockUserRequest)).rejects.toThrow(
         'Only draft invoices can be updated'
@@ -418,7 +418,7 @@ describe('InvoicesController', () => {
     })
 
     it('should throw BadRequest if invoice is not draft', async () => {
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
 
       await expect(controller.deleteInvoice(1, mockUserRequest)).rejects.toThrow(
         'Only draft invoices can be deleted'
@@ -529,7 +529,7 @@ describe('InvoicesController', () => {
     })
 
     it('should throw BadRequest if invoice is not draft', async () => {
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
 
       await expect(
         controller.addLineItem(1, { sellOrderId: 10, quantity: 100 }, mockUserRequest)
@@ -649,7 +649,7 @@ describe('InvoicesController', () => {
       // Notification
       vi.mocked(notificationService.create).mockResolvedValue({} as any)
       // getInvoice flow for return
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
       mockSelect.orderBy.mockResolvedValueOnce([{ ...mockLineItem, reservationId: 200 }])
 
@@ -676,7 +676,7 @@ describe('InvoicesController', () => {
     })
 
     it('should throw BadRequest if invoice is not draft', async () => {
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
 
       await expect(controller.submitInvoice(1, mockUserRequest)).rejects.toThrow(
         'Only draft invoices can be submitted'
@@ -693,7 +693,7 @@ describe('InvoicesController', () => {
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'User One' }])
       vi.mocked(notificationService.create).mockResolvedValue({} as any)
       // getInvoice flow
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending' }])
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
       mockSelect.orderBy.mockResolvedValueOnce([lineItemWithReservation])
 
@@ -705,13 +705,13 @@ describe('InvoicesController', () => {
 
   describe('cancelInvoice', () => {
     it('should cancel pending reservations and update status', async () => {
-      const submittedInvoice = { ...mockInvoice, status: 'submitted' as const }
+      const pendingInvoice = { ...mockInvoice, status: 'pending' as const }
       const lineItemWithReservation = { ...mockLineItem, reservationId: 200 }
       // After cancellation, line item should have cancelled reservation status
       const cancelledLineItem = { ...lineItemWithReservation, reservationStatus: 'cancelled' }
 
       // Get invoice
-      mockSelect.where.mockResolvedValueOnce([submittedInvoice])
+      mockSelect.where.mockResolvedValueOnce([pendingInvoice])
       // Get line items
       mockSelect.where.mockResolvedValueOnce([lineItemWithReservation])
       // Cancel reservation
@@ -722,7 +722,7 @@ describe('InvoicesController', () => {
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'User One' }])
       vi.mocked(notificationService.create).mockResolvedValue({} as any)
       // getInvoice flow - now includes leftJoin for reservation status
-      mockSelect.where.mockResolvedValueOnce([{ ...submittedInvoice, status: 'cancelled' }])
+      mockSelect.where.mockResolvedValueOnce([{ ...pendingInvoice, status: 'cancelled' }])
       mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
       // getInvoice uses orderBy as terminal for line items with reservation status joined
       mockSelect.orderBy.mockResolvedValueOnce([cancelledLineItem])
@@ -739,16 +739,16 @@ describe('InvoicesController', () => {
       )
     })
 
-    it('should throw BadRequest if invoice is not submitted', async () => {
+    it('should throw BadRequest if invoice is not pending', async () => {
       mockSelect.where.mockResolvedValueOnce([mockInvoice])
 
       await expect(controller.cancelInvoice(1, mockUserRequest)).rejects.toThrow(
-        'Only submitted invoices can be cancelled'
+        'Only pending invoices can be cancelled'
       )
     })
 
     it('should throw Forbidden if user is not owner', async () => {
-      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'submitted', userId: 99 }])
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending', userId: 99 }])
 
       await expect(controller.cancelInvoice(1, mockUserRequest)).rejects.toThrow(
         'You do not have access to this invoice'

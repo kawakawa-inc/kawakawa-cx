@@ -3,40 +3,26 @@
  *
  * Parses XIT ACT format used by PRUNplanner and similar tools.
  * Extracts material requirements from groups and aggregates them.
+ *
+ * This module re-exports from @kawakawa/parser with backwards-compatible types.
  */
 
-/**
- * Map of commodity ticker to quantity
- */
-export interface XitMaterials {
-  [ticker: string]: number
-}
+import {
+  parseXitJson as parserParseXitJson,
+  isXitJson as parserIsXitJson,
+  toMaterialsMap,
+} from '@kawakawa/parser/xit'
+
+// Re-export types from parser (these are compatible)
+export type { XitMaterials, XitMaterial, XitGroup, XitJson } from '@kawakawa/parser/xit'
 
 /**
- * A group within the XIT JSON containing materials
- */
-export interface XitGroup {
-  type?: string
-  name?: string
-  materials: XitMaterials
-}
-
-/**
- * Full XIT JSON structure
- */
-export interface XitJson {
-  actions?: unknown[]
-  global?: { name?: string }
-  groups: XitGroup[]
-}
-
-/**
- * Successful parse result with aggregated materials
+ * Successful parse result with aggregated materials (backwards-compat format)
  */
 export interface XitParseResult {
   success: true
   /** Aggregated materials across all groups */
-  materials: XitMaterials
+  materials: Record<string, number>
   /** Name from global.name if present */
   name?: string
 }
@@ -51,38 +37,27 @@ export interface XitParseError {
 
 /**
  * Quick check if a string looks like XIT JSON.
- * Does not validate the full structure, just checks basic shape.
+ * Delegates to @kawakawa/parser.
  */
 export function isXitJson(input: string): boolean {
-  const trimmed = input.trim()
-  if (!trimmed.startsWith('{')) return false
+  return parserIsXitJson(input)
+}
 
-  try {
-    const parsed = JSON.parse(trimmed)
-    return (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      Array.isArray(parsed.groups) &&
-      parsed.groups.length > 0 &&
-      parsed.groups.some(
-        (g: unknown) =>
-          typeof g === 'object' &&
-          g !== null &&
-          'materials' in g &&
-          typeof (g as XitGroup).materials === 'object'
-      )
-    )
-  } catch {
-    return false
-  }
+/**
+ * Legacy XIT group structure for backwards compatibility.
+ */
+interface LegacyXitGroup {
+  type?: string
+  name?: string
+  materials: Record<string, number>
 }
 
 /**
  * Aggregate materials from multiple groups into a single map.
- * If the same ticker appears in multiple groups, quantities are summed.
+ * Backwards-compatible: accepts array of groups with materials as Record<string, number>.
  */
-export function aggregateMaterials(groups: XitGroup[]): XitMaterials {
-  const result: XitMaterials = {}
+export function aggregateMaterials(groups: LegacyXitGroup[]): Record<string, number> {
+  const result: Record<string, number> = {}
 
   for (const group of groups) {
     if (!group.materials || typeof group.materials !== 'object') continue
@@ -98,63 +73,21 @@ export function aggregateMaterials(groups: XitGroup[]): XitMaterials {
 
 /**
  * Parse XIT JSON string and return aggregated materials.
+ * Provides backwards-compatible result format (success/materials as Record).
  */
 export function parseXitJson(input: string): XitParseResult | XitParseError {
-  const trimmed = input.trim()
+  const result = parserParseXitJson(input)
 
-  if (!trimmed.startsWith('{')) {
-    return { success: false, error: 'Input is not JSON' }
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch (e) {
+  if (!result.valid) {
     return {
       success: false,
-      error: `Invalid JSON: ${e instanceof Error ? e.message : 'parse error'}`,
+      error: result.error ?? 'Parse error',
     }
   }
 
-  if (typeof parsed !== 'object' || parsed === null) {
-    return { success: false, error: 'JSON is not an object' }
-  }
-
-  const obj = parsed as Record<string, unknown>
-
-  if (!Array.isArray(obj.groups)) {
-    return { success: false, error: 'Missing or invalid "groups" array' }
-  }
-
-  if (obj.groups.length === 0) {
-    return { success: false, error: 'No groups found' }
-  }
-
-  // Validate at least one group has materials
-  const hasValidGroup = obj.groups.some(
-    (g: unknown) =>
-      typeof g === 'object' &&
-      g !== null &&
-      'materials' in g &&
-      typeof (g as XitGroup).materials === 'object'
-  )
-
-  if (!hasValidGroup) {
-    return { success: false, error: 'No groups with valid materials found' }
-  }
-
-  const materials = aggregateMaterials(obj.groups as XitGroup[])
-
-  if (Object.keys(materials).length === 0) {
-    return { success: false, error: 'No valid materials found in groups' }
-  }
-
-  const global = obj.global as { name?: string } | undefined
-  const name = typeof global?.name === 'string' ? global.name : undefined
-
   return {
     success: true,
-    materials,
-    name,
+    materials: toMaterialsMap(result.materials),
+    name: result.name,
   }
 }

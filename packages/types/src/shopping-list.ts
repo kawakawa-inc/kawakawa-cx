@@ -7,9 +7,16 @@
  * - Simple format (single TICKER QTY pair)
  *
  * All formats produce a unified output: Record<string, number> (ticker -> quantity)
+ *
+ * This module re-exports from @kawakawa/parser with backwards-compatible types.
  */
 
-import { parseXitJson, isXitJson } from './xit.js'
+import {
+  parseList as parserParseList,
+  isList as parserIsList,
+  detectFormat as parserDetectFormat,
+} from '@kawakawa/parser/list'
+import { parseXitJson } from './xit.js'
 
 /** Supported shopping list input formats */
 export type ShoppingListFormat = 'xit' | 'csv' | 'simple'
@@ -48,86 +55,34 @@ export interface ShoppingListParseOptions {
 }
 
 /**
+ * Extract ticker/quantity pairs from input for format detection.
+ */
+function extractTickerQuantityPairs(input: string): number {
+  const pairRegex = /[\s,]*([A-Za-z0-9]{1,4})[\s,]+(\d+)/g
+  let count = 0
+  while (pairRegex.exec(input) !== null) {
+    count++
+  }
+  return count
+}
+
+/**
  * Detect the format of a shopping list input string.
  * Returns null if the format cannot be determined or is empty.
  */
 export function detectShoppingListFormat(input: string): ShoppingListFormat | null {
-  const trimmed = input.trim()
-  if (!trimmed) return null
+  const format = parserDetectFormat(input)
+  // Map parser formats to legacy formats
+  if (format === 'unknown') return null
+  if (format === 'xit') return 'xit'
+  if (format === 'fio') return 'simple'
 
-  // XIT JSON: starts with { and contains groups
-  if (trimmed.startsWith('{')) {
-    if (isXitJson(trimmed)) {
-      return 'xit'
-    }
-    // It's JSON but not valid XIT - we'll try to parse and fail gracefully
-    return 'xit'
-  }
-
-  // Check for ticker/quantity pattern using regex to extract pairs
-  // Tickers are 1-4 alphanumeric chars (e.g., H2O, COF, DW, 2GO)
-  // Examples: "COF 100", "COF,100", "COF 100 DW 500", "COF,100,DW,500"
-  const pairs = extractTickerQuantityPairs(trimmed)
-  if (pairs.length === 1) {
-    return 'simple'
-  } else if (pairs.length > 1) {
-    return 'csv'
-  }
+  // For 'simple' format, count pairs to determine csv vs simple
+  const pairCount = extractTickerQuantityPairs(input)
+  if (pairCount === 1) return 'simple'
+  if (pairCount > 1) return 'csv'
 
   return null
-}
-
-/**
- * Extract ticker/quantity pairs from a CSV-style string.
- * Uses regex to match TICKER QUANTITY pairs with flexible separators.
- * Tickers are 1-4 alphanumeric characters (e.g., H2O, COF, DW).
- */
-function extractTickerQuantityPairs(input: string): Array<{ ticker: string; quantity: number }> {
-  const pairs: Array<{ ticker: string; quantity: number }> = []
-
-  // Regex to match ticker/quantity pairs
-  // Ticker: 1-4 alphanumeric chars
-  // Separator: optional comma/space/tab before and after
-  // Quantity: one or more digits
-  const pairRegex = /[\s,]*([A-Za-z0-9]{1,4})[\s,]+(\d+)/g
-
-  let match
-  while ((match = pairRegex.exec(input)) !== null) {
-    const ticker = match[1].toUpperCase()
-    const quantity = parseInt(match[2], 10)
-
-    if (quantity > 0) {
-      pairs.push({ ticker, quantity })
-    }
-  }
-
-  return pairs
-}
-
-/**
- * Parse CSV format input (TICKER QTY pairs).
- */
-function parseCsvFormat(input: string): ShoppingListParseResult {
-  const pairs = extractTickerQuantityPairs(input)
-
-  if (pairs.length === 0) {
-    return {
-      success: false,
-      error: 'No valid ticker/quantity pairs found',
-    }
-  }
-
-  // Aggregate duplicates
-  const materials: ShoppingListMaterials = {}
-  for (const { ticker, quantity } of pairs) {
-    materials[ticker] = (materials[ticker] ?? 0) + quantity
-  }
-
-  return {
-    success: true,
-    materials,
-    format: pairs.length === 1 ? 'simple' : 'csv',
-  }
 }
 
 /**
@@ -143,34 +98,51 @@ export function parseShoppingList(
     return { success: false, error: 'Empty input' }
   }
 
-  const format = detectShoppingListFormat(trimmed)
+  // Use the parser package
+  const parserResult = parserParseList(trimmed)
 
-  let result: ShoppingListParseResult
-
-  if (format === 'xit') {
-    // Use existing XIT parser
-    const xitResult = parseXitJson(trimmed)
-    if (!xitResult.success) {
-      return xitResult
-    }
-    result = {
-      success: true,
-      materials: xitResult.materials,
-      name: xitResult.name,
-      format: 'xit',
-    }
-  } else if (format === 'csv' || format === 'simple') {
-    result = parseCsvFormat(trimmed)
-  } else {
+  if (!parserResult.success) {
     return {
       success: false,
-      error:
-        'Unrecognized format. Expected XIT JSON, CSV pairs (COF 100 DW 500), or simple (COF 100)',
+      error: parserResult.error ?? 'Parse error',
     }
   }
 
+  // Convert parser's items array to materials map
+  const materials: ShoppingListMaterials = {}
+  for (const item of parserResult.items) {
+    materials[item.ticker] = (materials[item.ticker] ?? 0) + item.quantity
+  }
+
+  // Map parser format to legacy format
+  let format: ShoppingListFormat
+  let name: string | undefined
+
+  if (parserResult.format === 'xit') {
+    format = 'xit'
+    // Extract name from XIT JSON using the xit parser
+    const xitResult = parseXitJson(trimmed)
+    if (xitResult.success) {
+      name = xitResult.name
+    }
+  } else if (parserResult.format === 'fio') {
+    format = 'simple' // FIO is treated as simple for backwards compat
+  } else if (parserResult.format === 'simple') {
+    // Determine if it's simple or csv based on item count
+    format = parserResult.items.length === 1 ? 'simple' : 'csv'
+  } else {
+    format = 'simple'
+  }
+
+  let result: ShoppingListParseSuccess = {
+    success: true,
+    materials,
+    format,
+    name,
+  }
+
   // Validate tickers if validTickers set is provided
-  if (result.success && options.validTickers && options.validTickers.size > 0) {
+  if (options.validTickers && options.validTickers.size > 0) {
     const tickers = Object.keys(result.materials)
     const unknown = tickers.filter(t => !options.validTickers!.has(t))
 
@@ -188,7 +160,7 @@ export function parseShoppingList(
           }
         }
       }
-      result.unknownTickers = unknown
+      result = { ...result, unknownTickers: unknown }
     }
   }
 
@@ -200,7 +172,7 @@ export function parseShoppingList(
  * Quick check without full parsing.
  */
 export function isShoppingList(input: string): boolean {
-  return detectShoppingListFormat(input.trim()) !== null
+  return parserIsList(input)
 }
 
 // ==================== SAVED SHOPPING LISTS ====================

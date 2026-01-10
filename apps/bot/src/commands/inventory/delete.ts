@@ -22,7 +22,8 @@ import { searchLocations } from '../../autocomplete/index.js'
 import { formatCommodity, formatLocation, resolveLocation } from '../../services/display.js'
 import { getDisplaySettings } from '../../services/userSettings.js'
 import { requireLinkedUser } from '../../utils/auth.js'
-import { parseOrderInput } from '../../utils/orderInputParser.js'
+import { parseTokens } from '@kawakawa/parser'
+import { botResolvers } from '../../utils/resolvers.js'
 import logger from '../../utils/logger.js'
 
 interface OrderToDelete {
@@ -96,13 +97,16 @@ export const deleteCommand: Command = {
       (interaction.options.getString('type') as 'all' | 'sell' | 'buy' | null) || 'all'
 
     // Parse flexible input
-    const parsed = await parseOrderInput(input, { forDelete: true })
+    const parsed = await parseTokens(input, botResolvers)
+
+    // Extract tickers from parsed items
+    const tickers = parsed.items.map(item => item.commodity.ticker)
 
     // Validate we have at least one ticker
-    if (parsed.tickers.length === 0) {
+    if (tickers.length === 0) {
       const errorMsg =
-        parsed.unresolvedTokens.length > 0
-          ? `Could not find commodities: ${parsed.unresolvedTokens.map(t => `"${t}"`).join(', ')}`
+        parsed.unresolved.length > 0
+          ? `Could not find commodities: ${parsed.unresolved.map(t => `"${t}"`).join(', ')}`
           : 'Please specify at least one commodity ticker.'
 
       await interaction.reply({
@@ -113,7 +117,7 @@ export const deleteCommand: Command = {
     }
 
     // Determine location (override takes precedence)
-    let locationId = locationOverride || parsed.location
+    let locationId = locationOverride || parsed.location?.naturalId
 
     // If location override provided, validate it
     if (locationOverride) {
@@ -147,7 +151,7 @@ export const deleteCommand: Command = {
         where: and(
           eq(sellOrders.userId, userId),
           eq(sellOrders.locationId, locationId),
-          inArray(sellOrders.commodityTicker, parsed.tickers)
+          inArray(sellOrders.commodityTicker, tickers)
         ),
       })
 
@@ -170,7 +174,7 @@ export const deleteCommand: Command = {
         where: and(
           eq(buyOrders.userId, userId),
           eq(buyOrders.locationId, locationId),
-          inArray(buyOrders.commodityTicker, parsed.tickers)
+          inArray(buyOrders.commodityTicker, tickers)
         ),
       })
 
@@ -191,7 +195,7 @@ export const deleteCommand: Command = {
     // No matches found
     if (ordersToDelete.length === 0) {
       const locationDisplay = await formatLocation(locationId, displaySettings.locationDisplayMode)
-      const tickerDisplay = parsed.tickers.map(t => formatCommodity(t)).join(', ')
+      const tickerDisplay = tickers.map(t => formatCommodity(t)).join(', ')
 
       await interaction.reply({
         content:

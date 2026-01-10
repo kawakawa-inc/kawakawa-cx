@@ -133,6 +133,7 @@ export async function addLineItems(
     sellOrderId: item.sellOrderId,
     buyOrderId: item.buyOrderId,
     reservationId: item.reservationId,
+    reservationStatus: null, // New line items don't have reservations yet
     commodityTicker: item.commodityTicker,
     locationId: item.locationId,
     quantity: item.quantity,
@@ -187,11 +188,32 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
     )
 
+  // Get commodity tickers for each invoice
+  const commodityStats = await db
+    .select({
+      invoiceId: invoiceLineItems.invoiceId,
+      commodityTicker: invoiceLineItems.commodityTicker,
+    })
+    .from(invoiceLineItems)
+    .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
+    .groupBy(invoiceLineItems.invoiceId, invoiceLineItems.commodityTicker)
+
+  // Build commodity tickers map
+  const commodityTickersMap = new Map<number, Set<string>>()
+  for (const stat of commodityStats) {
+    if (!commodityTickersMap.has(stat.invoiceId)) {
+      commodityTickersMap.set(stat.invoiceId, new Set())
+    }
+    commodityTickersMap.get(stat.invoiceId)!.add(stat.commodityTicker)
+  }
+
   // Build stats map with buy/sell breakdown
   const statsMap = new Map<
     number,
     {
       itemCount: number
+      buyItemCount: number
+      sellItemCount: number
       totalsByCurrency: Map<Currency, number>
       buyTotalsByCurrency: Map<Currency, number>
       sellTotalsByCurrency: Map<Currency, number>
@@ -201,6 +223,8 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
     if (!statsMap.has(stat.invoiceId)) {
       statsMap.set(stat.invoiceId, {
         itemCount: 0,
+        buyItemCount: 0,
+        sellItemCount: 0,
         totalsByCurrency: new Map(),
         buyTotalsByCurrency: new Map(),
         sellTotalsByCurrency: new Map(),
@@ -214,12 +238,14 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       (entry.totalsByCurrency.get(stat.currency) ?? 0) + total
     )
 
-    // Separate buy vs sell totals
+    // Separate buy vs sell totals and counts
     // orderType='sell' means user is BUYING (from a sell order)
     // orderType='buy' means user is SELLING (to a buy order)
     if (stat.orderType === 'sell') {
+      entry.buyItemCount += stat.itemCount
       entry.buyTotalsByCurrency.set(stat.currency, total)
     } else {
+      entry.sellItemCount += stat.itemCount
       entry.sellTotalsByCurrency.set(stat.currency, total)
     }
   }
@@ -229,10 +255,13 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
     const fioUsername = fioUsernameMap.get(draft.counterpartyUserId)
     const stats = statsMap.get(draft.id) ?? {
       itemCount: 0,
+      buyItemCount: 0,
+      sellItemCount: 0,
       totalsByCurrency: new Map(),
       buyTotalsByCurrency: new Map(),
       sellTotalsByCurrency: new Map(),
     }
+    const commodityTickers = Array.from(commodityTickersMap.get(draft.id) ?? [])
 
     return {
       id: draft.id,
@@ -243,6 +272,8 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       direction: 'sent' as const, // User's own drafts are always 'sent'
       name: draft.name,
       itemCount: stats.itemCount,
+      buyItemCount: stats.buyItemCount,
+      sellItemCount: stats.sellItemCount,
       totalsByCurrency: Array.from(stats.totalsByCurrency.entries()).map(([currency, total]) => ({
         currency,
         total,
@@ -253,6 +284,7 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       sellTotalsByCurrency: Array.from(stats.sellTotalsByCurrency.entries()).map(
         ([currency, total]) => ({ currency, total })
       ),
+      commodityTickers,
       createdAt: draft.createdAt.toISOString(),
       updatedAt: draft.updatedAt.toISOString(),
     }
@@ -392,10 +424,10 @@ export async function submitInvoice(
     reservationCount++
   }
 
-  // Update invoice status
+  // Update invoice status to pending (awaiting counterparty confirmation)
   await db
     .update(invoices)
-    .set({ status: 'submitted', submittedAt: new Date(), updatedAt: new Date() })
+    .set({ status: 'pending', submittedAt: new Date(), updatedAt: new Date() })
     .where(eq(invoices.id, invoiceId))
 
   return { success: true, reservationCount }
@@ -411,11 +443,15 @@ export async function formatInvoiceForEmbed(
   const statusEmoji =
     invoice.status === 'draft'
       ? '📝'
-      : invoice.status === 'submitted'
+      : invoice.status === 'pending'
         ? '📤'
-        : invoice.status === 'completed'
-          ? '✅'
-          : '❌'
+        : invoice.status === 'confirmed'
+          ? '🤝'
+          : invoice.status === 'fulfilled'
+            ? '✅'
+            : invoice.status === 'partially_fulfilled'
+              ? '⏳'
+              : '❌' // cancelled
 
   const lines: string[] = []
   lines.push(`Partner: **${invoice.counterpartyName}**`)

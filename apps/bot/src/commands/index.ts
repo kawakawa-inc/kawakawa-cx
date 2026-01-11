@@ -25,6 +25,9 @@ import { bulksell } from './inventory/bulksell.js'
 import { bulkbuy } from './inventory/bulkbuy.js'
 // Settings commands
 import { settings } from './settings/settings.js'
+// Lists commands
+import { list } from './lists/list.js'
+import { lists } from './lists/lists.js'
 
 /**
  * All registered slash commands.
@@ -56,4 +59,7 @@ export const commands: Command[] = [
   bulkbuy,
   // Settings
   settings,
+  // Lists
+  list,
+  lists,
 ]

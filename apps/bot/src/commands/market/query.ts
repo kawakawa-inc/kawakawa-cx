@@ -1,108 +1,39 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
-import type { ChatInputCommandInteraction } from 'discord.js'
+import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import type { MessageVisibility } from '@kawakawa/types'
 import { parseXitJson } from '@kawakawa/parser/xit'
-import { db, sellOrders, buyOrders, users } from '@kawakawa/db'
+import { parseTokens } from '@kawakawa/parser'
+import { db, sellOrders, buyOrders, shoppingLists, userDiscordProfiles } from '@kawakawa/db'
 import { eq, and, desc, inArray, or, isNull } from 'drizzle-orm'
-import { searchUsers } from '../../autocomplete/index.js'
+import { botResolvers } from '../../utils/resolvers.js'
 import {
   resolveCommodity,
-  resolveLocation,
   formatCommodity,
   formatCommodityWithMode,
   formatLocation,
 } from '../../services/display.js'
 import { getDisplaySettings } from '../../services/userSettings.js'
+import { UNLINKED_ACCOUNT_MESSAGE } from '../../utils/auth.js'
 import {
   getChannelConfig,
   resolveEffectiveValue,
   resolveMessageVisibility,
 } from '../../services/channelConfig.js'
-import { sendPaginatedResponse } from '../../components/pagination.js'
+import {
+  sendPaginatedResponseWithExtraButtons,
+  type ExtraButton,
+} from '../../components/pagination.js'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
 import {
   formatGroupedOrdersMulti,
   buildFilterDescription,
   type MultiResolvedFilters,
 } from '../../services/orderFormatter.js'
+import { createSingleInputModal } from '../../utils/modals.js'
+import logger from '../../utils/logger.js'
 
 const ORDERS_PER_PAGE = 10
-
-/**
- * Parse a single token and resolve it to a commodity, location, or user.
- * Supports prefixed format (commodity:COF) and bare values (COF).
- */
-async function parseToken(token: string): Promise<{
-  type: 'commodity' | 'location' | 'user' | null
-  commodity?: { ticker: string; name: string }
-  location?: { naturalId: string; name: string; type: string }
-  userId?: number
-  username?: string
-  displayName?: string
-}> {
-  // Check for prefix
-  if (token.startsWith('commodity:')) {
-    const ticker = token.slice('commodity:'.length)
-    const commodity = await resolveCommodity(ticker)
-    return commodity ? { type: 'commodity', commodity } : { type: null }
-  }
-
-  if (token.startsWith('location:')) {
-    const locationId = token.slice('location:'.length)
-    const location = await resolveLocation(locationId)
-    return location ? { type: 'location', location } : { type: null }
-  }
-
-  if (token.startsWith('user:')) {
-    const userQuery = token.slice('user:'.length)
-    // Use fuzzy search (matches username, displayName, or FIO username)
-    const userResults = await searchUsers(userQuery, 1)
-    if (userResults.length > 0) {
-      const foundUser = await db.query.users.findFirst({
-        where: eq(users.username, userResults[0].username),
-      })
-      if (foundUser) {
-        return {
-          type: 'user',
-          userId: foundUser.id,
-          username: userResults[0].username,
-          displayName: userResults[0].displayName,
-        }
-      }
-    }
-    return { type: null }
-  }
-
-  // No prefix - auto-detect: commodity → location → user
-  const commodity = await resolveCommodity(token)
-  if (commodity) {
-    return { type: 'commodity', commodity }
-  }
-
-  const location = await resolveLocation(token)
-  if (location) {
-    return { type: 'location', location }
-  }
-
-  // Try fuzzy user search
-  const userResults = await searchUsers(token, 1)
-  if (userResults.length > 0) {
-    const foundUser = await db.query.users.findFirst({
-      where: eq(users.username, userResults[0].username),
-    })
-    if (foundUser) {
-      return {
-        type: 'user',
-        userId: foundUser.id,
-        username: userResults[0].username,
-        displayName: userResults[0].displayName,
-      }
-    }
-  }
-
-  return { type: null }
-}
 
 /**
  * Parse XIT origin string to find a matching location.
@@ -287,6 +218,9 @@ export const query: Command = {
     const resolvedUserIds: number[] = []
     const resolvedDisplayNames: string[] = []
 
+    // Track quantities from parsed input (for non-XIT parsing with quantities like "100 COF 200 RAT")
+    let parsedQuantities: Record<string, number> | undefined
+
     // If XIT JSON was parsed, resolve XIT commodities and origin location
     if (xitCommodities.length > 0) {
       for (const ticker of xitCommodities) {
@@ -300,49 +234,64 @@ export const query: Command = {
         resolvedLocations.push(xitOriginLocation)
       }
     } else if (queryInput) {
-      // Normal token parsing
-      // Split by comma or whitespace, filter empty tokens
-      const tokens = queryInput.split(/[,\s]+/).filter(Boolean)
-      const unresolvedTokens: string[] = []
+      // Use the unified parser to parse quantities and resolve tokens
+      const parsed = await parseTokens(queryInput, botResolvers)
 
-      for (const token of tokens) {
-        const result = await parseToken(token)
-
-        if (result.type === 'commodity' && result.commodity) {
-          // Only add if not already present (by ticker)
-          if (!resolvedCommodities.some(c => c.ticker === result.commodity!.ticker)) {
-            resolvedCommodities.push(result.commodity)
-          }
-        } else if (result.type === 'location' && result.location) {
-          // Only add if not already present (by naturalId)
-          if (!resolvedLocations.some(l => l.naturalId === result.location!.naturalId)) {
-            resolvedLocations.push(result.location)
-          }
-        } else if (result.type === 'user' && result.userId) {
-          // Only add if not already present (by userId)
-          if (!resolvedUserIds.includes(result.userId)) {
-            resolvedUserIds.push(result.userId)
-            resolvedDisplayNames.push(result.displayName || result.username || '')
-          }
-        } else if (result.type === null) {
-          unresolvedTokens.push(token)
+      // Collect commodities with quantities
+      for (const item of parsed.items) {
+        // Only add if not already present (by ticker)
+        if (!resolvedCommodities.some(c => c.ticker === item.commodity.ticker)) {
+          resolvedCommodities.push(item.commodity)
         }
+
+        // Track quantities (default to 0 if not specified)
+        if (!parsedQuantities) {
+          parsedQuantities = {}
+        }
+        // Add or accumulate quantity (default 0)
+        parsedQuantities[item.commodity.ticker] =
+          (parsedQuantities[item.commodity.ticker] ?? 0) + (item.quantity ?? 0)
+      }
+
+      // Collect location
+      if (parsed.location) {
+        resolvedLocations.push({
+          naturalId: parsed.location.naturalId,
+          name: parsed.location.name,
+          type: parsed.location.type,
+        })
+      }
+
+      // Collect user
+      if (parsed.user) {
+        resolvedUserIds.push(parsed.user.userId)
+        resolvedDisplayNames.push(parsed.user.displayName || parsed.user.username || '')
       }
 
       // If we have unresolved tokens and nothing was resolved, show error
       if (
-        unresolvedTokens.length > 0 &&
+        parsed.unresolved.length > 0 &&
         resolvedCommodities.length === 0 &&
         resolvedLocations.length === 0 &&
         resolvedUserIds.length === 0
       ) {
         await interaction.reply({
           content:
-            `❌ Could not resolve: ${unresolvedTokens.map(t => `"${t}"`).join(', ')}\n\n` +
+            `❌ Could not resolve: ${parsed.unresolved.map(t => `"${t}"`).join(', ')}\n\n` +
             'Use the autocomplete suggestions to find valid commodities, locations, or users.',
           flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
         })
         return
+      }
+    }
+
+    // Merge parsed quantities into xitQuantities for unified handling
+    // (xitQuantities is used later for display and list creation)
+    if (parsedQuantities && Object.keys(parsedQuantities).length > 0) {
+      // Check if any quantities are non-zero (user specified actual quantities)
+      const hasNonZeroQuantities = Object.values(parsedQuantities).some(q => q > 0)
+      if (hasNonZeroQuantities) {
+        xitQuantities = parsedQuantities
       }
     }
 
@@ -546,12 +495,119 @@ export const query: Command = {
       }
     }
 
+    // Build extra buttons if quantities are present
+    const extraButtons: ExtraButton[] = []
+
+    if (xitQuantities && Object.keys(xitQuantities).length > 0) {
+      // Store materials data for button handler
+      const materialsForList = { ...xitQuantities }
+
+      extraButtons.push({
+        id: 'create-list',
+        label: 'Save as List',
+        emoji: '📋',
+        onClick: async (buttonInteraction: ButtonInteraction) => {
+          // Show modal to get list name
+          const modal = createSingleInputModal({
+            modalId: `create-list-modal:${Date.now()}`,
+            title: 'Save as Shopping List',
+            inputId: 'list-name',
+            label: 'List Name',
+            placeholder: xitName || 'My Shopping List',
+            required: true,
+            maxLength: 100,
+            value: xitName,
+          })
+
+          await buttonInteraction.showModal(modal)
+
+          // Wait for modal submission
+          try {
+            const modalInteraction = await buttonInteraction.awaitModalSubmit({
+              filter: i =>
+                i.customId.startsWith('create-list-modal:') &&
+                i.user.id === buttonInteraction.user.id,
+              time: 60_000, // 1 minute timeout
+            })
+
+            const listName = modalInteraction.fields.getTextInputValue('list-name').trim()
+
+            if (!listName) {
+              await modalInteraction.reply({
+                content: '❌ List name cannot be empty.',
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+
+            // Check if user is linked
+            const profile = await db.query.userDiscordProfiles.findFirst({
+              where: eq(userDiscordProfiles.discordId, modalInteraction.user.id),
+              with: { user: true },
+            })
+
+            if (!profile) {
+              await modalInteraction.reply({
+                content: UNLINKED_ACCOUNT_MESSAGE,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+
+            // Save the list to database
+            try {
+              const [newList] = await db
+                .insert(shoppingLists)
+                .values({
+                  userId: profile.user.id,
+                  name: listName,
+                  materials: materialsForList,
+                })
+                .returning()
+
+              const itemCount = Object.keys(materialsForList).length
+              const totalQty = Object.values(materialsForList).reduce((sum, qty) => sum + qty, 0)
+
+              await modalInteraction.reply({
+                content:
+                  `✅ List **${listName}** saved!\n\n` +
+                  `• ${itemCount} item${itemCount !== 1 ? 's' : ''}\n` +
+                  `• ${totalQty.toLocaleString()} total units\n\n` +
+                  `Use \`/lists\` to view and manage your lists.`,
+                flags: MessageFlags.Ephemeral,
+              })
+
+              logger.info(
+                {
+                  userId: profile.user.id,
+                  listId: newList.id,
+                  listName,
+                  itemCount,
+                  totalQuantity: totalQty,
+                },
+                'Shopping list created from query'
+              )
+            } catch (error) {
+              logger.error({ error, userId: profile.user.id, listName }, 'Failed to create list')
+              await modalInteraction.reply({
+                content: '❌ Failed to save list. Please try again.',
+                flags: MessageFlags.Ephemeral,
+              })
+            }
+          } catch {
+            // Modal timed out or was cancelled - silently ignore
+          }
+        },
+      })
+    }
+
     // Send paginated response after announcement is delivered
-    await sendPaginatedResponse(interaction, embed, allItems, {
+    await sendPaginatedResponseWithExtraButtons(interaction, embed, allItems, {
       pageSize: ORDERS_PER_PAGE,
       allowShare: true,
       footerText: isEphemeral ? 'Use 📢 Share to post publicly' : undefined,
       ephemeral: isEphemeral,
+      extraButtons: extraButtons.length > 0 ? extraButtons : undefined,
     })
   },
 }

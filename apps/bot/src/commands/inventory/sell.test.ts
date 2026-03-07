@@ -32,24 +32,48 @@ const {
 
 vi.mock('discord.js', () => ({
   SlashCommandBuilder: class {
-    setName() { return this }
-    setDescription() { return this }
-    addStringOption() { return this }
+    setName() {
+      return this
+    }
+    setDescription() {
+      return this
+    }
+    addStringOption() {
+      return this
+    }
   },
   MessageFlags: { Ephemeral: 64 },
   EmbedBuilder: class {
-    setTitle() { return this }
-    setDescription() { return this }
-    setColor() { return this }
-    setFooter() { return this }
+    setTitle() {
+      return this
+    }
+    setDescription() {
+      return this
+    }
+    setColor() {
+      return this
+    }
+    setFooter() {
+      return this
+    }
   },
   ButtonBuilder: class {
-    setCustomId() { return this }
-    setLabel() { return this }
-    setStyle() { return this }
+    setCustomId() {
+      return this
+    }
+    setLabel() {
+      return this
+    }
+    setStyle() {
+      return this
+    }
   },
   ButtonStyle: { Secondary: 2 },
-  ActionRowBuilder: class { addComponents() { return this } },
+  ActionRowBuilder: class {
+    addComponents() {
+      return this
+    }
+  },
 }))
 
 vi.mock('@kawakawa/db', () => ({
@@ -66,7 +90,9 @@ vi.mock('../../services/channelConfig.js', () => ({
 vi.mock('../../utils/auth.js', () => ({ requireLinkedUser: mockRequireLinkedUser }))
 vi.mock('@kawakawa/parser', () => ({ parseTokens: mockParseTokens }))
 vi.mock('../../utils/resolvers.js', () => ({ botResolvers: {} }))
-vi.mock('../../services/invoiceCommandHandler.js', () => ({ handleInvoiceCommand: mockHandleInvoiceCommand }))
+vi.mock('../../services/invoiceCommandHandler.js', () => ({
+  handleInvoiceCommand: mockHandleInvoiceCommand,
+}))
 vi.mock('../../services/queryHelper.js', () => ({
   executeQuery: mockExecuteQuery,
   sendQueryResponse: mockSendQueryResponse,
@@ -159,9 +185,7 @@ describe('sell command', () => {
     const interaction = createMockInteraction('COF')
     await sell.execute(interaction)
 
-    expect(mockExecuteQuery).toHaveBeenCalledWith(
-      expect.objectContaining({ orderType: 'buy' })
-    )
+    expect(mockExecuteQuery).toHaveBeenCalledWith(expect.objectContaining({ orderType: 'buy' }))
   })
 
   it('returns early if requireLinkedUser fails in invoice mode', async () => {

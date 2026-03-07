@@ -169,7 +169,9 @@ function createOrderInteraction(opts: {
   const { interaction, replyFn, editReplyFn } = createMockInteraction({ stringOptions })
 
   // Add subcommand support
-  ;(interaction.options as Record<string, unknown>).getSubcommand = vi.fn().mockReturnValue(subcommand)
+  ;(interaction.options as Record<string, unknown>).getSubcommand = vi
+    .fn()
+    .mockReturnValue(subcommand)
   // Add getInteger support
   ;(interaction.options as Record<string, unknown>).getInteger = vi
     .fn()
@@ -203,8 +205,13 @@ describe('order command', () => {
     })
     mockGetChannelConfig.mockResolvedValue(null)
     mockResolveEffectiveValue.mockImplementation(
-      (commandOption: unknown, _channelDefault: unknown, _enforced: boolean, userDefault: unknown, systemDefault: unknown) =>
-        commandOption ?? userDefault ?? systemDefault
+      (
+        commandOption: unknown,
+        _channelDefault: unknown,
+        _enforced: boolean,
+        userDefault: unknown,
+        systemDefault: unknown
+      ) => commandOption ?? userDefault ?? systemDefault
     )
     mockBuildOrderConfirmationEmbed.mockResolvedValue({ data: { title: 'Confirm' } })
     mockBuildOrderConfirmationButtons.mockReturnValue({})
@@ -316,7 +323,9 @@ describe('order command', () => {
 
       expect(mockBuildIncompleteInputEmbed).toHaveBeenCalled()
       const call = mockBuildIncompleteInputEmbed.mock.calls[0][0]
-      expect(call.missingFields).toEqual(expect.arrayContaining([expect.stringContaining('Location')]))
+      expect(call.missingFields).toEqual(
+        expect.arrayContaining([expect.stringContaining('Location')])
+      )
     })
 
     it('shows incomplete input when quantity is missing for buy orders', async () => {
@@ -336,7 +345,9 @@ describe('order command', () => {
 
       expect(mockBuildIncompleteInputEmbed).toHaveBeenCalled()
       const call = mockBuildIncompleteInputEmbed.mock.calls[0][0]
-      expect(call.missingFields).toEqual(expect.arrayContaining([expect.stringContaining('Quantity')]))
+      expect(call.missingFields).toEqual(
+        expect.arrayContaining([expect.stringContaining('Quantity')])
+      )
     })
 
     it('creates sell order with confirmation flow when all inputs provided', async () => {
@@ -350,7 +361,9 @@ describe('order command', () => {
         .mockReturnValueOnce('CIS') // currency
         .mockReturnValueOnce('internal') // visibility
         .mockReturnValueOnce('KAWA') // price list
-      mockDbQuery.priceLists.findFirst = vi.fn().mockResolvedValueOnce({ code: 'KAWA', name: 'KAWA Prices' })
+      mockDbQuery.priceLists.findFirst = vi
+        .fn()
+        .mockResolvedValueOnce({ code: 'KAWA', name: 'KAWA Prices' })
       mockCalculateEffectivePriceWithFallback.mockResolvedValueOnce({
         finalPrice: 150,
         currency: 'CIS',
@@ -387,7 +400,9 @@ describe('order command', () => {
         .mockReturnValueOnce('CIS') // currency
         .mockReturnValueOnce('internal') // visibility
         .mockReturnValueOnce('KAWA') // price list
-      mockDbQuery.priceLists.findFirst = vi.fn().mockResolvedValueOnce({ code: 'KAWA', name: 'KAWA Prices' })
+      mockDbQuery.priceLists.findFirst = vi
+        .fn()
+        .mockResolvedValueOnce({ code: 'KAWA', name: 'KAWA Prices' })
       mockCalculateEffectivePriceWithFallback.mockResolvedValueOnce({
         finalPrice: 125,
         currency: 'CIS',

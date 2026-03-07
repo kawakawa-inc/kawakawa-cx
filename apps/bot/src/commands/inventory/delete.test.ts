@@ -28,37 +28,81 @@ const {
 }))
 
 vi.mock('discord.js', () => {
-  const self = { setName: () => self, setDescription: () => self, setRequired: () => self, setAutocomplete: () => self, addChoices: () => self }
+  const self = {
+    setName: () => self,
+    setDescription: () => self,
+    setRequired: () => self,
+    setAutocomplete: () => self,
+    addChoices: () => self,
+  }
   return {
-  SlashCommandBuilder: class {
-    setName() { return this }
-    setDescription() { return this }
-    addStringOption(fn: Function) { fn(self); return this }
-  },
-  MessageFlags: { Ephemeral: 64 },
-  ActionRowBuilder: class { addComponents() { return this } },
-  StringSelectMenuBuilder: class {
-    setCustomId() { return this }
-    setPlaceholder() { return this }
-    setMinValues() { return this }
-    setMaxValues() { return this }
-    addOptions() { return this }
-  },
-  ButtonBuilder: class {
-    setCustomId() { return this }
-    setLabel() { return this }
-    setStyle() { return this }
-  },
-  ButtonStyle: { Danger: 4, Secondary: 2 },
-}})
+    SlashCommandBuilder: class {
+      setName() {
+        return this
+      }
+      setDescription() {
+        return this
+      }
+      addStringOption(fn: Function) {
+        fn(self)
+        return this
+      }
+    },
+    MessageFlags: { Ephemeral: 64 },
+    ActionRowBuilder: class {
+      addComponents() {
+        return this
+      }
+    },
+    StringSelectMenuBuilder: class {
+      setCustomId() {
+        return this
+      }
+      setPlaceholder() {
+        return this
+      }
+      setMinValues() {
+        return this
+      }
+      setMaxValues() {
+        return this
+      }
+      addOptions() {
+        return this
+      }
+    },
+    ButtonBuilder: class {
+      setCustomId() {
+        return this
+      }
+      setLabel() {
+        return this
+      }
+      setStyle() {
+        return this
+      }
+    },
+    ButtonStyle: { Danger: 4, Secondary: 2 },
+  }
+})
 
 vi.mock('@kawakawa/db', () => ({
   db: {
     query: mockDbQuery,
     delete: mockDbDelete.mockReturnValue({ where: mockWhere }),
   },
-  sellOrders: { userId: 'userId', locationId: 'locationId', commodityTicker: 'commodityTicker', id: 'id' },
-  buyOrders: { userId: 'userId', locationId: 'locationId', commodityTicker: 'commodityTicker', id: 'id' },
+  sellOrders: {
+    userId: 'userId',
+    locationId: 'locationId',
+    commodityTicker: 'commodityTicker',
+    id: 'id',
+  },
+  buyOrders: {
+    userId: 'userId',
+    locationId: 'locationId',
+    commodityTicker: 'commodityTicker',
+    id: 'id',
+  },
 }))
 vi.mock('drizzle-orm', () => ({ eq: vi.fn(), and: vi.fn(), inArray: vi.fn() }))
 vi.mock('../../autocomplete/index.js', () => ({ searchLocations: vi.fn() }))
@@ -78,7 +122,11 @@ vi.mock('../../utils/logger.js', () => ({
 
 import { deleteCommand } from './delete.js'
 
-function createMockInteraction(input = 'COF BEN', location: string | null = null, type: string | null = null) {
+function createMockInteraction(
+  input = 'COF BEN',
+  location: string | null = null,
+  type: string | null = null
+) {
   return {
     user: { id: 'discord123' },
     options: {
@@ -207,7 +255,14 @@ describe('delete command', () => {
       user: null,
     })
     mockDbQuery.sellOrders.findMany.mockResolvedValue([
-      { id: 1, commodityTicker: 'COF', locationId: 'BEN', price: '50.00', currency: 'CIS', orderType: 'internal' },
+      {
+        id: 1,
+        commodityTicker: 'COF',
+        locationId: 'BEN',
+        price: '50.00',
+        currency: 'CIS',
+        orderType: 'internal',
+      },
     ])
     mockDbQuery.buyOrders.findMany.mockResolvedValue([])
 

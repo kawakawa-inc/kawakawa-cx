@@ -364,9 +364,7 @@ describe('/invoice command', () => {
     const embed = replyFn.mock.calls[0][0].embeds[0]
     // Should have a field indicating no items
     const fieldsFlat = embed.data.fields?.flat() ?? []
-    const itemsField = fieldsFlat.find(
-      (f: { name: string; value: string }) => f.name === 'Items'
-    )
+    const itemsField = fieldsFlat.find((f: { name: string; value: string }) => f.name === 'Items')
     expect(itemsField).toBeDefined()
     expect(itemsField.value).toContain('No items yet')
   })
@@ -385,9 +383,7 @@ describe('/invoice command', () => {
 
     const embed = replyFn.mock.calls[0][0].embeds[0]
     const fieldsFlat = embed.data.fields?.flat() ?? []
-    const totalField = fieldsFlat.find(
-      (f: { name: string; value: string }) => f.name === 'Total'
-    )
+    const totalField = fieldsFlat.find((f: { name: string; value: string }) => f.name === 'Total')
     expect(totalField).toBeDefined()
     expect(totalField.value).toContain('500.00 CIS')
   })

@@ -8,7 +8,12 @@ vi.mock('@kawakawa/services/market', () => ({
   getOrderDisplayPrice: mockGetOrderDisplayPrice,
 }))
 
-import { formatOrderPrice, calculateTotal, formatPrice, type FormattedPrice } from './priceFormatter.js'
+import {
+  formatOrderPrice,
+  calculateTotal,
+  formatPrice,
+  type FormattedPrice,
+} from './priceFormatter.js'
 
 describe('priceFormatter', () => {
   beforeEach(() => {
@@ -51,17 +56,29 @@ describe('priceFormatter', () => {
 
   describe('calculateTotal', () => {
     it('multiplies price by quantity', () => {
-      const price: FormattedPrice = { displayPrice: '50.00', displayCurrency: 'CIS', numericPrice: 50 }
+      const price: FormattedPrice = {
+        displayPrice: '50.00',
+        displayCurrency: 'CIS',
+        numericPrice: 50,
+      }
       expect(calculateTotal(price, 100)).toBe('5000.00')
     })
 
     it('handles decimal prices', () => {
-      const price: FormattedPrice = { displayPrice: '12.75', displayCurrency: 'CIS', numericPrice: 12.75 }
+      const price: FormattedPrice = {
+        displayPrice: '12.75',
+        displayCurrency: 'CIS',
+        numericPrice: 12.75,
+      }
       expect(calculateTotal(price, 4)).toBe('51.00')
     })
 
     it('handles zero quantity', () => {
-      const price: FormattedPrice = { displayPrice: '50.00', displayCurrency: 'CIS', numericPrice: 50 }
+      const price: FormattedPrice = {
+        displayPrice: '50.00',
+        displayCurrency: 'CIS',
+        numericPrice: 50,
+      }
       expect(calculateTotal(price, 0)).toBe('0.00')
     })
   })

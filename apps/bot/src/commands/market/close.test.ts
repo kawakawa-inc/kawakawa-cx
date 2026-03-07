@@ -214,9 +214,7 @@ describe('/close command', () => {
   })
 
   it('finds invoice by username when user is found and has one draft', async () => {
-    const drafts = [
-      makeDraftSummary({ id: 3, counterpartyUserId: 100, counterpartyName: 'bob' }),
-    ]
+    const drafts = [makeDraftSummary({ id: 3, counterpartyUserId: 100, counterpartyName: 'bob' })]
     mockGetDraftInvoices.mockResolvedValueOnce(drafts)
     mockFindUserByName.mockResolvedValueOnce({
       userId: 100,
@@ -260,9 +258,7 @@ describe('/close command', () => {
   })
 
   it('shows error when user is found but no drafts with that counterparty', async () => {
-    const drafts = [
-      makeDraftSummary({ id: 1, counterpartyUserId: 200, counterpartyName: 'alice' }),
-    ]
+    const drafts = [makeDraftSummary({ id: 1, counterpartyUserId: 200, counterpartyName: 'alice' })]
     mockGetDraftInvoices.mockResolvedValueOnce(drafts)
     mockFindUserByName.mockResolvedValueOnce({
       userId: 100,

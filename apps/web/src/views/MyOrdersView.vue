@@ -457,7 +457,19 @@
                   @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" md="2">
+                <v-select
+                  v-model="invoiceDirectionFilter"
+                  :items="invoiceDirectionOptions"
+                  item-title="title"
+                  item-value="value"
+                  label="Direction"
+                  density="compact"
+                  hide-details
+                  clearable
+                />
+              </v-col>
+              <v-col cols="12" md="2">
                 <v-select
                   v-model="invoiceStatusFilter"
                   :items="invoiceStatusOptions"
@@ -597,6 +609,25 @@
               </div>
             </template>
 
+            <template #item.commodities="{ item }">
+              <div class="commodity-grid">
+                <CommodityIcon
+                  v-for="ticker in item.commodityTickers.slice(0, 12)"
+                  :key="ticker"
+                  :commodity="getCommodityObj(ticker)"
+                  class="commodity-grid-icon"
+                />
+                <v-tooltip v-if="item.commodityTickers.length > 12" location="top">
+                  <template #activator="{ props: tooltipProps }">
+                    <span v-bind="tooltipProps" class="commodity-grid-more">
+                      +{{ item.commodityTickers.length - 12 }}
+                    </span>
+                  </template>
+                  {{ item.commodityTickers.join(', ') }}
+                </v-tooltip>
+              </div>
+            </template>
+
             <template #item.status="{ item }">
               <InvoiceStatusChip :status="item.status" size="small" />
             </template>
@@ -639,6 +670,28 @@
                   >--</span
                 >
               </div>
+            </template>
+
+            <template #item.createdAt="{ item }">
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <span v-bind="tooltipProps" class="text-caption text-medium-emphasis">
+                    {{ formatFuzzyTime(item.createdAt) }}
+                  </span>
+                </template>
+                {{ formatFullDate(item.createdAt) }}
+              </v-tooltip>
+            </template>
+
+            <template #item.updatedAt="{ item }">
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <span v-bind="tooltipProps" class="text-caption text-medium-emphasis">
+                    {{ formatFuzzyTime(item.updatedAt) }}
+                  </span>
+                </template>
+                {{ formatFullDate(item.updatedAt) }}
+              </v-tooltip>
             </template>
 
             <template #item.actions="{ item }">
@@ -761,6 +814,7 @@
               <tr class="expanded-row">
                 <td :colspan="columns.length" class="pa-0">
                   <InvoiceExpandedRow
+                    :key="invoiceRefreshKey"
                     :invoice-id="item.id"
                     :direction="item.direction"
                     @updated="loadInvoices"
@@ -894,6 +948,7 @@ import {
   type InvoiceStatus,
   type InvoiceSummary,
   type Invoice,
+  type Commodity,
 } from '@kawakawa/types'
 import { api, type SellOrderResponse, type BuyOrderResponse } from '../services/api'
 import { locationService } from '../services/locationService'
@@ -905,6 +960,7 @@ import SellOrderEditDialog from '../components/SellOrderEditDialog.vue'
 import BuyOrderEditDialog from '../components/BuyOrderEditDialog.vue'
 import OrderTypeChip from '../components/OrderTypeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
+import CommodityIcon from '../components/CommodityIcon.vue'
 import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import InvoiceStatusChip from '../components/invoices/InvoiceStatusChip.vue'
 import InvoiceExpandedRow from '../components/invoices/InvoiceExpandedRow.vue'
@@ -926,6 +982,15 @@ const getLocationDisplay = (locationId: string): string => {
 
 const getCommodityDisplay = (ticker: string): string => {
   return commodityService.getCommodityDisplay(ticker, userStore.getCommodityDisplayMode())
+}
+
+const getCommodityObj = (ticker: string): Commodity => {
+  const category = commodityService.getCommodityCategory(ticker)
+  return {
+    ticker,
+    name: commodityService.getCommodityDisplay(ticker, 'name-only'),
+    ...(category !== null && { category }),
+  }
 }
 
 const ORDERS_TABS = ['buy', 'sell', 'invoices'] as const
@@ -968,12 +1033,21 @@ const invoiceHeaders = [
   { title: '', key: 'data-table-expand', width: 40 },
   { title: 'Direction', key: 'direction', sortable: true, width: 100 },
   { title: 'User', key: 'counterpartyName', sortable: true },
+  { title: 'Commodities', key: 'commodities', sortable: false },
   { title: 'Status', key: 'status', sortable: true },
   { title: 'Buy #', key: 'buyItemCount', sortable: true, align: 'center' as const, width: 80 },
   { title: 'Sell #', key: 'sellItemCount', sortable: true, align: 'center' as const, width: 80 },
   { title: 'Buying', key: 'buyTotals', sortable: false, align: 'end' as const },
   { title: 'Selling', key: 'sellTotals', sortable: false, align: 'end' as const },
+  { title: 'Created', key: 'createdAt', sortable: true },
+  { title: 'Updated', key: 'updatedAt', sortable: true },
   { title: 'Actions', key: 'actions', sortable: false, width: 200 },
+]
+
+const invoiceDirectionOptions = [
+  { title: 'All', value: null },
+  { title: 'Sent', value: 'sent' },
+  { title: 'Received', value: 'received' },
 ]
 
 const invoiceStatusOptions = [
@@ -1003,10 +1077,12 @@ const invoices = ref<InvoiceSummary[]>([])
 const loadingInvoices = ref(false)
 const invoiceSearchChips = ref<SearchChip[]>([])
 const invoiceStatusFilter = ref<InvoiceStatus | null>(null)
+const invoiceDirectionFilter = ref<'sent' | 'received' | null>(null)
 const invoiceDetailDialog = ref(false)
 const selectedInvoice = ref<Invoice | null>(null)
 const expandedInvoices = ref<string[]>([])
 const invoiceActionLoading = ref<string | null>(null)
+const invoiceRefreshKey = ref(0)
 
 // Order detail dialog with deep linking
 const {
@@ -1107,6 +1183,11 @@ const availableInvoiceUserNames = computed(() => {
 const filteredInvoices = computed(() => {
   let result = invoices.value
 
+  // Filter by direction
+  if (invoiceDirectionFilter.value) {
+    result = result.filter(inv => inv.direction === invoiceDirectionFilter.value)
+  }
+
   // Filter by status
   if (invoiceStatusFilter.value) {
     result = result.filter(inv => inv.status === invoiceStatusFilter.value)
@@ -1190,6 +1271,36 @@ const invoiceSummary = computed(() => {
 
 const formatPrice = (price: number): string => {
   return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const formatFuzzyTime = (isoString: string): string => {
+  const date = new Date(isoString)
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHr = Math.floor(diffMin / 60)
+
+  if (diffMs < 0) return 'just now'
+  if (diffSec < 60) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  if (diffHr < 24) return `${diffHr}h ago`
+
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
+  })
+}
+
+const formatFullDate = (isoString: string): string => {
+  return new Date(isoString).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 // Get what the current user is buying from this invoice
@@ -1389,6 +1500,7 @@ const loadInvoices = async () => {
     showSnackbar('Failed to load invoices', 'error')
   } finally {
     loadingInvoices.value = false
+    invoiceRefreshKey.value++
   }
 }
 
@@ -1615,5 +1727,33 @@ onMounted(() => {
 /* Alternating row colors */
 .alt-row {
   background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
+}
+
+/* Commodity icon grid in invoice rows */
+.commodity-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 180px;
+}
+
+.commodity-grid-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  font-size: 7px;
+}
+
+.commodity-grid-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  background: rgba(var(--v-theme-on-surface), 0.1);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: default;
 }
 </style>

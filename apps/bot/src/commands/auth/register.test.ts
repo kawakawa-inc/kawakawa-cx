@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createMockInteraction, getDiscordMock } from '../../test/mockDiscord.js'
 
 // Create hoisted mock functions
-const { mockFindFirstProfile, mockFindFirstUser, mockTransaction, mockSettingsGetAll } =
-  vi.hoisted(() => ({
+const { mockFindFirstProfile, mockFindFirstUser, mockTransaction, mockSettingsGetAll } = vi.hoisted(
+  () => ({
     mockFindFirstProfile: vi.fn(),
     mockFindFirstUser: vi.fn(),
     mockTransaction: vi.fn(),
     mockSettingsGetAll: vi.fn(),
-  }))
+  })
+)
 
 // Mock discord.js
 vi.mock('discord.js', () => getDiscordMock())
@@ -222,7 +223,7 @@ describe('register command', () => {
       mockFindFirstUser.mockResolvedValueOnce(null)
       mockSettingsGetAll.mockResolvedValueOnce({})
 
-      let insertedRoles: string[] = []
+      const insertedRoles: string[] = []
       mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         const tx = {
           insert: vi.fn().mockImplementation((table: unknown) => ({
@@ -247,9 +248,7 @@ describe('register command', () => {
 
       // Should show "Pending Approval" status and "unverified" role
       const embed = replyFn.mock.calls[0][0].embeds[0]
-      const statusField = embed.data.fields.find(
-        (f: { name: string }) => f.name === 'Status'
-      )
+      const statusField = embed.data.fields.find((f: { name: string }) => f.name === 'Status')
       expect(statusField.value).toContain('Pending Approval')
 
       const rolesField = embed.data.fields.find(

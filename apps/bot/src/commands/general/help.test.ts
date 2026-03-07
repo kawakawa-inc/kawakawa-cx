@@ -80,7 +80,9 @@ describe('help command', () => {
       // Title should be "Kawakawa Exchange Bot"
       expect(embed.data.title).toBe('Kawakawa Exchange Bot')
       // Description should contain welcome text
-      expect(embed.data.description).toContain('Welcome to the Kawakawa internal commodity exchange')
+      expect(embed.data.description).toContain(
+        'Welcome to the Kawakawa internal commodity exchange'
+      )
       // Should have fields for each section + Quick Start
       expect(embed.data.fields.length).toBeGreaterThanOrEqual(7)
       // Footer should contain a tip
@@ -99,16 +101,16 @@ describe('help command', () => {
       const fieldValues = embed.data.fields.map((f: { value: string }) => f.value)
 
       // Getting Started section should contain register, link, whoami, unlink
-      const gettingStartedField = embed.data.fields.find(
-        (f: { name: string }) => f.name.includes('Getting Started')
+      const gettingStartedField = embed.data.fields.find((f: { name: string }) =>
+        f.name.includes('Getting Started')
       )
       expect(gettingStartedField).toBeDefined()
       expect(gettingStartedField.value).toContain('register')
       expect(gettingStartedField.value).toContain('link')
 
       // Quick Start should reference key commands
-      const quickStart = embed.data.fields.find(
-        (f: { name: string }) => f.name.includes('Quick Start')
+      const quickStart = embed.data.fields.find((f: { name: string }) =>
+        f.name.includes('Quick Start')
       )
       expect(quickStart).toBeDefined()
       expect(quickStart.value).toContain('register')
@@ -166,9 +168,7 @@ describe('help command', () => {
       expect(embed.data.title).toContain('Creating Orders')
 
       // The bulksell command should have extended details
-      const bulksellField = embed.data.fields.find(
-        (f: { name: string }) => f.name === '/bulksell'
-      )
+      const bulksellField = embed.data.fields.find((f: { name: string }) => f.name === '/bulksell')
       expect(bulksellField).toBeDefined()
       expect(bulksellField.value).toContain('Format:')
     })
@@ -226,9 +226,7 @@ describe('help command', () => {
       await help.execute(interaction as never)
 
       const embed = replyFn.mock.calls[0][0].embeds[0]
-      const registerField = embed.data.fields.find(
-        (f: { name: string }) => f.name === '/register'
-      )
+      const registerField = embed.data.fields.find((f: { name: string }) => f.name === '/register')
       expect(registerField).toBeDefined()
       expect(registerField.value).toBe('No description available')
     })
@@ -242,9 +240,7 @@ describe('help command', () => {
       await help.execute(interaction as never)
 
       const embed = replyFn.mock.calls[0][0].embeds[0]
-      const registerField = embed.data.fields.find(
-        (f: { name: string }) => f.name === '/register'
-      )
+      const registerField = embed.data.fields.find((f: { name: string }) => f.name === '/register')
       expect(registerField.value).toBe('Create a new Kawakawa account')
     })
   })

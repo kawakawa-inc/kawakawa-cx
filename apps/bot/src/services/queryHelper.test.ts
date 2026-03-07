@@ -25,8 +25,22 @@ const {
 
 vi.mock('@kawakawa/db', () => ({
   db: { query: mockDbQuery },
-  sellOrders: { commodityTicker: 'commodityTicker', locationId: 'locationId', userId: 'userId', orderType: 'orderType', priceListCode: 'priceListCode', updatedAt: 'updatedAt' },
-  buyOrders: { commodityTicker: 'commodityTicker', locationId: 'locationId', userId: 'userId', orderType: 'orderType', priceListCode: 'priceListCode', updatedAt: 'updatedAt' },
+  sellOrders: {
+    commodityTicker: 'commodityTicker',
+    locationId: 'locationId',
+    userId: 'userId',
+    orderType: 'orderType',
+    priceListCode: 'priceListCode',
+    updatedAt: 'updatedAt',
+  },
+  buyOrders: {
+    commodityTicker: 'commodityTicker',
+    locationId: 'locationId',
+    userId: 'userId',
+    orderType: 'orderType',
+    priceListCode: 'priceListCode',
+    updatedAt: 'updatedAt',
+  },
 }))
 
 vi.mock('drizzle-orm', () => ({
@@ -60,15 +74,31 @@ vi.mock('../components/pagination.js', () => ({
 vi.mock('discord.js', () => ({
   EmbedBuilder: class {
     data: Record<string, unknown> = {}
-    setTitle(t: string) { this.data.title = t; return this }
-    setDescription(d: string) { this.data.description = d; return this }
-    setColor(c: number) { this.data.color = c; return this }
-    setTimestamp() { return this }
+    setTitle(t: string) {
+      this.data.title = t
+      return this
+    }
+    setDescription(d: string) {
+      this.data.description = d
+      return this
+    }
+    setColor(c: number) {
+      this.data.color = c
+      return this
+    }
+    setTimestamp() {
+      return this
+    }
   },
   MessageFlags: { Ephemeral: 64 },
 }))
 
-import { getAvailabilityEmoji, executeQuery, sendQueryResponse, type QueryOptions } from './queryHelper.js'
+import {
+  getAvailabilityEmoji,
+  executeQuery,
+  sendQueryResponse,
+  type QueryOptions,
+} from './queryHelper.js'
 
 describe('queryHelper', () => {
   beforeEach(() => {
@@ -172,14 +202,22 @@ describe('queryHelper', () => {
     })
 
     it('includes missing XIT materials in result', async () => {
-      mockDbQuery.sellOrders.findMany.mockResolvedValue([{
-        id: 1, userId: 10, commodityTicker: 'COF', locationId: 'BEN',
-        price: '50', currency: 'CIS', priceListCode: null,
-        limitMode: 'none', limitQuantity: null,
-        user: { displayName: null, username: 'alice' },
-        location: { naturalId: 'BEN', name: 'Benten' },
-        commodity: { ticker: 'COF', name: 'Coffee' },
-      }])
+      mockDbQuery.sellOrders.findMany.mockResolvedValue([
+        {
+          id: 1,
+          userId: 10,
+          commodityTicker: 'COF',
+          locationId: 'BEN',
+          price: '50',
+          currency: 'CIS',
+          priceListCode: null,
+          limitMode: 'none',
+          limitQuantity: null,
+          user: { displayName: null, username: 'alice' },
+          location: { naturalId: 'BEN', name: 'Benten' },
+          commodity: { ticker: 'COF', name: 'Coffee' },
+        },
+      ])
       mockDbQuery.buyOrders.findMany.mockResolvedValue([])
       mockEnrichSellOrders.mockResolvedValue(new Map())
       mockFormatGroupedOrdersMulti.mockResolvedValue({
@@ -202,12 +240,16 @@ describe('queryHelper', () => {
       const mockReply = vi.fn()
       const interaction = { reply: mockReply } as never
 
-      await sendQueryResponse(interaction, {
-        hasOrders: false,
-        items: [],
-        embed: {} as never,
-        filterDescription: 'All orders',
-      }, { isEphemeral: true })
+      await sendQueryResponse(
+        interaction,
+        {
+          hasOrders: false,
+          items: [],
+          embed: {} as never,
+          filterDescription: 'All orders',
+        },
+        { isEphemeral: true }
+      )
 
       expect(mockReply).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -220,12 +262,16 @@ describe('queryHelper', () => {
       const interaction = {} as never
       mockSendPaginatedResponse.mockResolvedValue(undefined)
 
-      await sendQueryResponse(interaction, {
-        hasOrders: true,
-        items: [{ content: 'line', sortKey: 'a' }],
-        embed: {} as never,
-        filterDescription: 'All orders',
-      }, { isEphemeral: false })
+      await sendQueryResponse(
+        interaction,
+        {
+          hasOrders: true,
+          items: [{ content: 'line', sortKey: 'a' }],
+          embed: {} as never,
+          filterDescription: 'All orders',
+        },
+        { isEphemeral: false }
+      )
 
       expect(mockSendPaginatedResponse).toHaveBeenCalled()
     })

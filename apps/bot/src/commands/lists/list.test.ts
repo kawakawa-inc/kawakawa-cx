@@ -26,9 +26,16 @@ const {
 
 vi.mock('discord.js', () => ({
   SlashCommandBuilder: class {
-    setName() { return this }
-    setDescription() { return this }
-    addStringOption(fn: Function) { fn({ setName: () => ({ setDescription: () => ({ setRequired: () => ({}) }) }) }); return this }
+    setName() {
+      return this
+    }
+    setDescription() {
+      return this
+    }
+    addStringOption(fn: Function) {
+      fn({ setName: () => ({ setDescription: () => ({ setRequired: () => ({}) }) }) })
+      return this
+    }
   },
   MessageFlags: { Ephemeral: 64 },
 }))

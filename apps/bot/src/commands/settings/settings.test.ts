@@ -28,55 +28,114 @@ const {
 
 vi.mock('discord.js', () => ({
   SlashCommandBuilder: class {
-    setName() { return this }
-    setDescription() { return this }
+    setName() {
+      return this
+    }
+    setDescription() {
+      return this
+    }
   },
   MessageFlags: { Ephemeral: 64 },
   EmbedBuilder: class {
     data: Record<string, unknown> = {}
-    setTitle(t: string) { this.data.title = t; return this }
-    setDescription(d: string) { this.data.description = d; return this }
-    setColor() { return this }
-    setFooter(f: unknown) { this.data.footer = f; return this }
+    setTitle(t: string) {
+      this.data.title = t
+      return this
+    }
+    setDescription(d: string) {
+      this.data.description = d
+      return this
+    }
+    setColor() {
+      return this
+    }
+    setFooter(f: unknown) {
+      this.data.footer = f
+      return this
+    }
     addFields(f: unknown) {
-      this.data.fields = (this.data.fields as unknown[] || [])
+      this.data.fields = (this.data.fields as unknown[]) || []
       ;(this.data.fields as unknown[]).push(f)
       return this
     }
   },
   ActionRowBuilder: class {
     components: unknown[] = []
-    addComponents(...c: unknown[]) { this.components.push(...c); return this }
+    addComponents(...c: unknown[]) {
+      this.components.push(...c)
+      return this
+    }
   },
   StringSelectMenuBuilder: class {
     data: Record<string, unknown> = {}
-    setCustomId(id: string) { this.data.customId = id; return this }
-    setPlaceholder(p: string) { this.data.placeholder = p; return this }
-    addOptions(o: unknown) { this.data.options = o; return this }
+    setCustomId(id: string) {
+      this.data.customId = id
+      return this
+    }
+    setPlaceholder(p: string) {
+      this.data.placeholder = p
+      return this
+    }
+    addOptions(o: unknown) {
+      this.data.options = o
+      return this
+    }
   },
   ButtonBuilder: class {
     data: Record<string, unknown> = {}
-    setCustomId(id: string) { this.data.customId = id; return this }
-    setLabel(l: string) { this.data.label = l; return this }
-    setStyle() { return this }
-    setDisabled() { return this }
-    setEmoji() { return this }
+    setCustomId(id: string) {
+      this.data.customId = id
+      return this
+    }
+    setLabel(l: string) {
+      this.data.label = l
+      return this
+    }
+    setStyle() {
+      return this
+    }
+    setDisabled() {
+      return this
+    }
+    setEmoji() {
+      return this
+    }
   },
   ButtonStyle: { Secondary: 2, Success: 3, Danger: 4 },
   ComponentType: { StringSelect: 3 },
   ModalBuilder: class {
-    setCustomId() { return this }
-    setTitle() { return this }
-    addComponents() { return this }
+    setCustomId() {
+      return this
+    }
+    setTitle() {
+      return this
+    }
+    addComponents() {
+      return this
+    }
   },
   TextInputBuilder: class {
-    setCustomId() { return this }
-    setLabel() { return this }
-    setPlaceholder() { return this }
-    setStyle() { return this }
-    setRequired() { return this }
-    setValue() { return this }
-    setMaxLength() { return this }
+    setCustomId() {
+      return this
+    }
+    setLabel() {
+      return this
+    }
+    setPlaceholder() {
+      return this
+    }
+    setStyle() {
+      return this
+    }
+    setRequired() {
+      return this
+    }
+    setValue() {
+      return this
+    }
+    setMaxLength() {
+      return this
+    }
   },
   TextInputStyle: { Short: 1 },
 }))

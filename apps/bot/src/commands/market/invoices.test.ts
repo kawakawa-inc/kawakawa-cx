@@ -179,15 +179,9 @@ describe('/invoices command', () => {
   })
 
   it('shows all three sections when user has inbox, drafts, and sent', async () => {
-    const inbox = [
-      makeInvoiceSummary({ id: 10, counterpartyName: 'alice', status: 'pending' }),
-    ]
-    const drafts = [
-      makeInvoiceSummary({ id: 20, counterpartyName: 'charlie', status: 'draft' }),
-    ]
-    const sent = [
-      makeInvoiceSummary({ id: 30, counterpartyName: 'dave', status: 'pending' }),
-    ]
+    const inbox = [makeInvoiceSummary({ id: 10, counterpartyName: 'alice', status: 'pending' })]
+    const drafts = [makeInvoiceSummary({ id: 20, counterpartyName: 'charlie', status: 'draft' })]
+    const sent = [makeInvoiceSummary({ id: 30, counterpartyName: 'dave', status: 'pending' })]
     mockGetInboxInvoices.mockResolvedValueOnce(inbox)
     mockGetDraftInvoices.mockResolvedValueOnce(drafts)
     mockGetSentInvoices.mockResolvedValueOnce(sent)
@@ -217,9 +211,7 @@ describe('/invoices command', () => {
   })
 
   it('shows drafts section only when user has only drafts', async () => {
-    const drafts = [
-      makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'draft' }),
-    ]
+    const drafts = [makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'draft' })]
     mockGetInboxInvoices.mockResolvedValueOnce([])
     mockGetDraftInvoices.mockResolvedValueOnce(drafts)
     mockGetSentInvoices.mockResolvedValueOnce([])
@@ -269,9 +261,7 @@ describe('/invoices command', () => {
   })
 
   it('shows footer with /invoice hint', async () => {
-    const drafts = [
-      makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'draft' }),
-    ]
+    const drafts = [makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'draft' })]
     mockGetInboxInvoices.mockResolvedValueOnce([])
     mockGetDraftInvoices.mockResolvedValueOnce(drafts)
     mockGetSentInvoices.mockResolvedValueOnce([])
@@ -397,9 +387,7 @@ describe('/invoices command', () => {
   })
 
   it('shows sent section only when user has only sent invoices', async () => {
-    const sent = [
-      makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'pending' }),
-    ]
+    const sent = [makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'pending' })]
     mockGetInboxInvoices.mockResolvedValueOnce([])
     mockGetDraftInvoices.mockResolvedValueOnce([])
     mockGetSentInvoices.mockResolvedValueOnce(sent)

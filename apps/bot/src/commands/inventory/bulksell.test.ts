@@ -8,8 +8,12 @@ const { mockRequireLinkedUser, mockGetMarketSettings, mockAwaitModal } = vi.hois
 
 vi.mock('discord.js', () => ({
   SlashCommandBuilder: class {
-    setName() { return this }
-    setDescription() { return this }
+    setName() {
+      return this
+    }
+    setDescription() {
+      return this
+    }
     addStringOption(fn: Function) {
       fn({
         setName: () => ({
@@ -25,20 +29,40 @@ vi.mock('discord.js', () => ({
   },
   MessageFlags: { Ephemeral: 64 },
   ModalBuilder: class {
-    setCustomId() { return this }
-    setTitle() { return this }
-    addComponents() { return this }
+    setCustomId() {
+      return this
+    }
+    setTitle() {
+      return this
+    }
+    addComponents() {
+      return this
+    }
   },
   ActionRowBuilder: class {
-    addComponents() { return this }
+    addComponents() {
+      return this
+    }
   },
   TextInputBuilder: class {
-    setCustomId() { return this }
-    setLabel() { return this }
-    setPlaceholder() { return this }
-    setStyle() { return this }
-    setRequired() { return this }
-    setMaxLength() { return this }
+    setCustomId() {
+      return this
+    }
+    setLabel() {
+      return this
+    }
+    setPlaceholder() {
+      return this
+    }
+    setStyle() {
+      return this
+    }
+    setRequired() {
+      return this
+    }
+    setMaxLength() {
+      return this
+    }
   },
   TextInputStyle: { Paragraph: 2 },
 }))

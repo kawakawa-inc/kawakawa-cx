@@ -33,6 +33,20 @@ vi.mock('drizzle-orm', () => ({
 // Import after mocks
 import { unlink } from './unlink.js'
 
+function setupDiscordOnlyMock() {
+  mockFindFirst.mockResolvedValueOnce({
+    userId: 1,
+    discordId: '123456789',
+    user: {
+      id: 1,
+      username: 'testuser',
+      displayName: 'Test User',
+      isActive: true,
+      passwordHash: 'discord:123456789:1234567890',
+    },
+  })
+}
+
 describe('unlink command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -55,18 +69,8 @@ describe('unlink command', () => {
     })
   })
 
-  it('shows confirmation buttons for Discord-only accounts', async () => {
-    mockFindFirst.mockResolvedValueOnce({
-      userId: 1,
-      discordId: '123456789',
-      user: {
-        id: 1,
-        username: 'testuser',
-        displayName: 'Test User',
-        isActive: true,
-        passwordHash: 'discord:123456789:1234567890',
-      },
-    })
+  it('shows confirmation buttons for Discord-only accounts and cancels', async () => {
+    setupDiscordOnlyMock()
 
     const updateFn = vi.fn()
     const awaitComponent = vi.fn().mockResolvedValue({
@@ -76,7 +80,10 @@ describe('unlink command', () => {
     })
 
     const { interaction, replyFn } = createMockInteraction()
-    replyFn.mockResolvedValue({ awaitMessageComponent: awaitComponent })
+    // fetchReply returns the message with awaitMessageComponent
+    ;(interaction as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
     await unlink.execute(interaction as never)
 
@@ -97,17 +104,7 @@ describe('unlink command', () => {
   })
 
   it('unlinks Discord-only account when confirmed via button', async () => {
-    mockFindFirst.mockResolvedValueOnce({
-      userId: 1,
-      discordId: '123456789',
-      user: {
-        id: 1,
-        username: 'testuser',
-        displayName: 'Test User',
-        isActive: true,
-        passwordHash: 'discord:123456789:1234567890',
-      },
-    })
+    setupDiscordOnlyMock()
 
     const updateFn = vi.fn()
     const awaitComponent = vi.fn().mockResolvedValue({
@@ -119,8 +116,10 @@ describe('unlink command', () => {
     const mockWhere = vi.fn().mockResolvedValue(undefined)
     mockDelete.mockReturnValue({ where: mockWhere })
 
-    const { interaction, replyFn } = createMockInteraction()
-    replyFn.mockResolvedValue({ awaitMessageComponent: awaitComponent })
+    const { interaction } = createMockInteraction()
+    ;(interaction as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
     await unlink.execute(interaction as never)
 
@@ -130,6 +129,33 @@ describe('unlink command', () => {
         content: expect.stringContaining('Successfully unlinked'),
         embeds: [],
         components: [],
+      })
+    )
+  })
+
+  it('shows error when DB fails during confirmed unlink', async () => {
+    setupDiscordOnlyMock()
+
+    const updateFn = vi.fn()
+    const awaitComponent = vi.fn().mockResolvedValue({
+      customId: 'unlink-confirm:123:yes',
+      user: { id: '123456789' },
+      update: updateFn,
+    })
+
+    const mockWhere = vi.fn().mockRejectedValue(new Error('DB error'))
+    mockDelete.mockReturnValue({ where: mockWhere })
+
+    const { interaction } = createMockInteraction()
+    ;(interaction as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
+
+    await unlink.execute(interaction as never)
+
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('error occurred'),
       })
     )
   })
@@ -161,7 +187,7 @@ describe('unlink command', () => {
     })
   })
 
-  it('handles confirmation timeout gracefully', async () => {
+  it('handles DB error for password account unlink', async () => {
     mockFindFirst.mockResolvedValueOnce({
       userId: 1,
       discordId: '123456789',
@@ -170,14 +196,32 @@ describe('unlink command', () => {
         username: 'testuser',
         displayName: 'Test User',
         isActive: true,
-        passwordHash: 'discord:123456789:1234567890',
+        passwordHash: '$2b$10$hashedpassword',
       },
     })
 
+    const mockWhere = vi.fn().mockRejectedValue(new Error('DB error'))
+    mockDelete.mockReturnValue({ where: mockWhere })
+
+    const { interaction, replyFn } = createMockInteraction()
+
+    await unlink.execute(interaction as never)
+
+    expect(replyFn).toHaveBeenCalledWith({
+      content: expect.stringContaining('error occurred'),
+      flags: 64,
+    })
+  })
+
+  it('handles confirmation timeout gracefully', async () => {
+    setupDiscordOnlyMock()
+
     const awaitComponent = vi.fn().mockRejectedValue(new Error('Collector timed out'))
 
-    const { interaction, replyFn, editReplyFn } = createMockInteraction()
-    replyFn.mockResolvedValue({ awaitMessageComponent: awaitComponent })
+    const { interaction, editReplyFn } = createMockInteraction()
+    ;(interaction as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
     await unlink.execute(interaction as never)
 

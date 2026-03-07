@@ -34,7 +34,7 @@ import {
   buyOrders,
   users,
 } from '../db/index.js'
-import { eq, and, or, sql } from 'drizzle-orm'
+import { eq, and, or, inArray, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '../services/notificationService.js'
@@ -75,9 +75,19 @@ function calculateInvoiceStatus(
     return 'draft'
   }
 
+  // Explicitly cancelled invoices stay cancelled regardless of reservation rows
+  if (dbStatus === 'cancelled') {
+    return 'cancelled'
+  }
+
   // If no line items or no reservations yet, treat as pending
   const statuses = reservationStatuses.filter((s): s is ReservationStatus => s !== null)
   if (statuses.length === 0) {
+    return 'pending'
+  }
+
+  // If some line items have no reservation yet, invoice can't be fully confirmed/fulfilled
+  if (reservationStatuses.some(s => s === null)) {
     return 'pending'
   }
 
@@ -232,7 +242,7 @@ export class InvoicesController extends Controller {
     const userRows = await db
       .select({ id: users.id, displayName: users.displayName })
       .from(users)
-      .where(or(...allUserIds.map(id => eq(users.id, id)))!)
+      .where(inArray(users.id, allUserIds))
 
     const userMap = new Map(userRows.map(u => [u.id, u.displayName]))
 
@@ -248,7 +258,7 @@ export class InvoicesController extends Controller {
         orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
       })
       .from(invoiceLineItems)
-      .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
+      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
       .groupBy(
         invoiceLineItems.invoiceId,
         invoiceLineItems.currency,
@@ -262,7 +272,7 @@ export class InvoicesController extends Controller {
         commodityTickers: sql<string[]>`ARRAY_AGG(DISTINCT ${invoiceLineItems.commodityTicker})`,
       })
       .from(invoiceLineItems)
-      .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
+      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
       .groupBy(invoiceLineItems.invoiceId)
 
     const commodityTickersMap = new Map(
@@ -329,7 +339,7 @@ export class InvoicesController extends Controller {
       })
       .from(invoiceLineItems)
       .leftJoin(orderReservations, eq(invoiceLineItems.reservationId, orderReservations.id))
-      .where(or(...invoiceIds.map(id => eq(invoiceLineItems.invoiceId, id)))!)
+      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
 
     // Group reservation statuses by invoice ID
     const invoiceReservationStatuses = new Map<number, (ReservationStatus | null)[]>()
@@ -1132,33 +1142,35 @@ export class InvoicesController extends Controller {
       }
     }
 
-    // Update invoice status
-    await db
-      .update(invoices)
-      .set({
-        status: 'pending',
-        submittedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(invoices.id, id))
+    // Only transition to pending if all reservations were created successfully
+    if (errors.length === 0) {
+      await db
+        .update(invoices)
+        .set({
+          status: 'pending',
+          submittedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(invoices.id, id))
 
-    // Notify counterparty
-    const [user] = await db
-      .select({ displayName: users.displayName })
-      .from(users)
-      .where(eq(users.id, userId))
+      // Notify counterparty
+      const [user] = await db
+        .select({ displayName: users.displayName })
+        .from(users)
+        .where(eq(users.id, userId))
 
-    await notificationService.create(
-      invoice.counterpartyUserId,
-      'invoice_submitted',
-      'Invoice Submitted',
-      `${user?.displayName ?? 'Someone'} submitted an invoice with ${lineItemRows.length} items`,
-      {
-        invoiceId: id,
-        itemCount: lineItemRows.length,
-        counterpartyUserId: userId,
-      }
-    )
+      await notificationService.create(
+        invoice.counterpartyUserId,
+        'invoice_submitted',
+        'Invoice Submitted',
+        `${user?.displayName ?? 'Someone'} submitted an invoice with ${lineItemRows.length} items`,
+        {
+          invoiceId: id,
+          itemCount: lineItemRows.length,
+          counterpartyUserId: userId,
+        }
+      )
+    }
 
     // Return updated invoice
     const updatedInvoice = await this.getInvoice(id, request)

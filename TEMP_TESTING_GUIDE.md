@@ -73,7 +73,9 @@ Generates a secure link to connect Discord to existing Kawakawa account.
 Disconnects Discord from account.
 
 - [x] Account with password -> unlinks immediately
-- [x] Discord-only account -> shows warning, requires `!unlink confirm`
+- [x] Discord-only account -> shows warning with Confirm/Cancel buttons
+- [x] Discord-only: clicking Confirm -> unlinks and shows success
+- [x] Discord-only: clicking Cancel or timeout -> account stays linked
 
 ### `/password`
 

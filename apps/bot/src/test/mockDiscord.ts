@@ -21,6 +21,7 @@ export interface MockInteraction {
   }
   reply: Mock
   editReply: Mock
+  fetchReply: Mock
 }
 
 // Mock EmbedBuilder class
@@ -450,6 +451,7 @@ export function createMockInteraction(
     },
     reply: replyFn,
     editReply: editReplyFn,
+    fetchReply: vi.fn().mockResolvedValue(mockResponse),
   }
 
   return {

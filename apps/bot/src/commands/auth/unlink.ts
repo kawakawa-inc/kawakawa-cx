@@ -72,11 +72,13 @@ export const unlink: Command = {
           .setStyle(ButtonStyle.Secondary)
       )
 
-      const response = await interaction.reply({
+      await interaction.reply({
         embeds: [embed],
         components: [buttonRow],
         flags: MessageFlags.Ephemeral,
       })
+
+      const response = await interaction.fetchReply()
 
       try {
         const btnInteraction = await response.awaitMessageComponent({
@@ -85,15 +87,24 @@ export const unlink: Command = {
         })
 
         if (btnInteraction.customId.endsWith(':yes')) {
-          await performUnlink(discordId, profile, prefix)
-          await btnInteraction.update({
-            content:
-              `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
-              '**Warning:** You no longer have a way to log in. ' +
-              `Use \`${prefix}register\` to create a new account, or \`${prefix}link\` to connect to an existing one.`,
-            embeds: [],
-            components: [],
-          })
+          try {
+            await performUnlink(discordId, profile)
+            await btnInteraction.update({
+              content:
+                `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
+                '**Warning:** You no longer have a way to log in. ' +
+                `Use \`${prefix}register\` to create a new account, or \`${prefix}link\` to connect to an existing one.`,
+              embeds: [],
+              components: [],
+            })
+          } catch (error) {
+            logger.error({ error, discordId }, 'Failed to unlink Discord')
+            await btnInteraction.update({
+              content: 'An error occurred while unlinking your account. Please try again.',
+              embeds: [],
+              components: [],
+            })
+          }
         } else {
           await btnInteraction.update({
             content: 'Unlink cancelled.',
@@ -112,21 +123,28 @@ export const unlink: Command = {
     }
 
     // Normal unlink (has password)
-    await performUnlink(discordId, profile, prefix)
-    await interaction.reply({
-      content:
-        `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
-        'You can still log in with your username and password on the website.\n' +
-        `Use \`${prefix}link\` to reconnect your Discord later.`,
-      flags: MessageFlags.Ephemeral,
-    })
+    try {
+      await performUnlink(discordId, profile)
+      await interaction.reply({
+        content:
+          `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
+          'You can still log in with your username and password on the website.\n' +
+          `Use \`${prefix}link\` to reconnect your Discord later.`,
+        flags: MessageFlags.Ephemeral,
+      })
+    } catch (error) {
+      logger.error({ error, discordId }, 'Failed to unlink Discord')
+      await interaction.reply({
+        content: 'An error occurred while unlinking your account. Please try again.',
+        flags: MessageFlags.Ephemeral,
+      })
+    }
   },
 }
 
 async function performUnlink(
   discordId: string,
-  profile: { user: { id: number; username: string } },
-  _prefix: string
+  profile: { user: { id: number; username: string } }
 ): Promise<void> {
   await db.delete(userDiscordProfiles).where(eq(userDiscordProfiles.discordId, discordId))
   logger.info(

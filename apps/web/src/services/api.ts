@@ -155,6 +155,17 @@ interface ValidateTokenResponse {
   expiresAt?: string
 }
 
+interface ValidateDiscordLinkTokenResponse {
+  valid: boolean
+  discordUsername?: string
+  expiresAt?: string
+  error?: string
+}
+
+interface CompleteDiscordLinkRequest {
+  token: string
+}
+
 interface UsernameAvailabilityResponse {
   available: boolean
   message?: string
@@ -1219,6 +1230,40 @@ const realApi = {
 
     if (!response.ok) {
       return { available: false, message: 'Failed to check username availability' }
+    }
+
+    return response.json()
+  },
+
+  validateDiscordLinkToken: async (token: string): Promise<ValidateDiscordLinkTokenResponse> => {
+    const response = await fetchWithLogging(
+      `/api/auth/validate-discord-link-token?token=${encodeURIComponent(token)}`,
+      {
+        method: 'GET',
+      }
+    )
+
+    if (!response.ok) {
+      return { valid: false, error: 'Failed to validate link token' }
+    }
+
+    return response.json()
+  },
+
+  completeDiscordLink: async (
+    request: CompleteDiscordLinkRequest
+  ): Promise<{ message: string }> => {
+    const response = await fetchWithLogging('/api/auth/complete-discord-link', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to link Discord account')
     }
 
     return response.json()
@@ -4160,6 +4205,9 @@ export const api = {
     resetPassword: (request: ResetPasswordRequest) => realApi.resetPassword(request),
     validateResetToken: (token: string) => realApi.validateResetToken(token),
     checkUsernameAvailability: (username: string) => realApi.checkUsernameAvailability(username),
+    validateDiscordLinkToken: (token: string) => realApi.validateDiscordLinkToken(token),
+    completeDiscordLink: (request: CompleteDiscordLinkRequest) =>
+      realApi.completeDiscordLink(request),
   },
   account: {
     getProfile: () => realApi.getProfile(),

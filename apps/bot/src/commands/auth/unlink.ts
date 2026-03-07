@@ -4,6 +4,7 @@ import type { Command } from '../../client.js'
 import { db, userDiscordProfiles } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const unlink: Command = {
   data: new SlashCommandBuilder()
@@ -11,6 +12,7 @@ export const unlink: Command = {
     .setDescription('Disconnect your Discord from your Kawakawa account'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id
 
     // Find the Discord profile
@@ -43,7 +45,7 @@ export const unlink: Command = {
             'Before unlinking, you should:\n' +
             '1. Log in to the website\n' +
             '2. Set a password in your account settings\n\n' +
-            "If you're sure you want to unlink anyway, use `/unlink-confirm`."
+            `If you're sure you want to unlink anyway, use \`${prefix}unlink-confirm\`.`
         )
 
       await interaction.reply({ embeds: [embed], ephemeral: true })
@@ -63,7 +65,7 @@ export const unlink: Command = {
         content:
           `✅ Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
           'You can still log in with your username and password on the website.\n' +
-          'Use `/link` to reconnect your Discord later.',
+          `Use \`${prefix}link\` to reconnect your Discord later.`,
         flags: MessageFlags.Ephemeral,
       })
     } catch (error) {

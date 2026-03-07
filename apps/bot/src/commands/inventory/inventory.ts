@@ -26,6 +26,9 @@ import { getDisplaySettings } from '../../services/userSettings.js'
 import { type PaginatedItem } from '../../components/pagination.js'
 import { requireLinkedUser } from '../../utils/auth.js'
 import { COMPONENT_TIMEOUT } from '../../utils/interactions.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
+import { parseTokens } from '@kawakawa/parser'
+import { botResolvers } from '../../utils/resolvers.js'
 
 interface InventoryItemData {
   commodityTicker: string
@@ -160,6 +163,12 @@ export const inventory: Command = {
     )
     .addStringOption(option =>
       option.setName('location').setDescription('Filter by location').setAutocomplete(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('input')
+        .setDescription('Prefix command: commodity and/or location (e.g., "COF BEN")')
+        .setRequired(false)
     ) as SlashCommandBuilder,
 
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -192,8 +201,10 @@ export const inventory: Command = {
   },
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
     const commodityInput = interaction.options.getString('commodity')
     const locationInput = interaction.options.getString('location')
+    const prefixInput = interaction.options.getString('input')
 
     // Require linked account
     const result = await requireLinkedUser(interaction)
@@ -205,6 +216,47 @@ export const inventory: Command = {
 
     // Validate commodity filter (exact ticker match only)
     let resolvedCommodity: { ticker: string; name: string } | null = null
+    let resolvedLocation: { naturalId: string; name: string; type: string } | null = null
+
+    // Handle prefix command input (e.g., !inventory COF BEN)
+    if (prefixInput && !commodityInput && !locationInput) {
+      const parsed = await parseTokens(prefixInput, botResolvers)
+
+      // Extract location
+      if (parsed.location) {
+        resolvedLocation = {
+          naturalId: parsed.location.naturalId,
+          name: parsed.location.name,
+          type: parsed.location.type,
+        }
+      }
+
+      // Extract commodity (if single commodity provided)
+      if (parsed.items.length === 1) {
+        resolvedCommodity = {
+          ticker: parsed.items[0].commodity.ticker,
+          name: parsed.items[0].commodity.name,
+        }
+      } else if (parsed.items.length > 1) {
+        await interaction.reply({
+          content: `❌ Please specify only one commodity ticker.\n\nExample: \`${prefix}inventory COF BEN\``,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
+
+      // Report unresolved tokens
+      if (parsed.unresolved.length > 0) {
+        await interaction.reply({
+          content:
+            `❌ Could not understand: ${parsed.unresolved.map(t => `"${t}"`).join(', ')}\n\n` +
+            `Example: \`${prefix}inventory COF BEN\``,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
+    }
+    // Handle slash command commodity input (overrides parsed commodity)
     if (commodityInput) {
       resolvedCommodity = await resolveCommodity(commodityInput)
       if (!resolvedCommodity) {
@@ -218,8 +270,7 @@ export const inventory: Command = {
       }
     }
 
-    // Validate location filter (exact ID or name match only)
-    let resolvedLocation: { naturalId: string; name: string; type: string } | null = null
+    // Handle slash command location input (overrides parsed location)
     if (locationInput) {
       resolvedLocation = await resolveLocation(locationInput)
       if (!resolvedLocation) {
@@ -251,7 +302,7 @@ export const inventory: Command = {
       await interaction.reply({
         content:
           '📭 No inventory data found.\n\n' +
-          'Use `/sync` to check your FIO sync status and configure your FIO credentials.',
+          `Use \`${prefix}sync\` to check your FIO sync status and configure your FIO credentials.`,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -374,35 +425,28 @@ async function sendInteractiveInventory(
   }
 
   const buildComponents = (page: number): ActionRowBuilder<ButtonBuilder>[] => {
-    const row = new ActionRowBuilder<ButtonBuilder>()
-
-    // Add pagination buttons if multiple pages
-    if (totalPages > 1) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`${idPrefix}:prev`)
-          .setLabel('◀')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 0),
-        new ButtonBuilder()
-          .setCustomId(`${idPrefix}:info`)
-          .setLabel(`${page + 1}/${totalPages}`)
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true),
-        new ButtonBuilder()
-          .setCustomId(`${idPrefix}:next`)
-          .setLabel('▶')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page >= totalPages - 1)
-      )
+    // Only show pagination buttons if multiple pages
+    if (totalPages <= 1) {
+      return []
     }
 
-    // Add share button
+    const row = new ActionRowBuilder<ButtonBuilder>()
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`${idPrefix}:share`)
-        .setLabel('📢 Share')
-        .setStyle(ButtonStyle.Primary)
+        .setCustomId(`${idPrefix}:prev`)
+        .setLabel('◀')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === 0),
+      new ButtonBuilder()
+        .setCustomId(`${idPrefix}:info`)
+        .setLabel(`${page + 1}/${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId(`${idPrefix}:next`)
+        .setLabel('▶')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page >= totalPages - 1)
     )
 
     return [row]
@@ -444,30 +488,6 @@ async function sendInteractiveInventory(
           })
         }
         break
-
-      case 'share': {
-        // Build a shareable embed for the current page (no buttons)
-        const shareEmbed = new EmbedBuilder()
-          .setTitle(`📦 ${displayName}'s Inventory`)
-          .setColor(0x57f287)
-          .setDescription(filterDesc)
-          .setTimestamp()
-          .setFields(
-            getPageItems(currentPage).map(item => ({ ...item, inline: item.inline ?? true }))
-          )
-
-        const footerParts = [`Last synced: ${lastSyncDate.toLocaleDateString()}`]
-        if (totalPages > 1) {
-          footerParts.push(`Page ${currentPage + 1}/${totalPages}`)
-        }
-        shareEmbed.setFooter({ text: footerParts.join(' • ') })
-
-        // Post publicly to the channel
-        await buttonInteraction.reply({
-          embeds: [shareEmbed],
-        })
-        break
-      }
     }
   })
 

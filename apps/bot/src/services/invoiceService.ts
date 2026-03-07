@@ -2,7 +2,7 @@
  * Invoice Service for Discord Bot
  * Handles invoice operations for the /buy and /sell commands with user detection
  */
-import { db, invoices, invoiceLineItems, orderReservations, users } from '@kawakawa/db'
+import { db, invoices, invoiceLineItems, orderReservations, users, userDiscordProfiles } from '@kawakawa/db'
 import { eq, and, desc, inArray, sql } from 'drizzle-orm'
 import type { InvoiceStatus, Currency, InvoiceLineItem, InvoiceSummary } from '@kawakawa/types'
 import { getFioUsernames } from './userSettings.js'
@@ -434,6 +434,51 @@ export async function submitInvoice(
 }
 
 /**
+ * Find existing line items in an invoice matching commodity and location
+ */
+export async function findExistingLineItems(
+  invoiceId: number,
+  commodityTicker: string,
+  locationId: string
+): Promise<{
+  id: number
+  quantity: number
+  unitPrice: string
+  currency: Currency
+}[]> {
+  const items = await db.query.invoiceLineItems.findMany({
+    where: and(
+      eq(invoiceLineItems.invoiceId, invoiceId),
+      eq(invoiceLineItems.commodityTicker, commodityTicker),
+      eq(invoiceLineItems.locationId, locationId)
+    ),
+  })
+
+  return items.map(item => ({
+    id: item.id,
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    currency: item.currency,
+  }))
+}
+
+/**
+ * Update an existing line item's quantity
+ */
+export async function updateLineItemQuantity(
+  lineItemId: number,
+  newQuantity: number
+): Promise<void> {
+  await db
+    .update(invoiceLineItems)
+    .set({
+      quantity: newQuantity,
+      updatedAt: new Date(),
+    })
+    .where(eq(invoiceLineItems.id, lineItemId))
+}
+
+/**
  * Format invoice summary for Discord embed
  */
 export async function formatInvoiceForEmbed(
@@ -485,6 +530,11 @@ export async function formatLineItemsForEmbed(
     const typeEmoji = item.orderType === 'buy' ? '📥' : '📤'
     const line = `${typeEmoji} ${item.quantity}x **${item.commodityTicker}** @ ${location} - ${item.unitPrice.toFixed(2)} ${item.currency}/u = ${item.totalValue.toFixed(2)} ${item.currency}`
     lines.push(line)
+
+    // Add notes on a separate line if present
+    if (item.notes) {
+      lines.push(`   💬 *${item.notes}*`)
+    }
   }
 
   return lines
@@ -546,4 +596,29 @@ export async function findUserByName(name: string): Promise<{
   }
 
   return null
+}
+
+/**
+ * Find a user by their Discord ID (for resolving Discord mentions like <@123456>).
+ */
+export async function findUserByDiscordId(discordId: string): Promise<{
+  userId: number
+  username: string
+  displayName: string | null
+  fioUsername: string | null
+} | null> {
+  const profile = await db.query.userDiscordProfiles.findFirst({
+    where: eq(userDiscordProfiles.discordId, discordId),
+    with: { user: true },
+  })
+
+  if (!profile || !profile.user) return null
+
+  const fioMap = await getFioUsernames([profile.user.id])
+  return {
+    userId: profile.user.id,
+    username: profile.user.username,
+    displayName: profile.user.displayName,
+    fioUsername: fioMap.get(profile.user.id) ?? null,
+  }
 }

@@ -9,6 +9,7 @@ import type { RawToken, IdentifiedToken, TokenResolvers, ResolvedCommodity } fro
 import {
   parseLimitModifier,
   extractExplicitValue,
+  extractDiscordId,
   isCommaSeparatedList,
   splitCommaSeparatedList,
 } from './tokenizer.js'
@@ -79,6 +80,17 @@ async function identifySingleToken(
         const resolved = await resolvers.resolveLocation(locationId)
         if (resolved) {
           return { type: 'location', value, position, resolved }
+        }
+      }
+      return { type: 'unresolved', value, position }
+    }
+
+    case 'discord_mention': {
+      const discordId = extractDiscordId(value)
+      if (discordId && resolvers.resolveDiscordMention) {
+        const resolved = await resolvers.resolveDiscordMention(discordId)
+        if (resolved) {
+          return { type: 'user', value, position, resolved }
         }
       }
       return { type: 'unresolved', value, position }

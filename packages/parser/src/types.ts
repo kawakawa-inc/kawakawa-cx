@@ -65,6 +65,12 @@ export interface TokenResolvers {
    * Should match by username, displayName, or fioUsername.
    */
   resolveUser: (token: string) => Promise<ResolvedUser | null>
+
+  /**
+   * Resolve a Discord mention (<@123456>) to a user.
+   * Should look up the user by their Discord ID.
+   */
+  resolveDiscordMention?: (discordId: string) => Promise<ResolvedUser | null>
 }
 
 // =============================================================================
@@ -82,6 +88,7 @@ export type RawTokenType =
   | 'explicit_commodity'
   | 'explicit_location'
   | 'explicit_user'
+  | 'discord_mention'
   | 'unknown'
 
 /**
@@ -144,7 +151,7 @@ export interface LimitModifier {
 /**
  * Action keywords recognized by the parser.
  */
-export type ActionKeyword = 'send' | 'close'
+export type ActionKeyword = 'send' | 'close' | 'buy' | 'sell'
 
 /**
  * The result of parsing an input string.

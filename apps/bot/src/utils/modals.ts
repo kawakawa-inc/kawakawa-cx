@@ -118,3 +118,251 @@ export function createSingleInputModal(options: SingleInputModalOptions): ModalB
 
   return modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input))
 }
+
+/**
+ * Options for creating an order edit modal
+ */
+export interface OrderEditModalOptions {
+  /** Custom ID for the modal */
+  modalId: string
+  /** Modal title */
+  title: string
+  /** Direction of the order */
+  direction: 'buy' | 'sell'
+  /** Pre-filled quantity (as string for display) */
+  quantity?: string
+  /** Pre-filled price (as string for display) */
+  price?: string
+  /** Pre-filled limit quantity for sell orders */
+  limitQuantity?: string
+}
+
+/**
+ * Create a modal for editing order details.
+ * For buy orders: quantity (required) and price (optional)
+ * For sell orders: limit quantity (optional) and price (optional)
+ *
+ * @param options - Modal configuration options
+ * @returns Configured ModalBuilder
+ */
+export function createOrderEditModal(options: OrderEditModalOptions): ModalBuilder {
+  const modal = new ModalBuilder().setCustomId(options.modalId).setTitle(options.title)
+
+  if (options.direction === 'buy') {
+    // Buy: Quantity (required) + Price (optional)
+    const quantityInput = new TextInputBuilder()
+      .setCustomId('quantity')
+      .setLabel('Quantity')
+      .setPlaceholder('e.g., 500')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(10)
+
+    if (options.quantity) {
+      quantityInput.setValue(options.quantity)
+    }
+
+    const priceInput = new TextInputBuilder()
+      .setCustomId('price')
+      .setLabel('Price (optional, overrides auto-pricing)')
+      .setPlaceholder('e.g., 130.50')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false)
+      .setMaxLength(15)
+
+    if (options.price) {
+      priceInput.setValue(options.price)
+    }
+
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
+    )
+  } else {
+    // Sell: Limit quantity (optional) + Price (optional)
+    const limitInput = new TextInputBuilder()
+      .setCustomId('limitQuantity')
+      .setLabel('Limit Quantity (optional, for reserve/max)')
+      .setPlaceholder('e.g., 500')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false)
+      .setMaxLength(10)
+
+    if (options.limitQuantity) {
+      limitInput.setValue(options.limitQuantity)
+    }
+
+    const priceInput = new TextInputBuilder()
+      .setCustomId('price')
+      .setLabel('Price (optional, overrides auto-pricing)')
+      .setPlaceholder('e.g., 95.00')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false)
+      .setMaxLength(15)
+
+    if (options.price) {
+      priceInput.setValue(options.price)
+    }
+
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(limitInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
+    )
+  }
+
+  return modal
+}
+
+/**
+ * Options for creating an invoice edit modal
+ */
+export interface InvoiceEditModalOptions {
+  /** Custom ID for the modal */
+  modalId: string
+  /** Modal title */
+  title: string
+  /** Direction of the invoice */
+  direction: 'buy' | 'sell'
+  /** Pre-filled item quantities (format: "COF:100, RAT:200") */
+  quantities?: string
+  /** Whether to show the location field (when location is missing) */
+  showLocation?: boolean
+  /** Pre-filled location value */
+  location?: string
+}
+
+/**
+ * Create a modal for editing invoice item quantities (and optionally location).
+ * Allows users to adjust quantities before adding to invoice.
+ *
+ * @param options - Modal configuration options
+ * @returns Configured ModalBuilder
+ */
+export function createInvoiceEditModal(options: InvoiceEditModalOptions): ModalBuilder {
+  const modal = new ModalBuilder().setCustomId(options.modalId).setTitle(options.title)
+
+  const quantitiesInput = new TextInputBuilder()
+    .setCustomId('quantities')
+    .setLabel('Item Quantities (TICKER:QTY, ...)')
+    .setPlaceholder('e.g., COF:100, RAT:200, DW:500')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(500)
+
+  if (options.quantities) {
+    quantitiesInput.setValue(options.quantities)
+  }
+
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(quantitiesInput))
+
+  // Add location field when location is missing/unresolved
+  if (options.showLocation) {
+    const locationInput = new TextInputBuilder()
+      .setCustomId('location')
+      .setLabel('Location')
+      .setPlaceholder('e.g., Moria Station, Katoa, ANT, BEN')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(50)
+
+    if (options.location) {
+      locationInput.setValue(options.location)
+    }
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(locationInput))
+  }
+
+  return modal
+}
+
+/**
+ * Options for creating a new order modal (from empty input)
+ */
+export interface NewOrderModalOptions {
+  /** Custom ID for the modal */
+  modalId: string
+  /** Modal title */
+  title: string
+  /** Direction of the order */
+  direction: 'buy' | 'sell'
+  /** Pre-filled commodity (e.g., "COF" or "COF,CAF,H2O") */
+  commodity?: string
+  /** Pre-filled location (e.g., "Katoa" or "ANT") */
+  location?: string
+  /** Pre-filled quantity */
+  quantity?: string
+  /** Pre-filled price */
+  price?: string
+}
+
+/**
+ * Create a modal for entering all order details (commodity, location, quantity, price).
+ * Used when user starts with empty input (!buy or !sell with no arguments).
+ *
+ * @param options - Modal configuration options
+ * @returns Configured ModalBuilder
+ */
+export function createNewOrderModal(options: NewOrderModalOptions): ModalBuilder {
+  const modal = new ModalBuilder().setCustomId(options.modalId).setTitle(options.title)
+
+  // Commodity field
+  const commodityInput = new TextInputBuilder()
+    .setCustomId('commodity')
+    .setLabel('Commodity ticker(s)')
+    .setPlaceholder('e.g., COF or COF,CAF,H2O')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100)
+
+  if (options.commodity) {
+    commodityInput.setValue(options.commodity)
+  }
+
+  // Location field
+  const locationInput = new TextInputBuilder()
+    .setCustomId('location')
+    .setLabel('Location')
+    .setPlaceholder('e.g., Katoa, Montem, ANT, BEN')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(50)
+
+  if (options.location) {
+    locationInput.setValue(options.location)
+  }
+
+  // Quantity field
+  const quantityInput = new TextInputBuilder()
+    .setCustomId('quantity')
+    .setLabel('Quantity')
+    .setPlaceholder('e.g., 500')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(10)
+
+  if (options.quantity) {
+    quantityInput.setValue(options.quantity)
+  }
+
+  // Price field (optional)
+  const priceInput = new TextInputBuilder()
+    .setCustomId('price')
+    .setLabel('Price (optional, uses auto-pricing if empty)')
+    .setPlaceholder('e.g., 130.50')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(15)
+
+  if (options.price) {
+    priceInput.setValue(options.price)
+  }
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(commodityInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(locationInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
+  )
+
+  return modal
+}

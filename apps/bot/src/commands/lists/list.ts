@@ -16,6 +16,7 @@ import { botResolvers } from '../../utils/resolvers.js'
 import { requireLinkedUser } from '../../utils/auth.js'
 import { formatCommodity } from '../../services/display.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const list: Command = {
   data: new SlashCommandBuilder()
@@ -32,6 +33,8 @@ export const list: Command = {
     ) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
@@ -73,7 +76,7 @@ export const list: Command = {
             content:
               `❌ Commodity **${item.commodity.ticker}** doesn't have a quantity.\n\n` +
               'Please specify quantities for all items.\n' +
-              'Example: `/list input:100 COF 200 RAT 500 DW`',
+              `Example: \`${prefix}list input:100 COF 200 RAT 500 DW\``,
             flags: MessageFlags.Ephemeral,
           })
           return
@@ -98,7 +101,7 @@ export const list: Command = {
         content:
           '❌ No valid materials found.\n\n' +
           'Please provide commodities with quantities.\n' +
-          'Example: `/list input:100 COF 200 RAT 500 DW`',
+          `Example: \`${prefix}list input:100 COF 200 RAT 500 DW\``,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -132,7 +135,7 @@ export const list: Command = {
           `✅ List **${listName}** created!\n\n` +
           `${materialsDisplay}\n\n` +
           `📊 ${itemCount} item${itemCount !== 1 ? 's' : ''} • ${totalQty.toLocaleString()} total units\n\n` +
-          `Use \`/lists\` to view and manage your lists.`,
+          `Use \`${prefix}lists\` to view and manage your lists.`,
         flags: MessageFlags.Ephemeral,
       })
 

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
+import LinkDiscordView from '../views/LinkDiscordView.vue'
 import DiscordCallbackView from '../views/DiscordCallbackView.vue'
 import TermsView from '../views/TermsView.vue'
 import PrivacyView from '../views/PrivacyView.vue'
@@ -37,6 +38,11 @@ const router = createRouter({
       path: '/reset-password',
       name: 'reset-password',
       component: ResetPasswordView,
+    },
+    {
+      path: '/link-discord',
+      name: 'link-discord',
+      component: LinkDiscordView,
     },
     {
       path: '/discord/callback',

@@ -241,6 +241,19 @@ export const passwordResetTokens = pgTable('password_reset_tokens', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
+// ==================== DISCORD LINK TOKENS ====================
+// Used for web-based Discord account linking (user clicks link from bot, logs in on web)
+export const discordLinkTokens = pgTable('discord_link_tokens', {
+  id: serial('id').primaryKey(),
+  token: varchar('token', { length: 255 }).notNull().unique(),
+  discordId: varchar('discord_id', { length: 50 }).notNull(), // Discord user ID
+  discordUsername: varchar('discord_username', { length: 100 }).notNull(),
+  discordAvatar: varchar('discord_avatar', { length: 255 }), // Avatar hash (nullable)
+  expiresAt: timestamp('expires_at').notNull(),
+  used: boolean('used').notNull().default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
 // ==================== USER ROLES (Many-to-Many) ====================
 export const userRoles = pgTable('user_roles', {
   id: serial('id').primaryKey(),

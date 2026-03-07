@@ -9,11 +9,14 @@ import type { Command } from '../../client.js'
 import { requireLinkedUser } from '../../utils/auth.js'
 import { getDraftInvoices } from '../../services/invoiceService.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const invoicesCommand: Command = {
   data: new SlashCommandBuilder().setName('invoices').setDescription('List your draft invoices'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
@@ -26,9 +29,9 @@ export const invoicesCommand: Command = {
       await interaction.reply({
         content:
           '📋 You have no draft invoices.\n\n' +
-          'To create an invoice, use `/buy` or `/sell` with a username:\n' +
-          '• `/buy COF 100 @bob BEN` - Buy from bob\n' +
-          '• `/sell DW 500 user:alice BEN` - Sell to alice',
+          `To create an invoice, use \`${prefix}buy\` or \`${prefix}sell\` with a username:\n` +
+          `• \`${prefix}buy COF 100 @bob BEN\` - Buy from bob\n` +
+          `• \`${prefix}sell DW 500 user:alice BEN\` - Sell to alice`,
         flags: MessageFlags.Ephemeral,
       })
       return

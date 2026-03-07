@@ -20,7 +20,9 @@ import { getDisplaySettings } from '../../services/userSettings.js'
 import { createSingleInputModal } from '../../utils/modals.js'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
 import { formatGroupedOrdersMulti, buildFilterDescription } from '../../services/orderFormatter.js'
+import { startInvoiceCreationFlow, type OrderForInvoice } from '../../services/invoiceBuilder.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 const LISTS_PER_PAGE = 5
 const COMPONENT_TIMEOUT = 5 * 60 * 1000 // 5 minutes
@@ -85,6 +87,8 @@ export const lists: Command = {
     .setDescription('View and manage your shopping lists') as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
@@ -102,8 +106,8 @@ export const lists: Command = {
         content:
           '📭 No shopping lists found.\n\n' +
           'Create a list using:\n' +
-          '• `/list` - Create from commodities with quantities\n' +
-          '• `/query` - Search orders and use "Save as List" button',
+          `• \`${prefix}list\` - Create from commodities with quantities\n` +
+          `• \`${prefix}query\` - Search orders and use "Save as List" button`,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -189,6 +193,11 @@ export const lists: Command = {
               .setLabel('Query Market')
               .setStyle(ButtonStyle.Primary)
               .setEmoji('🔍'),
+            new ButtonBuilder()
+              .setCustomId('lists:share')
+              .setLabel('Share')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('📢'),
             new ButtonBuilder()
               .setCustomId('lists:rename')
               .setLabel('Rename')
@@ -344,9 +353,122 @@ export const lists: Command = {
                 })
               }
 
-              await i.editReply({
+              // Prepare orders for invoice builder with list quantities
+              const ordersForInvoice: OrderForInvoice[] = sellOrdersData.map(order => ({
+                id: order.id,
+                userId: order.userId,
+                commodityTicker: order.commodityTicker,
+                locationId: order.locationId, // naturalId like "BEN"
+                price: parseFloat(order.price),
+                currency: order.currency,
+                priceListCode: order.priceListCode,
+                user: {
+                  id: order.userId,
+                  displayName: order.user.displayName,
+                  username: order.user.username,
+                },
+                location: {
+                  naturalId: order.location.naturalId,
+                  name: order.location.name,
+                },
+                commodity: {
+                  ticker: order.commodity.ticker,
+                  name: order.commodity.name,
+                },
+                // Use requested quantity from list, fallback to available
+                availableQuantity:
+                  listMaterials[order.commodityTicker] ??
+                  sellQuantities.get(order.id)?.availableQuantity,
+              }))
+
+              // Add "Create Invoice" button
+              const invoiceButtonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`lists:create-invoice:${listForQuery.id}`)
+                  .setLabel('Create Invoice')
+                  .setStyle(ButtonStyle.Success)
+                  .setEmoji('🧾')
+              )
+
+              const queryResponse = await i.editReply({
                 embeds: [queryEmbed],
+                components: [invoiceButtonRow],
               })
+
+              // Set up collector for the invoice button
+              const invoiceCollector = queryResponse.createMessageComponentCollector({
+                time: COMPONENT_TIMEOUT,
+                filter: bi =>
+                  bi.customId.startsWith('lists:create-invoice:') && bi.user.id === i.user.id,
+              })
+
+              invoiceCollector.on('collect', async buttonInteraction => {
+                if (!buttonInteraction.isButton()) return
+                // Start the invoice creation flow
+                await startInvoiceCreationFlow(
+                  buttonInteraction,
+                  ordersForInvoice,
+                  userId,
+                  displaySettings.locationDisplayMode
+                )
+              })
+
+              invoiceCollector.on('end', async () => {
+                try {
+                  // Disable the button after timeout
+                  const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                      .setCustomId('lists:invoice-expired')
+                      .setLabel('Session expired')
+                      .setStyle(ButtonStyle.Secondary)
+                      .setDisabled(true)
+                  )
+                  await i.editReply({ components: [disabledRow] })
+                } catch {
+                  // Ignore if already deleted
+                }
+              })
+
+              break
+            }
+
+            case 'lists:share': {
+              if (!selectedListId) return
+
+              // Fetch list for sharing
+              const [listToShare] = await db
+                .select()
+                .from(shoppingLists)
+                .where(eq(shoppingLists.id, selectedListId))
+
+              if (!listToShare) {
+                await i.reply({
+                  content: '❌ List not found.',
+                  flags: MessageFlags.Ephemeral,
+                })
+                return
+              }
+
+              // Build shareable embed with "Shared by" footer
+              const shareEmbed = buildListDetailEmbed(listToShare as ShoppingListData)
+
+              // Get the member's server display name
+              const member = interaction.member
+              const sharedByName =
+                member && 'displayName' in member
+                  ? member.displayName
+                  : interaction.user.displayName
+
+              shareEmbed.setFooter({
+                text: `Shared by ${sharedByName} • ${Object.keys(listToShare.materials as Record<string, number>).length} items`,
+              })
+
+              // Post publicly (non-ephemeral)
+              await i.reply({
+                embeds: [shareEmbed],
+              })
+
+              logger.info({ userId, listId: selectedListId }, 'Shopping list shared')
               break
             }
 
@@ -453,7 +575,7 @@ export const lists: Command = {
                 await i.update({
                   content:
                     '📭 No shopping lists found.\n\n' +
-                    'Create a list using `/list` or the "Save as List" button in `/query`.',
+                    `Create a list using \`${prefix}list\` or the "Save as List" button in \`${prefix}query\`.`,
                   embeds: [],
                   components: [],
                 })

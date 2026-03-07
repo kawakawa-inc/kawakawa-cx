@@ -14,7 +14,7 @@ import type {
 } from '@kawakawa/parser'
 import { resolveCommodity as commodityResolve } from '../services/commodityService.js'
 import { resolveLocation as locationResolve } from '../services/locationService.js'
-import { findUserByName } from '../services/invoiceService.js'
+import { findUserByName, findUserByDiscordId } from '../services/invoiceService.js'
 
 /**
  * Resolve a token to a commodity using the bot's commodity service.
@@ -72,6 +72,21 @@ async function resolveUser(token: string): Promise<ResolvedUser | null> {
 }
 
 /**
+ * Resolve a Discord mention (<@123456>) to a user using their Discord ID.
+ */
+async function resolveDiscordMention(discordId: string): Promise<ResolvedUser | null> {
+  const result = await findUserByDiscordId(discordId)
+  if (!result) return null
+
+  return {
+    userId: result.userId,
+    username: result.username,
+    displayName: result.displayName,
+    fioUsername: result.fioUsername,
+  }
+}
+
+/**
  * Bot resolver implementations for the token parser.
  *
  * Usage:
@@ -86,4 +101,5 @@ export const botResolvers: TokenResolvers = {
   resolveCommodity,
   resolveLocation,
   resolveUser,
+  resolveDiscordMention,
 }

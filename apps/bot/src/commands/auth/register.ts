@@ -5,6 +5,7 @@ import { db, users, userDiscordProfiles, userRoles, discordRoleMappings } from '
 import { eq, inArray } from 'drizzle-orm'
 import { settingsService } from '@kawakawa/services/settings'
 import logger from '../../utils/logger.js'
+import { isMessageInteractionAdapter, getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const register: Command = {
   data: new SlashCommandBuilder()
@@ -26,13 +27,50 @@ export const register: Command = {
         .setMaxLength(100)
     ) as SlashCommandBuilder,
 
-  // Disabled for prefix commands - requires named options and contains sensitive account info
-  prefixEnabled: false,
+  // Prefix commands send response via DM (ephemeral flag triggers DM routing)
+  // Usage: !register username [display name]
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const discordId = interaction.user.id
     const discordUsername = interaction.user.username
     const discordAvatar = interaction.user.avatar
+    const prefix = getCommandPrefix(interaction)
+
+    // Parse options - for prefix commands, parse from 'input'
+    let username: string
+    let displayName: string
+
+    if (isMessageInteractionAdapter(interaction)) {
+      // Prefix command: parse "username [display name]" from input
+      const input = interaction.options.getString('input')
+      if (!input || !input.trim()) {
+        await interaction.reply({
+          content:
+            `Please provide a username.\n\n` +
+            `**Usage:** \`${prefix}register <username> [display name]\`\n` +
+            `**Example:** \`${prefix}register MyUser My Display Name\``,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
+
+      const parts = input.trim().split(/\s+/)
+      username = parts[0]
+      displayName = parts.length > 1 ? parts.slice(1).join(' ') : username
+    } else {
+      // Slash command: use named options
+      username = interaction.options.getString('username', true)
+      displayName = interaction.options.getString('display_name') || username
+    }
+
+    // Validate username length (prefix commands need validation, slash commands use option constraints)
+    if (username.length < 3 || username.length > 50) {
+      await interaction.reply({
+        content: 'Username must be between 3 and 50 characters.',
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
 
     // Check if user already has a linked account
     const existingProfile = await db.query.userDiscordProfiles.findFirst({
@@ -43,14 +81,11 @@ export const register: Command = {
       await interaction.reply({
         content:
           'You already have a linked Kawakawa account.\n\n' +
-          'Use `/whoami` to see your account details, or `/unlink` to disconnect.',
+          `Use \`${prefix}whoami\` to see your account details, or \`${prefix}unlink\` to disconnect.`,
         flags: MessageFlags.Ephemeral,
       })
       return
     }
-
-    const username = interaction.options.getString('username', true)
-    const displayName = interaction.options.getString('display_name') || username
 
     // Check if username is already taken
     const existingUser = await db.query.users.findFirst({
@@ -187,7 +222,7 @@ export const register: Command = {
       } else {
         embed.setDescription(
           'Welcome to Kawakawa! Your Discord roles have been matched and your account is ready to use.\n\n' +
-            'Use `/whoami` to see your account details.'
+            `Use \`${prefix}whoami\` to see your account details.`
         )
       }
 

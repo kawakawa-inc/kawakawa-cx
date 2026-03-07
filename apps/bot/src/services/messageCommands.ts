@@ -139,13 +139,15 @@ function parseCommandArgs(content: string): {
   const commandName = parts[0].toLowerCase()
   const options = new Map<string, string | number | boolean | null>()
 
-  // Everything after the command name is the 'input' (for flexible commands)
+  // Everything after the command name is the primary text argument.
+  // Set it under multiple option names so commands with different
+  // primary option names all receive the value via prefix commands.
   if (parts.length > 1) {
     const inputValue = parts.slice(1).join(' ')
     options.set('input', inputValue)
-
-    // Also set 'query' for the /query command
-    options.set('query', inputValue)
+    options.set('query', inputValue)   // /query
+    options.set('target', inputValue)  // /close
+    options.set('topic', inputValue)   // /help
   }
 
   return { commandName, options }

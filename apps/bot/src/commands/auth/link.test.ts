@@ -2,22 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createMockInteraction, getDiscordMock } from '../../test/mockDiscord.js'
 
 // Create hoisted mock functions
-const { mockFindFirstProfile, mockFindFirstUser, mockInsert, mockBcryptCompare } = vi.hoisted(
-  () => ({
-    mockFindFirstProfile: vi.fn(),
-    mockFindFirstUser: vi.fn(),
-    mockInsert: vi.fn(),
-    mockBcryptCompare: vi.fn(),
-  })
-)
+const { mockFindFirstProfile, mockInsert, mockGetWebUrl } = vi.hoisted(() => ({
+  mockFindFirstProfile: vi.fn(),
+  mockInsert: vi.fn(),
+  mockGetWebUrl: vi.fn(),
+}))
 
 // Mock discord.js
 vi.mock('discord.js', () => getDiscordMock())
-
-// Mock bcrypt
-vi.mock('bcrypt', () => ({
-  compare: mockBcryptCompare,
-}))
 
 // Mock the database module
 vi.mock('@kawakawa/db', () => ({
@@ -26,23 +18,32 @@ vi.mock('@kawakawa/db', () => ({
       userDiscordProfiles: {
         findFirst: mockFindFirstProfile,
       },
-      users: {
-        findFirst: mockFindFirstUser,
-      },
     },
     insert: mockInsert,
   },
   userDiscordProfiles: {
     discordId: 'discordId',
   },
-  users: {
-    username: 'username',
-  },
+  discordLinkTokens: {},
 }))
 
 // Mock drizzle-orm
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn().mockImplementation((a, b) => ({ field: a, value: b })),
+}))
+
+// Mock config
+vi.mock('../../config.js', () => ({
+  getWebUrl: mockGetWebUrl,
+}))
+
+// Mock crypto
+vi.mock('crypto', () => ({
+  default: {
+    randomBytes: vi.fn().mockReturnValue({
+      toString: () => 'test-token-12345',
+    }),
+  },
 }))
 
 // Import after mocks
@@ -51,10 +52,13 @@ import { link } from './link.js'
 describe('link command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockGetWebUrl.mockResolvedValue('https://example.com')
   })
 
   it('has correct command metadata', () => {
     expect(link.data).toBeDefined()
+    expect(link.data.name).toBe('link')
+    expect(link.data.description).toBe('Link your Discord to an existing Kawakawa account')
   })
 
   it('returns error when Discord is already linked', async () => {
@@ -63,12 +67,7 @@ describe('link command', () => {
       discordId: '123456789',
     })
 
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'testuser',
-        password: 'password123',
-      },
-    })
+    const { interaction, replyFn } = createMockInteraction({})
 
     await link.execute(interaction as never)
 
@@ -76,135 +75,82 @@ describe('link command', () => {
       content: expect.stringContaining('already linked'),
       flags: 64, // Ephemeral
     })
+    expect(mockInsert).not.toHaveBeenCalled()
   })
 
-  it('returns error when username not found', async () => {
+  it('generates link token when Discord is not linked', async () => {
     mockFindFirstProfile.mockResolvedValueOnce(null)
-    mockFindFirstUser.mockResolvedValueOnce(null)
-
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'nonexistent',
-        password: 'password123',
-      },
-    })
-
-    await link.execute(interaction as never)
-
-    expect(replyFn).toHaveBeenCalledWith({
-      content: 'Invalid username or password.',
-      flags: 64, // Ephemeral
-    })
-  })
-
-  it('returns error when account already has Discord linked', async () => {
-    mockFindFirstProfile.mockResolvedValueOnce(null)
-    mockFindFirstUser.mockResolvedValueOnce({
-      id: 1,
-      username: 'testuser',
-      passwordHash: '$2b$10$hash',
-      discordProfile: { discordId: '999999' }, // Already linked to different Discord
-    })
-
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'testuser',
-        password: 'password123',
-      },
-    })
-
-    await link.execute(interaction as never)
-
-    expect(replyFn).toHaveBeenCalledWith({
-      content: expect.stringContaining('already linked to a different Discord'),
-      flags: 64, // Ephemeral
-    })
-  })
-
-  it('returns error when password is invalid', async () => {
-    mockFindFirstProfile.mockResolvedValueOnce(null)
-    mockFindFirstUser.mockResolvedValueOnce({
-      id: 1,
-      username: 'testuser',
-      passwordHash: '$2b$10$hash',
-      discordProfile: null,
-    })
-    mockBcryptCompare.mockResolvedValueOnce(false)
-
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'testuser',
-        password: 'wrongpassword',
-      },
-    })
-
-    await link.execute(interaction as never)
-
-    expect(replyFn).toHaveBeenCalledWith({
-      content: 'Invalid username or password.',
-      flags: 64, // Ephemeral
-    })
-  })
-
-  it('successfully links Discord to account', async () => {
-    mockFindFirstProfile.mockResolvedValueOnce(null)
-    mockFindFirstUser.mockResolvedValueOnce({
-      id: 1,
-      username: 'testuser',
-      passwordHash: '$2b$10$hash',
-      discordProfile: null,
-    })
-    mockBcryptCompare.mockResolvedValueOnce(true)
 
     const mockValues = vi.fn().mockResolvedValue(undefined)
     mockInsert.mockReturnValue({ values: mockValues })
 
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'testuser',
-        password: 'correctpassword',
-      },
-    })
+    const { interaction, replyFn } = createMockInteraction({})
 
     await link.execute(interaction as never)
 
+    // Should insert a token
     expect(mockInsert).toHaveBeenCalled()
+    expect(mockValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'test-token-12345',
+        discordId: '123456789',
+        discordUsername: 'TestUser',
+        discordAvatar: 'avatar123',
+        used: false,
+      })
+    )
+
+    // Should reply with embed and button
     expect(replyFn).toHaveBeenCalledWith({
-      content: expect.stringContaining('Successfully linked'),
+      embeds: expect.arrayContaining([
+        expect.objectContaining({
+          data: expect.objectContaining({
+            title: '🔗 Link Your Discord Account',
+          }),
+        }),
+      ]),
+      components: expect.arrayContaining([
+        expect.objectContaining({
+          components: expect.arrayContaining([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                label: '🔗 Link Account',
+                style: 5, // ButtonStyle.Link
+                url: 'https://example.com/link-discord?token=test-token-12345',
+              }),
+            }),
+          ]),
+        }),
+      ]),
       flags: 64, // Ephemeral
     })
   })
 
-  it('handles database errors gracefully', async () => {
+  it('includes expiration time in embed', async () => {
     mockFindFirstProfile.mockResolvedValueOnce(null)
-    mockFindFirstUser.mockResolvedValueOnce({
-      id: 1,
-      username: 'testuser',
-      passwordHash: '$2b$10$hash',
-      discordProfile: null,
-    })
-    mockBcryptCompare.mockResolvedValueOnce(true)
 
-    const mockValues = vi.fn().mockRejectedValue(new Error('Database error'))
+    const mockValues = vi.fn().mockResolvedValue(undefined)
     mockInsert.mockReturnValue({ values: mockValues })
 
-    // Spy on console.error
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    const { interaction, replyFn } = createMockInteraction({
-      stringOptions: {
-        username: 'testuser',
-        password: 'correctpassword',
-      },
-    })
+    const { interaction, replyFn } = createMockInteraction({})
 
     await link.execute(interaction as never)
 
-    expect(replyFn).toHaveBeenCalledWith({
-      content: expect.stringContaining('error occurred'),
-      flags: 64, // Ephemeral
-    })
-
-    consoleSpy.mockRestore()
+    // Check embed includes expiration field
+    expect(replyFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        embeds: expect.arrayContaining([
+          expect.objectContaining({
+            data: expect.objectContaining({
+              fields: expect.arrayContaining([
+                expect.objectContaining({
+                  name: 'Expires',
+                }),
+              ]),
+            }),
+          }),
+        ]),
+      })
+    )
   })
 })

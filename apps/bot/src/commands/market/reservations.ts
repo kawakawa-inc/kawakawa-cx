@@ -31,6 +31,7 @@ import {
 import { getOrderDisplayPrice } from '@kawakawa/services/market'
 import { requireLinkedUser } from '../../utils/auth.js'
 import { COMPONENT_TIMEOUT } from '../../utils/interactions.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 const RESERVATIONS_PER_PAGE = 5
 
@@ -63,6 +64,8 @@ export const reservations: Command = {
     ) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
     const statusFilter =
       (interaction.options.getString('status') as ReservationStatus | 'all' | null) || 'all'
     const replyOption = interaction.options.getString('reply') as MessageVisibility | null
@@ -92,7 +95,7 @@ export const reservations: Command = {
     if (allReservations.length === 0) {
       const statusText = statusFilter === 'all' ? '' : ` with status "${statusFilter}"`
       await interaction.reply({
-        content: `📭 No reservations found${statusText}.\n\nUse \`/reserve\` to reserve from a sell order or \`/fill\` to offer to fill a buy order.`,
+        content: `📭 No reservations found${statusText}.\n\nReservations are created automatically when invoices are submitted.`,
         flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
       })
       return
@@ -105,7 +108,8 @@ export const reservations: Command = {
       userId,
       displaySettings.locationDisplayMode,
       statusFilter,
-      isEphemeral
+      isEphemeral,
+      prefix
     )
   },
 }
@@ -119,7 +123,8 @@ async function sendReservationsWithPagination(
   userId: number,
   locationDisplayMode: string,
   statusFilter: ReservationStatus | 'all',
-  isEphemeral: boolean
+  isEphemeral: boolean,
+  prefix: string
 ): Promise<void> {
   const idPrefix = `reservations:${Date.now()}`
   let currentPage = 0
@@ -310,7 +315,8 @@ async function sendReservationsWithPagination(
                   selectedReservation,
                   userId,
                   locationDisplayMode,
-                  interaction
+                  interaction,
+                  prefix
                 )
               }
             } catch {
@@ -347,7 +353,8 @@ async function showReservationActions(
   reservation: ReservationWithDetails,
   userId: number,
   locationDisplayMode: string,
-  originalInteraction: ChatInputCommandInteraction
+  originalInteraction: ChatInputCommandInteraction,
+  prefix: string
 ): Promise<void> {
   const isOwner = reservation.ownerId === userId
   const location = await formatLocation(
@@ -441,7 +448,8 @@ async function showReservationActions(
         reservation.id,
         userId,
         action as ReservationStatus,
-        isOwner
+        isOwner,
+        prefix
       )
     }
   } catch {
@@ -529,7 +537,8 @@ async function handleReservationAction(
   reservationId: number,
   userId: number,
   newStatus: ReservationStatus,
-  isOwner: boolean
+  isOwner: boolean,
+  prefix: string
 ): Promise<void> {
   const result = await updateReservationStatus(reservationId, userId, newStatus, isOwner)
 
@@ -546,7 +555,7 @@ async function handleReservationAction(
   const statusText = newStatus.charAt(0).toUpperCase() + newStatus.slice(1)
 
   await btnInteraction.update({
-    content: `${statusEmoji} Reservation updated to **${statusText}**.\n\nRun \`/reservations\` to see the updated list.`,
+    content: `${statusEmoji} Reservation updated to **${statusText}**.\n\nRun \`${prefix}reservations\` to see the updated list.`,
     embeds: [],
     components: [],
   })

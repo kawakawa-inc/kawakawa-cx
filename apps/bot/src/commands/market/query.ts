@@ -31,7 +31,9 @@ import {
   type MultiResolvedFilters,
 } from '../../services/orderFormatter.js'
 import { createSingleInputModal } from '../../utils/modals.js'
+import { startInvoiceCreationFlow, type OrderForInvoice } from '../../services/invoiceBuilder.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 const ORDERS_PER_PAGE = 10
 
@@ -147,6 +149,14 @@ export const query: Command = {
     ) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
+    // Get current user's ID (if linked) for filtering own orders from invoices
+    const currentUserProfile = await db.query.userDiscordProfiles.findFirst({
+      where: eq(userDiscordProfiles.discordId, interaction.user.id),
+    })
+    const currentUserId = currentUserProfile?.userId ?? null
+
     const queryInput = interaction.options.getString('query')
     let orderType: 'all' | 'sell' | 'buy' =
       (interaction.options.getString('type') as 'all' | 'sell' | 'buy' | null) || 'sell'
@@ -236,6 +246,13 @@ export const query: Command = {
     } else if (queryInput) {
       // Use the unified parser to parse quantities and resolve tokens
       const parsed = await parseTokens(queryInput, botResolvers)
+
+      // Extract order type from action keywords (unless already forced by XIT)
+      if (parsed.actions.has('buy')) {
+        orderType = 'buy'
+      } else if (parsed.actions.has('sell')) {
+        orderType = 'sell'
+      }
 
       // Collect commodities with quantities
       for (const item of parsed.items) {
@@ -573,7 +590,7 @@ export const query: Command = {
                   `✅ List **${listName}** saved!\n\n` +
                   `• ${itemCount} item${itemCount !== 1 ? 's' : ''}\n` +
                   `• ${totalQty.toLocaleString()} total units\n\n` +
-                  `Use \`/lists\` to view and manage your lists.`,
+                  `Use \`${prefix}lists\` to view and manage your lists.`,
                 flags: MessageFlags.Ephemeral,
               })
 
@@ -599,6 +616,73 @@ export const query: Command = {
           }
         },
       })
+    }
+
+    // Add "Create Invoice" button if there are sell orders AND quantities specified
+    // (quantities are required to know how much to invoice for)
+    // Filter out current user's own orders - you can't create an invoice for your own orders
+    if (sellOrdersData.length > 0 && xitQuantities && Object.keys(xitQuantities).length > 0) {
+      // Prepare orders for invoice builder with requested quantities, excluding own orders
+      const ordersForInvoice: OrderForInvoice[] = sellOrdersData
+        .filter(order => !currentUserId || order.userId !== currentUserId)
+        .map(order => ({
+          id: order.id,
+          userId: order.userId,
+          commodityTicker: order.commodityTicker,
+          locationId: order.locationId, // naturalId like "BEN"
+          price: parseFloat(order.price),
+          currency: order.currency,
+          priceListCode: order.priceListCode,
+          user: {
+            id: order.userId,
+            displayName: order.user.displayName,
+            username: order.user.username,
+          },
+          location: {
+            naturalId: order.location.naturalId,
+            name: order.location.name,
+          },
+          commodity: {
+            ticker: order.commodity.ticker,
+            name: order.commodity.name,
+          },
+          // Use requested quantity from xitQuantities, fallback to available
+          availableQuantity:
+            xitQuantities![order.commodityTicker] ??
+            sellQuantities.get(order.id)?.availableQuantity,
+        }))
+
+      // Only show "Create Invoice" button if there are orders from other users
+      if (ordersForInvoice.length > 0) {
+        extraButtons.push({
+          id: 'create-invoice',
+          label: 'Create Invoice',
+          emoji: '🧾',
+          onClick: async (buttonInteraction: ButtonInteraction) => {
+            // Check if user is linked
+            const profile = await db.query.userDiscordProfiles.findFirst({
+              where: eq(userDiscordProfiles.discordId, buttonInteraction.user.id),
+              with: { user: true },
+            })
+
+            if (!profile) {
+              await buttonInteraction.reply({
+                content: UNLINKED_ACCOUNT_MESSAGE,
+                flags: MessageFlags.Ephemeral,
+              })
+              return
+            }
+
+            // Start the invoice creation flow
+            await startInvoiceCreationFlow(
+              buttonInteraction,
+              ordersForInvoice,
+              profile.user.id,
+              displaySettings.locationDisplayMode
+            )
+          },
+        })
+      }
     }
 
     // Send paginated response after announcement is delivered

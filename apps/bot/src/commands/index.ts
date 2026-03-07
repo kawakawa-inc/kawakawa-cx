@@ -9,9 +9,8 @@ import { unlink } from './auth/unlink.js'
 import { password } from './auth/password.js'
 // Market commands
 import { orders } from './market/orders.js'
+import { order } from './market/order.js'
 import { query } from './market/query.js'
-import { reserve } from './market/reserve.js'
-import { fill } from './market/fill.js'
 import { reservations } from './market/reservations.js'
 import { invoicesCommand } from './market/invoices.js'
 import { close } from './market/close.js'
@@ -43,9 +42,8 @@ export const commands: Command[] = [
   password,
   // Market
   orders,
+  order,
   query,
-  reserve,
-  fill,
   reservations,
   invoicesCommand,
   close,

@@ -2,6 +2,9 @@
 .claude/
 .claude.json
 
+# Dev process manager (PIDs, logs, FIFOs)
+.dev/
+
 # Dependencies
 node_modules/
 .pnpm-store/

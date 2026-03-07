@@ -7,6 +7,7 @@ import {
   tokenize,
   parseLimitModifier,
   extractExplicitValue,
+  extractDiscordId,
   isCommaSeparatedList,
   splitCommaSeparatedList,
 } from './tokenizer.js'
@@ -114,6 +115,41 @@ describe('tokenize', () => {
       expect(result.tokens[1].type).toBe('explicit_commodity')
       expect(result.tokens[2].type).toBe('explicit_location')
     })
+
+    it('should classify @username as explicit_user', () => {
+      const result = tokenize('@bob')
+      expect(result.tokens).toHaveLength(1)
+      expect(result.tokens[0].type).toBe('explicit_user')
+      expect(result.tokens[0].value).toBe('@bob')
+    })
+
+    it('should classify @username in mixed input', () => {
+      const result = tokenize('50 COF BEN @alice')
+      expect(result.tokens).toHaveLength(4)
+      expect(result.tokens[3].type).toBe('explicit_user')
+    })
+  })
+
+  describe('discord mentions', () => {
+    it('should classify <@123456> as discord_mention', () => {
+      const result = tokenize('<@123456789>')
+      expect(result.tokens).toHaveLength(1)
+      expect(result.tokens[0].type).toBe('discord_mention')
+      expect(result.tokens[0].value).toBe('<@123456789>')
+    })
+
+    it('should classify <@!123456> (nick mention) as discord_mention', () => {
+      const result = tokenize('<@!123456789>')
+      expect(result.tokens).toHaveLength(1)
+      expect(result.tokens[0].type).toBe('discord_mention')
+    })
+
+    it('should classify discord mention in mixed input', () => {
+      const result = tokenize('50 COF BEN <@986673430931841024>')
+      expect(result.tokens).toHaveLength(4)
+      expect(result.tokens[0].type).toBe('number')
+      expect(result.tokens[3].type).toBe('discord_mention')
+    })
   })
 
   describe('comma-separated lists', () => {
@@ -215,6 +251,16 @@ describe('extractExplicitValue', () => {
     expect(extractExplicitValue('USER:Alice', 'user')).toBe('Alice')
   })
 
+  it('should extract @username shorthand', () => {
+    expect(extractExplicitValue('@bob', 'user')).toBe('bob')
+    expect(extractExplicitValue('@Alice_123', 'user')).toBe('Alice_123')
+  })
+
+  it('should not extract @username for non-user prefix', () => {
+    expect(extractExplicitValue('@bob', 'commodity')).toBeNull()
+    expect(extractExplicitValue('@bob', 'location')).toBeNull()
+  })
+
   it('should extract commodity prefix value', () => {
     expect(extractExplicitValue('commodity:COF', 'commodity')).toBe('COF')
     expect(extractExplicitValue('COMMODITY:rat', 'commodity')).toBe('rat')
@@ -228,6 +274,22 @@ describe('extractExplicitValue', () => {
   it('should return null for non-matching prefix', () => {
     expect(extractExplicitValue('user:bob', 'commodity')).toBeNull()
     expect(extractExplicitValue('invalid', 'user')).toBeNull()
+  })
+})
+
+describe('extractDiscordId', () => {
+  it('should extract ID from standard mention', () => {
+    expect(extractDiscordId('<@123456789>')).toBe('123456789')
+  })
+
+  it('should extract ID from nick mention', () => {
+    expect(extractDiscordId('<@!123456789>')).toBe('123456789')
+  })
+
+  it('should return null for non-mention strings', () => {
+    expect(extractDiscordId('@bob')).toBeNull()
+    expect(extractDiscordId('123456789')).toBeNull()
+    expect(extractDiscordId('user:bob')).toBeNull()
   })
 })
 

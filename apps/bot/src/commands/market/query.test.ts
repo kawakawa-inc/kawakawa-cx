@@ -24,6 +24,7 @@ const {
     sellOrders: { findMany: vi.fn() },
     buyOrders: { findMany: vi.fn() },
     fioLocations: { findMany: vi.fn() },
+    userDiscordProfiles: { findFirst: vi.fn() },
   },
   mockSendPaginatedResponseWithExtraButtons: vi.fn(),
   mockEnrichSellOrdersWithQuantities: vi.fn(),
@@ -178,6 +179,8 @@ describe('query command', () => {
     })
     // Default mock for fioLocations (used by parseXitOrigin)
     mockDbQuery.fioLocations.findMany.mockResolvedValue([])
+    // Default mock for userDiscordProfiles (returns no linked user)
+    mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValue(null)
   })
 
   it('has correct command metadata', () => {

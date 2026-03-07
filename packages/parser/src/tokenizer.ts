@@ -30,7 +30,7 @@ const SEPARATOR_PATTERN = /\s+/
 /**
  * Action keywords recognized by the parser.
  */
-const ACTION_KEYWORDS = new Set(['send', 'close', 'submit', 'done', 'finish'])
+const ACTION_KEYWORDS = new Set(['send', 'close', 'submit', 'done', 'finish', 'buy', 'sell'])
 
 /**
  * Limit modifier patterns.
@@ -46,6 +46,16 @@ const EXPLICIT_PREFIXES = {
   commodity: /^commodity:(.+)$/i,
   location: /^location:(.+)$/i,
 }
+
+/**
+ * @username shorthand pattern for user mentions.
+ */
+const AT_USER_PATTERN = /^@([A-Za-z0-9_]+)$/
+
+/**
+ * Discord mention pattern: <@123456> or <@!123456> (nick mention).
+ */
+const DISCORD_MENTION_PATTERN = /^<@!?(\d+)>$/
 
 /**
  * Check if a string is purely numeric.
@@ -125,8 +135,13 @@ function classifyToken(value: string): RawTokenType {
     return 'limit'
   }
 
-  // Explicit prefixes
-  if (EXPLICIT_PREFIXES.user.test(value)) {
+  // Discord mentions: <@123456> or <@!123456>
+  if (DISCORD_MENTION_PATTERN.test(value)) {
+    return 'discord_mention'
+  }
+
+  // Explicit prefixes and @username shorthand
+  if (EXPLICIT_PREFIXES.user.test(value) || AT_USER_PATTERN.test(value)) {
     return 'explicit_user'
   }
   if (EXPLICIT_PREFIXES.commodity.test(value)) {
@@ -226,6 +241,22 @@ export function extractExplicitValue(
   const pattern = EXPLICIT_PREFIXES[prefix]
   const match = value.match(pattern)
 
+  if (match) return match[1]
+
+  // Also handle @username shorthand for user prefix
+  if (prefix === 'user') {
+    const atMatch = value.match(AT_USER_PATTERN)
+    if (atMatch) return atMatch[1]
+  }
+
+  return null
+}
+
+/**
+ * Extract a Discord ID from a mention token (<@123456> or <@!123456>).
+ */
+export function extractDiscordId(value: string): string | null {
+  const match = value.match(DISCORD_MENTION_PATTERN)
   return match ? match[1] : null
 }
 

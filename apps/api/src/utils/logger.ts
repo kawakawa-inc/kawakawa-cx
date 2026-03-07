@@ -90,7 +90,7 @@ export function redactObject(
  * Pino configuration with PII redaction
  */
 const baseConfig: pino.LoggerOptions = {
-  level: process.env.LOG_LEVEL || 'info',
+  level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
   formatters: {
     level: label => ({ level: label }),
     log: obj => redactObject(obj) as Record<string, unknown>,

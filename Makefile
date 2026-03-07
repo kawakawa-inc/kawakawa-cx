@@ -1,6 +1,6 @@
 # Kawakawa CX - Development Commands
 
-.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev dev-bot bot-deploy
+.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web dev-bot bot-deploy start stop restart reload status
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -106,8 +106,49 @@ kill-dev: ## Kill all running dev servers (tsx, vite, turbo)
 	@-pkill -f "turbo run dev" 2>/dev/null || true
 	@echo "Done. Any zombie processes will be cleaned up when VSCode restarts."
 
+kill-bot: ## Kill all running bot processes
+	@echo "Killing bot processes..."
+	@-pkill -f "@kawakawa/bot" 2>/dev/null || true
+	@-pkill -f "apps/bot.*tsx" 2>/dev/null || true
+	@-pkill -f "pnpm.*bot dev" 2>/dev/null || true
+	@sleep 1
+	@echo "Done."
+
+kill-api: ## Kill all running API processes
+	@echo "Killing API processes..."
+	@-pkill -f "@kawakawa/api" 2>/dev/null || true
+	@-pkill -f "apps/api.*tsx" 2>/dev/null || true
+	@-pkill -f "pnpm.*api dev" 2>/dev/null || true
+	@sleep 1
+	@echo "Done."
+
+kill-web: ## Kill all running web processes
+	@echo "Killing web processes..."
+	@-pkill -f "@kawakawa/web" 2>/dev/null || true
+	@-pkill -f "vite" 2>/dev/null || true
+	@-pkill -f "pnpm.*web dev" 2>/dev/null || true
+	@sleep 1
+	@echo "Done."
+
 dev-bot: ## Start Discord bot dev server with hot reload
 	pnpm --filter @kawakawa/bot dev
 
 bot-deploy: ## Deploy slash commands to Discord
 	pnpm --filter @kawakawa/bot deploy-commands
+
+# Process manager commands (wraps scripts/dev.sh)
+start: ## Start dev service(s) in background (usage: make start S=bot)
+	@./scripts/dev.sh start $(or $(S),all)
+
+stop: ## Stop dev service(s) (usage: make stop S=bot)
+	@./scripts/dev.sh stop $(or $(S),all)
+
+restart: ## Restart dev service(s) (usage: make restart S=bot)
+	@./scripts/dev.sh restart $(or $(S),all)
+
+reload: ## Hot-reload a dev service via tsx stdin (usage: make reload S=bot)
+	@if [ -z "$(S)" ]; then echo "Usage: make reload S=<service>"; exit 1; fi
+	@./scripts/dev.sh reload $(S)
+
+status: ## Show status of dev services
+	@./scripts/dev.sh status

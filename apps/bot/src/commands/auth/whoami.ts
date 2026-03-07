@@ -3,6 +3,7 @@ import type { ChatInputCommandInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import { db, userDiscordProfiles, userRoles, roles } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const whoami: Command = {
   data: new SlashCommandBuilder()
@@ -10,6 +11,7 @@ export const whoami: Command = {
     .setDescription('Show your linked Kawakawa account information'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id
 
     // Find user by Discord ID
@@ -24,7 +26,7 @@ export const whoami: Command = {
       await interaction.reply({
         content:
           'You do not have a linked Kawakawa account.\n\n' +
-          'Use `/register` to create a new account, or `/link` to connect an existing one.',
+          `Use \`${prefix}register\` to create a new account, or \`${prefix}link\` to connect an existing one.`,
         flags: MessageFlags.Ephemeral,
       })
       return

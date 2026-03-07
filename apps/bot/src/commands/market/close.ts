@@ -14,8 +14,11 @@ import {
   getInvoiceWithDetails,
   submitInvoice,
   findUserByName,
+  formatLineItemsForEmbed,
 } from '../../services/invoiceService.js'
+import { getDisplaySettings } from '../../services/userSettings.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const close: Command = {
   data: new SlashCommandBuilder()
@@ -25,25 +28,49 @@ export const close: Command = {
       option
         .setName('target')
         .setDescription('Invoice ID (e.g., "1") or partner username (e.g., "bob")')
-        .setRequired(true)
+        .setRequired(false)
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    // Get command prefix (/ or ! or custom)
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
     const { userId } = result
 
-    const target = interaction.options.getString('target', true).trim()
+    const target = interaction.options.getString('target')?.trim()
+    logger.debug({ cmd: 'close', target, userId }, 'close: invoked')
 
     // Get user's draft invoices
     const drafts = await getDraftInvoices(userId)
+
+    logger.debug({ cmd: 'close', draftCount: drafts.length, drafts: drafts.map(d => ({ id: d.id, counterparty: d.counterpartyName, items: d.itemCount })) }, 'close: found drafts')
 
     if (drafts.length === 0) {
       await interaction.reply({
         content:
           '❌ You have no draft invoices to submit.\n\n' +
-          'Use `/buy` or `/sell` with a username to create an invoice first.',
+          `Use \`${prefix}buy\` or \`${prefix}sell\` with a username to create an invoice first.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    // If no target specified, show list of draft invoices
+    if (!target) {
+      const invoiceList = drafts
+        .map(
+          inv =>
+            `• **#${inv.id}**: ${inv.counterpartyName} - ${inv.itemCount} item${inv.itemCount === 1 ? '' : 's'}, ${inv.totalsByCurrency.map(t => `${t.total.toFixed(2)} ${t.currency}`).join(', ')}`
+        )
+        .join('\n')
+
+      await interaction.reply({
+        content:
+          `📋 **What do you wish to close?**\n\nYou have ${drafts.length} draft invoice${drafts.length === 1 ? '' : 's'}:\n\n${invoiceList}\n\n` +
+          `Use \`${prefix}close <id>\` or \`${prefix}close <username>\` to submit an invoice.`,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -60,7 +87,7 @@ export const close: Command = {
         invoiceId = matchingInvoice.id
       } else {
         await interaction.reply({
-          content: `❌ Invoice #${numericId} not found in your drafts.\n\nUse \`/invoices\` to see your draft invoices.`,
+          content: `❌ Invoice #${numericId} not found in your drafts.\n\nUse \`${prefix}invoices\` to see your draft invoices.`,
           flags: MessageFlags.Ephemeral,
         })
         return
@@ -75,7 +102,7 @@ export const close: Command = {
 
         if (matchingInvoices.length === 0) {
           await interaction.reply({
-            content: `❌ No draft invoice found with **${user.fioUsername ?? user.displayName ?? user.username}**.\n\nUse \`/invoices\` to see your draft invoices.`,
+            content: `❌ No draft invoice found with **${user.fioUsername ?? user.displayName ?? user.username}**.\n\nUse \`${prefix}invoices\` to see your draft invoices.`,
             flags: MessageFlags.Ephemeral,
           })
           return
@@ -95,7 +122,7 @@ export const close: Command = {
           await interaction.reply({
             content:
               `⚠️ You have multiple invoices with **${user.fioUsername ?? user.displayName ?? user.username}**:\n\n${invoiceList}\n\n` +
-              `Please use \`/close <id>\` to specify which one.`,
+              `Please use \`${prefix}close <id>\` to specify which one.`,
             flags: MessageFlags.Ephemeral,
           })
           return
@@ -116,13 +143,13 @@ export const close: Command = {
           await interaction.reply({
             content:
               `⚠️ You have multiple invoices with **${target}**:\n\n${invoiceList}\n\n` +
-              `Please use \`/close <id>\` to specify which one.`,
+              `Please use \`${prefix}close <id>\` to specify which one.`,
             flags: MessageFlags.Ephemeral,
           })
           return
         } else {
           await interaction.reply({
-            content: `❌ Could not find user or invoice matching "${target}".\n\nUse \`/invoices\` to see your draft invoices.`,
+            content: `❌ Could not find user or invoice matching "${target}".\n\nUse \`${prefix}invoices\` to see your draft invoices.`,
             flags: MessageFlags.Ephemeral,
           })
           return
@@ -143,7 +170,7 @@ export const close: Command = {
 
     if (invoice.lineItems.length === 0) {
       await interaction.reply({
-        content: `❌ Invoice #${invoiceId} has no items. Add items first using \`/buy\` or \`/sell\`.`,
+        content: `❌ Invoice #${invoiceId} has no items. Add items first using \`${prefix}buy\` or \`${prefix}sell\`.`,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -160,17 +187,26 @@ export const close: Command = {
       return
     }
 
-    // Build success response
+    // Get display settings for location formatting
+    const displaySettings = await getDisplaySettings(interaction.user.id)
+
+    // Build success response with line item details
     const totalsStr =
       invoice.totalsByCurrency.length > 0
         ? invoice.totalsByCurrency.map(t => `${t.total.toFixed(2)} ${t.currency}`).join(', ')
         : 'N/A'
 
+    // Format line items (includes notes)
+    const lineItemLines = await formatLineItemsForEmbed(
+      invoice.lineItems,
+      displaySettings.locationDisplayMode
+    )
+
     let response = `🎉 **Invoice #${invoiceId} submitted!**\n\n`
     response += `Created **${submitResult.reservationCount}** reservation${submitResult.reservationCount === 1 ? '' : 's'} for **${invoice.counterpartyName}** to confirm.\n\n`
-    response += `📋 Summary:\n`
-    response += `• Items: ${invoice.lineItems.length}\n`
-    response += `• Total: ${totalsStr}\n`
+    response += `📋 **Items:**\n`
+    response += lineItemLines.join('\n') + '\n\n'
+    response += `**Total: ${totalsStr}**`
 
     await interaction.reply({
       content: response,

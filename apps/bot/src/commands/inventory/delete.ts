@@ -25,6 +25,7 @@ import { requireLinkedUser } from '../../utils/auth.js'
 import { parseTokens } from '@kawakawa/parser'
 import { botResolvers } from '../../utils/resolvers.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 interface OrderToDelete {
   id: number
@@ -82,6 +83,9 @@ export const deleteCommand: Command = {
   },
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    // Get command prefix (/ or ! or custom)
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
@@ -110,7 +114,7 @@ export const deleteCommand: Command = {
           : 'Please specify at least one commodity ticker.'
 
       await interaction.reply({
-        content: `❌ ${errorMsg}\n\nExample: \`/delete COF,CAF Katoa\``,
+        content: `❌ ${errorMsg}\n\nExample: \`${prefix}delete COF,CAF Katoa\``,
         flags: MessageFlags.Ephemeral,
       })
       return
@@ -136,7 +140,7 @@ export const deleteCommand: Command = {
       await interaction.reply({
         content:
           '❌ Please specify a location for safety.\n\n' +
-          'Example: `/delete COF Katoa` or use the `location` option.',
+          `Example: \`${prefix}delete COF Katoa\` or use the \`location\` option.`,
         flags: MessageFlags.Ephemeral,
       })
       return

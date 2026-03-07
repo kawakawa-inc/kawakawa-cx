@@ -78,28 +78,37 @@ interface HandleInvoiceCommandOptions {
 export async function handleInvoiceCommand(
   options: HandleInvoiceCommandOptions
 ): Promise<InvoiceCommandResult> {
-  const { interaction, userId, input, direction, locationDisplayMode, commodityDisplayMode } = options
+  const { interaction, userId, input, direction, locationDisplayMode, commodityDisplayMode } =
+    options
 
   // Get command prefix for tips
   const prefix = getCommandPrefix(interaction)
 
   // Parse input with unified parser
   const parsed = await parseTokens(input, botResolvers)
-  logger.debug({
-    handler: 'invoice',
-    direction,
-    input,
-    parsedUser: parsed.user ? { username: parsed.user.username, userId: parsed.user.userId } : null,
-    currentUserId: userId,
-    items: parsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
-    location: parsed.location?.naturalId ?? null,
-    unresolved: parsed.unresolved,
-    parseErrors: parsed.errors,
-  }, 'invoiceHandler: parsed input')
+  logger.debug(
+    {
+      handler: 'invoice',
+      direction,
+      input,
+      parsedUser: parsed.user
+        ? { username: parsed.user.username, userId: parsed.user.userId }
+        : null,
+      currentUserId: userId,
+      items: parsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
+      location: parsed.location?.naturalId ?? null,
+      unresolved: parsed.unresolved,
+      parseErrors: parsed.errors,
+    },
+    'invoiceHandler: parsed input'
+  )
 
   // Block self-invoicing
   if (parsed.user && parsed.user.userId === userId) {
-    logger.debug({ handler: 'invoice', direction, outcome: 'self-invoice blocked' }, 'invoiceHandler: self-invoice blocked')
+    logger.debug(
+      { handler: 'invoice', direction, outcome: 'self-invoice blocked' },
+      'invoiceHandler: self-invoice blocked'
+    )
     await interaction.reply({
       content: `❌ You can't ${direction} from yourself. Use \`${prefix}orders\` to manage your own orders.`,
       flags: MessageFlags.Ephemeral,
@@ -109,9 +118,8 @@ export async function handleInvoiceCommand(
 
   // Custom validation for invoice mode - allows missing quantities (we'll prompt)
   const missingFields: string[] = []
-  const unresolvedHint = parsed.unresolved.length > 0
-    ? ` (unrecognized: ${parsed.unresolved.join(', ')})`
-    : ''
+  const unresolvedHint =
+    parsed.unresolved.length > 0 ? ` (unrecognized: ${parsed.unresolved.join(', ')})` : ''
 
   if (parsed.items.length === 0) {
     missingFields.push(`At least one commodity is required${unresolvedHint}`)
@@ -129,11 +137,22 @@ export async function handleInvoiceCommand(
   }
 
   // Check for items without quantities - we'll prompt for these
-  const itemsWithoutQuantity = parsed.items.filter(item => item.quantity === null || item.quantity <= 0)
+  const itemsWithoutQuantity = parsed.items.filter(
+    item => item.quantity === null || item.quantity <= 0
+  )
 
   // If critical fields are missing (commodity, location, or user), show error
   if (missingFields.length > 0) {
-    logger.debug({ handler: 'invoice', direction, outcome: 'incomplete', missingFields, unresolved: parsed.unresolved }, 'invoiceHandler: missing fields')
+    logger.debug(
+      {
+        handler: 'invoice',
+        direction,
+        outcome: 'incomplete',
+        missingFields,
+        unresolved: parsed.unresolved,
+      },
+      'invoiceHandler: missing fields'
+    )
     const parsedCommodities =
       parsed.items.length > 0 ? parsed.items.map(i => i.commodity.ticker) : undefined
 
@@ -224,16 +243,25 @@ export async function handleInvoiceCommand(
 
             // Reconstruct a corrected input string and re-parse
             const userStr = parsed.user?.username ?? ''
-            const correctedInput = `${quantitiesStr.replace(/:/g, ' ')} ${locationStr ?? ''} ${userStr}`.trim()
-            logger.debug({ handler: 'invoice', direction, correctedInput }, 'invoiceHandler: re-running with modal input')
+            const correctedInput =
+              `${quantitiesStr.replace(/:/g, ' ')} ${locationStr ?? ''} ${userStr}`.trim()
+            logger.debug(
+              { handler: 'invoice', direction, correctedInput },
+              'invoiceHandler: re-running with modal input'
+            )
 
             const reparsed = await parseTokens(correctedInput, botResolvers)
-            logger.debug({
-              handler: 'invoice', direction, correctedInput,
-              location: reparsed.location?.naturalId ?? null,
-              items: reparsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
-              unresolved: reparsed.unresolved,
-            }, 'invoiceHandler: re-parsed modal input')
+            logger.debug(
+              {
+                handler: 'invoice',
+                direction,
+                correctedInput,
+                location: reparsed.location?.naturalId ?? null,
+                items: reparsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
+                unresolved: reparsed.unresolved,
+              },
+              'invoiceHandler: re-parsed modal input'
+            )
 
             // Preserve user from original parse (modal doesn't have a user field)
             if (!reparsed.user && parsed.user) {
@@ -244,7 +272,9 @@ export async function handleInvoiceCommand(
             const stillMissing: string[] = []
             if (reparsed.items.length === 0) stillMissing.push('commodity')
             if (!reparsed.location) {
-              stillMissing.push(locationStr ? `location ("${locationStr}" not recognized)` : 'location')
+              stillMissing.push(
+                locationStr ? `location ("${locationStr}" not recognized)` : 'location'
+              )
             }
             if (!reparsed.user) stillMissing.push('user')
 
@@ -262,13 +292,19 @@ export async function handleInvoiceCommand(
             dialogCollector.stop()
 
             const result = await executeInvoiceFlow({
-              interaction, userId, parsed: reparsed, direction,
-              locationDisplayMode, commodityDisplayMode, prefix,
+              interaction,
+              userId,
+              parsed: reparsed,
+              direction,
+              prefix,
               useEditReply: true,
             })
 
             // Result is handled inside executeInvoiceFlow
-            logger.debug({ handler: 'invoice', direction, result: { success: result.success } }, 'invoiceHandler: modal flow complete')
+            logger.debug(
+              { handler: 'invoice', direction, result: { success: result.success } },
+              'invoiceHandler: modal flow complete'
+            )
           } catch {
             // Modal timed out or was dismissed
           }
@@ -298,7 +334,15 @@ export async function handleInvoiceCommand(
 
   // If quantities are missing, prompt for them with a modal
   if (itemsWithoutQuantity.length > 0) {
-    logger.debug({ handler: 'invoice', direction, outcome: 'quantity-prompt', items: itemsWithoutQuantity.map(i => i.commodity.ticker) }, 'invoiceHandler: prompting for quantities')
+    logger.debug(
+      {
+        handler: 'invoice',
+        direction,
+        outcome: 'quantity-prompt',
+        items: itemsWithoutQuantity.map(i => i.commodity.ticker),
+      },
+      'invoiceHandler: prompting for quantities'
+    )
     return await handleQuantityPrompt(
       interaction,
       userId,
@@ -319,7 +363,17 @@ export async function handleInvoiceCommand(
   const counterparty = parsed.user!
   const locationId = parsed.location!.naturalId
   const willSubmit = parsed.actions.has('send')
-  logger.debug({ handler: 'invoice', direction, outcome: 'main-flow', counterparty: counterparty.username, locationId, willSubmit }, 'invoiceHandler: entering main flow')
+  logger.debug(
+    {
+      handler: 'invoice',
+      direction,
+      outcome: 'main-flow',
+      counterparty: counterparty.username,
+      locationId,
+      willSubmit,
+    },
+    'invoiceHandler: entering main flow'
+  )
 
   // Get or create invoice with counterparty
   const { id: invoiceId, isNew: isNewInvoice } = await getOrCreateInvoice(
@@ -665,8 +719,6 @@ interface ExecuteInvoiceFlowOptions {
   userId: number
   parsed: ParseResult
   direction: OrderDirection
-  locationDisplayMode: LocationDisplayMode
-  commodityDisplayMode: CommodityDisplayMode
   prefix: string
   /** If true, use editReply instead of reply (when we already replied with the incomplete embed) */
   useEditReply?: boolean
@@ -676,15 +728,20 @@ interface ExecuteInvoiceFlowOptions {
  * Execute the invoice flow directly (skip confirmation).
  * Used when the user has already confirmed via a dialog modal.
  */
-async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<InvoiceCommandResult> {
-  const { interaction, userId, parsed, direction, locationDisplayMode, prefix, useEditReply } = options
+async function executeInvoiceFlow(
+  options: ExecuteInvoiceFlowOptions
+): Promise<InvoiceCommandResult> {
+  const { interaction, userId, parsed, direction, prefix, useEditReply } = options
 
   const counterparty = parsed.user!
   const locationId = parsed.location!.naturalId
   const willSubmit = parsed.actions.has('send')
 
   // Get or create invoice
-  const { id: invoiceId, isNew: isNewInvoice } = await getOrCreateInvoice(userId, counterparty.userId)
+  const { id: invoiceId, isNew: isNewInvoice } = await getOrCreateInvoice(
+    userId,
+    counterparty.userId
+  )
 
   const parsedItems = parsed.items.map(item => ({
     ticker: item.commodity.ticker,
@@ -698,7 +755,16 @@ async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<I
     if (existing.length > 0) {
       // Update existing line item quantity directly
       await updateLineItemQuantity(existing[0].id, item.quantity)
-      logger.info({ userId, invoiceId, ticker: item.ticker, oldQty: existing[0].quantity, newQty: item.quantity }, 'Updated duplicate line item via dialog')
+      logger.info(
+        {
+          userId,
+          invoiceId,
+          ticker: item.ticker,
+          oldQty: existing[0].quantity,
+          newQty: item.quantity,
+        },
+        'Updated duplicate line item via dialog'
+      )
     }
   }
 
@@ -706,11 +772,7 @@ async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<I
   const matchResult = await findMatchingOrders({
     counterpartyUserId: counterparty.userId,
     locationId,
-    parsedItems: parsedItems.filter(item => {
-      // Only match items that weren't duplicates (already updated above)
-      // Re-check is fine since findExistingLineItems is cheap
-      return true // We'll add all — addLineItems handles the rest
-    }),
+    parsedItems,
     direction,
   })
 
@@ -722,7 +784,9 @@ async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<I
       const existing = await findExistingLineItems(invoiceId, item.ticker, locationId)
       if (existing.length > 0) existingTickers.add(item.ticker)
     }
-    const newLineItems = matchResult.lineItems.filter(li => !existingTickers.has(li.commodityTicker))
+    const newLineItems = matchResult.lineItems.filter(
+      li => !existingTickers.has(li.commodityTicker)
+    )
     if (newLineItems.length > 0) {
       await addLineItems(invoiceId, newLineItems)
     }
@@ -740,7 +804,8 @@ async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<I
   }
 
   // Build success message
-  const counterpartyName = counterparty.fioUsername ?? counterparty.displayName ?? counterparty.username
+  const counterpartyName =
+    counterparty.fioUsername ?? counterparty.displayName ?? counterparty.username
   const tips = buildInvoiceTips(counterpartyName, invoiceId, prefix, submitted)
 
   let content = tips
@@ -754,16 +819,27 @@ async function executeInvoiceFlow(options: ExecuteInvoiceFlowOptions): Promise<I
 
   await sendFn()
 
-  logger.info({
-    userId, counterpartyUserId: counterparty.userId, invoiceId, direction,
-    itemsAdded: matchResult.matchedItems.length, submitted, source: 'dialog',
-  }, `Invoice created via dialog (${direction})`)
+  logger.info(
+    {
+      userId,
+      counterpartyUserId: counterparty.userId,
+      invoiceId,
+      direction,
+      itemsAdded: matchResult.matchedItems.length,
+      submitted,
+      source: 'dialog',
+    },
+    `Invoice created via dialog (${direction})`
+  )
 
   return {
-    success: true, invoiceId, isNewInvoice,
+    success: true,
+    invoiceId,
+    isNewInvoice,
     addedItems: matchResult.matchedItems,
     notFoundItems: matchResult.notFoundItems,
-    submitted, reservationCount,
+    submitted,
+    reservationCount,
   }
 }
 
@@ -904,12 +980,15 @@ async function handleQuantityPrompt(
   commodityDisplayMode: CommodityDisplayMode,
   prefix: string
 ): Promise<InvoiceCommandResult> {
-  const itemsWithoutQuantity = parsed.items.filter(item => item.quantity === null || item.quantity <= 0)
+  const itemsWithoutQuantity = parsed.items.filter(
+    item => item.quantity === null || item.quantity <= 0
+  )
   const formattedCommodities = await Promise.all(
     itemsWithoutQuantity.map(i => formatCommodityWithMode(i.commodity.ticker, commodityDisplayMode))
   )
   const commodityList = formattedCommodities.join(', ')
-  const counterpartyName = parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
+  const counterpartyName =
+    parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
 
   // Build prompt embed
   const embed = new EmbedBuilder()
@@ -917,7 +996,7 @@ async function handleQuantityPrompt(
     .setColor(0x5865f2)
     .setDescription(
       `You're ${direction === 'buy' ? 'buying' : 'selling'} **${commodityList}** from **${counterpartyName}**.\n\n` +
-      `Please enter the quantity you want to ${direction}.`
+        `Please enter the quantity you want to ${direction}.`
     )
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -937,7 +1016,7 @@ async function handleQuantityPrompt(
     flags: MessageFlags.Ephemeral,
   })
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const collector = promptMessage.createMessageComponentCollector({
       componentType: ComponentType.Button,
       time: COMPONENT_TIMEOUT,
@@ -1135,7 +1214,8 @@ async function handleDuplicateLineItems(
   commodityDisplayMode: CommodityDisplayMode,
   prefix: string
 ): Promise<InvoiceCommandResult> {
-  const counterpartyName = parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
+  const counterpartyName =
+    parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
 
   // Build duplicate warning embed - format commodities according to user preference
   const formattedDuplicates = await Promise.all(
@@ -1151,9 +1231,10 @@ async function handleDuplicateLineItems(
     .setColor(0xffa500)
     .setDescription(
       `You already have the following items in your invoice with **${counterpartyName}**:\n\n` +
-      duplicateList + '\n\n' +
-      '**Update** will replace the existing quantities with the new values.\n' +
-      '**Cancel** will abort this command and keep the existing items.'
+        duplicateList +
+        '\n\n' +
+        '**Update** will replace the existing quantities with the new values.\n' +
+        '**Cancel** will abort this command and keep the existing items.'
     )
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1172,11 +1253,12 @@ async function handleDuplicateLineItems(
     components: [row],
   })
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const collector = buttonInteraction.message.createMessageComponentCollector({
       componentType: ComponentType.Button,
       time: COMPONENT_TIMEOUT,
-      filter: i => i.customId.startsWith('invoice_dup_') && i.user.id === originalInteraction.user.id,
+      filter: i =>
+        i.customId.startsWith('invoice_dup_') && i.user.id === originalInteraction.user.id,
     })
 
     collector.on('collect', async dupButtonInteraction => {
@@ -1208,7 +1290,8 @@ async function handleDuplicateLineItems(
         }
 
         await dupButtonInteraction.update({
-          content: `✅ Updated ${duplicates.length} line item(s) in invoice #${invoiceId}.\n\n` +
+          content:
+            `✅ Updated ${duplicates.length} line item(s) in invoice #${invoiceId}.\n\n` +
             `Use \`${prefix}invoices\` to view your invoices.`,
           embeds: [],
           components: [],
@@ -1264,7 +1347,8 @@ async function handleDuplicatesInMainFlow(
   commodityDisplayMode: CommodityDisplayMode,
   prefix: string
 ): Promise<InvoiceCommandResult> {
-  const counterpartyName = parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
+  const counterpartyName =
+    parsed.user!.fioUsername ?? parsed.user!.displayName ?? parsed.user!.username
 
   // Build duplicate warning embed - format commodities according to user preference
   const formattedDuplicates = await Promise.all(
@@ -1280,9 +1364,10 @@ async function handleDuplicatesInMainFlow(
     .setColor(0xffa500)
     .setDescription(
       `You already have the following items in your invoice with **${counterpartyName}**:\n\n` +
-      duplicateList + '\n\n' +
-      '**Update** will replace the existing quantities with the new values.\n' +
-      '**Cancel** will abort this command and keep the existing items.'
+        duplicateList +
+        '\n\n' +
+        '**Update** will replace the existing quantities with the new values.\n' +
+        '**Cancel** will abort this command and keep the existing items.'
     )
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1302,7 +1387,7 @@ async function handleDuplicatesInMainFlow(
     flags: MessageFlags.Ephemeral,
   })
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const collector = message.createMessageComponentCollector({
       componentType: ComponentType.Button,
       time: COMPONENT_TIMEOUT,
@@ -1338,7 +1423,8 @@ async function handleDuplicatesInMainFlow(
         }
 
         await buttonInteraction.update({
-          content: `✅ Updated ${duplicates.length} line item(s) in invoice #${invoiceId}.\n\n` +
+          content:
+            `✅ Updated ${duplicates.length} line item(s) in invoice #${invoiceId}.\n\n` +
             `Use \`${prefix}invoices\` to view your invoices.`,
           embeds: [],
           components: [],
@@ -1445,12 +1531,15 @@ async function continueInvoiceFlow(
   }
 
   // Build success message
-  const counterpartyName = counterparty.fioUsername ?? counterparty.displayName ?? counterparty.username
+  const counterpartyName =
+    counterparty.fioUsername ?? counterparty.displayName ?? counterparty.username
   const tips = buildInvoiceTips(counterpartyName, invoiceId, prefix, submitted)
 
-  const content = tips + (matchResult.notFoundItems.length > 0
-    ? `\n\n⚠️ Not found: ${matchResult.notFoundItems.join(', ')}`
-    : '')
+  const content =
+    tips +
+    (matchResult.notFoundItems.length > 0
+      ? `\n\n⚠️ Not found: ${matchResult.notFoundItems.join(', ')}`
+      : '')
 
   if (buttonInteraction) {
     await buttonInteraction.editReply({

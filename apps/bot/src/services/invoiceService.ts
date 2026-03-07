@@ -2,9 +2,22 @@
  * Invoice Service for Discord Bot
  * Handles invoice operations for the /buy and /sell commands with user detection
  */
-import { db, invoices, invoiceLineItems, orderReservations, users, userDiscordProfiles } from '@kawakawa/db'
-import { eq, and, desc, inArray, sql } from 'drizzle-orm'
-import type { InvoiceStatus, Currency, InvoiceLineItem, InvoiceSummary } from '@kawakawa/types'
+import {
+  db,
+  invoices,
+  invoiceLineItems,
+  orderReservations,
+  users,
+  userDiscordProfiles,
+} from '@kawakawa/db'
+import { eq, and, or, ne, desc, inArray, sql } from 'drizzle-orm'
+import type {
+  InvoiceStatus,
+  InvoiceDirection,
+  Currency,
+  InvoiceLineItem,
+  InvoiceSummary,
+} from '@kawakawa/types'
 import { getFioUsernames } from './userSettings.js'
 import { formatLocation } from './locationService.js'
 import type { LocationDisplayMode } from '@kawakawa/types'
@@ -36,6 +49,7 @@ export interface InvoiceWithDetails {
   status: InvoiceStatus
   name: string | null
   notes: string | null
+  submittedAt: Date | null
   itemCount: number
   totalsByCurrency: { currency: Currency; total: number }[]
   lineItems: InvoiceLineItemDetails[]
@@ -154,30 +168,72 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
     where: and(eq(invoices.userId, userId), eq(invoices.status, 'draft')),
     orderBy: [desc(invoices.updatedAt)],
   })
+  return buildInvoiceSummaries(drafts, 'sent')
+}
 
-  if (drafts.length === 0) {
-    return []
-  }
-
-  // Get counterparty info
-  const counterpartyIds = [...new Set(drafts.map(d => d.counterpartyUserId))]
-  const counterparties = await db.query.users.findMany({
-    where: inArray(users.id, counterpartyIds),
+/**
+ * Get invoices sent TO a user (inbox) that need their attention.
+ * Returns pending and confirmed invoices where the user is the counterparty.
+ */
+export async function getInboxInvoices(userId: number): Promise<InvoiceSummary[]> {
+  const received = await db.query.invoices.findMany({
+    where: and(
+      eq(invoices.counterpartyUserId, userId),
+      or(eq(invoices.status, 'pending'), eq(invoices.status, 'confirmed'))
+    ),
+    orderBy: [desc(invoices.updatedAt)],
   })
-  const counterpartyMap = new Map(counterparties.map(u => [u.id, u]))
+  return buildInvoiceSummaries(received, 'received')
+}
 
-  // Get FIO usernames
-  const fioUsernameMap = await getFioUsernames(counterpartyIds)
+/**
+ * Get invoices a user has submitted (non-draft, user is the creator).
+ */
+export async function getSentInvoices(userId: number): Promise<InvoiceSummary[]> {
+  const sent = await db.query.invoices.findMany({
+    where: and(eq(invoices.userId, userId), ne(invoices.status, 'draft')),
+    orderBy: [desc(invoices.updatedAt)],
+  })
+  return buildInvoiceSummaries(sent, 'sent')
+}
+
+/**
+ * Build InvoiceSummary[] from raw invoice rows.
+ * Shared by getDraftInvoices, getInboxInvoices, getSentInvoices.
+ */
+async function buildInvoiceSummaries(
+  invoiceRows: Array<{
+    id: number
+    userId: number
+    counterpartyUserId: number
+    status: string
+    name: string | null
+    createdAt: Date
+    updatedAt: Date
+  }>,
+  direction: InvoiceDirection
+): Promise<InvoiceSummary[]> {
+  if (invoiceRows.length === 0) return []
+
+  // For 'sent' invoices, the "other party" is counterpartyUserId
+  // For 'received' invoices, the "other party" is userId (the creator)
+  const otherPartyIds = [
+    ...new Set(invoiceRows.map(d => (direction === 'sent' ? d.counterpartyUserId : d.userId))),
+  ]
+  const otherParties = await db.query.users.findMany({
+    where: inArray(users.id, otherPartyIds),
+  })
+  const otherPartyMap = new Map(otherParties.map(u => [u.id, u]))
+  const fioUsernameMap = await getFioUsernames(otherPartyIds)
 
   // Get line item counts and totals for each invoice, grouped by order type
-  const invoiceIds = drafts.map(d => d.id)
+  const invoiceIds = invoiceRows.map(d => d.id)
   const lineItemStats = await db
     .select({
       invoiceId: invoiceLineItems.invoiceId,
       itemCount: sql<number>`count(*)::int`,
       currency: invoiceLineItems.currency,
       total: sql<number>`sum(${invoiceLineItems.quantity} * ${invoiceLineItems.unitPrice}::numeric)::numeric`,
-      // 'sell' when sellOrderId is set (user buying), 'buy' when buyOrderId is set (user selling)
       orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
     })
     .from(invoiceLineItems)
@@ -238,9 +294,6 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       (entry.totalsByCurrency.get(stat.currency) ?? 0) + total
     )
 
-    // Separate buy vs sell totals and counts
-    // orderType='sell' means user is BUYING (from a sell order)
-    // orderType='buy' means user is SELLING (to a buy order)
     if (stat.orderType === 'sell') {
       entry.buyItemCount += stat.itemCount
       entry.buyTotalsByCurrency.set(stat.currency, total)
@@ -250,10 +303,11 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
     }
   }
 
-  return drafts.map(draft => {
-    const counterparty = counterpartyMap.get(draft.counterpartyUserId)
-    const fioUsername = fioUsernameMap.get(draft.counterpartyUserId)
-    const stats = statsMap.get(draft.id) ?? {
+  return invoiceRows.map(row => {
+    const otherPartyId = direction === 'sent' ? row.counterpartyUserId : row.userId
+    const otherParty = otherPartyMap.get(otherPartyId)
+    const fioUsername = fioUsernameMap.get(otherPartyId)
+    const stats = statsMap.get(row.id) ?? {
       itemCount: 0,
       buyItemCount: 0,
       sellItemCount: 0,
@@ -261,16 +315,15 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
       buyTotalsByCurrency: new Map(),
       sellTotalsByCurrency: new Map(),
     }
-    const commodityTickers = Array.from(commodityTickersMap.get(draft.id) ?? [])
+    const commodityTickers = Array.from(commodityTickersMap.get(row.id) ?? [])
 
     return {
-      id: draft.id,
-      counterpartyUserId: draft.counterpartyUserId,
-      counterpartyName:
-        fioUsername ?? counterparty?.displayName ?? counterparty?.username ?? 'Unknown',
-      status: draft.status as InvoiceStatus,
-      direction: 'sent' as const, // User's own drafts are always 'sent'
-      name: draft.name,
+      id: row.id,
+      counterpartyUserId: otherPartyId,
+      counterpartyName: fioUsername ?? otherParty?.displayName ?? otherParty?.username ?? 'Unknown',
+      status: row.status as InvoiceStatus,
+      direction,
+      name: row.name,
       itemCount: stats.itemCount,
       buyItemCount: stats.buyItemCount,
       sellItemCount: stats.sellItemCount,
@@ -285,34 +338,39 @@ export async function getDraftInvoices(userId: number): Promise<InvoiceSummary[]
         ([currency, total]) => ({ currency, total })
       ),
       commodityTickers,
-      createdAt: draft.createdAt.toISOString(),
-      updatedAt: draft.updatedAt.toISOString(),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     }
   })
 }
 
 /**
- * Get invoice with full details
+ * Get invoice with full details.
+ * Accessible by both the creator (userId) and the counterparty.
  */
 export async function getInvoiceWithDetails(
   invoiceId: number,
   userId: number
 ): Promise<InvoiceWithDetails | null> {
   const invoice = await db.query.invoices.findFirst({
-    where: and(eq(invoices.id, invoiceId), eq(invoices.userId, userId)),
+    where: and(
+      eq(invoices.id, invoiceId),
+      or(eq(invoices.userId, userId), eq(invoices.counterpartyUserId, userId))
+    ),
   })
 
   if (!invoice) {
     return null
   }
 
-  // Get counterparty info
+  // The "other party" depends on which side the caller is on
+  const otherPartyId = invoice.userId === userId ? invoice.counterpartyUserId : invoice.userId
   const counterparty = await db.query.users.findFirst({
-    where: eq(users.id, invoice.counterpartyUserId),
+    where: eq(users.id, otherPartyId),
   })
 
-  const fioUsernameMap = await getFioUsernames([invoice.counterpartyUserId])
-  const counterpartyFioUsername = fioUsernameMap.get(invoice.counterpartyUserId) ?? null
+  const fioUsernameMap = await getFioUsernames([otherPartyId])
+  const counterpartyFioUsername = fioUsernameMap.get(otherPartyId) ?? null
 
   // Get line items
   const items = await db.query.invoiceLineItems.findMany({
@@ -352,6 +410,7 @@ export async function getInvoiceWithDetails(
     status: invoice.status as InvoiceStatus,
     name: invoice.name,
     notes: invoice.notes,
+    submittedAt: invoice.submittedAt,
     itemCount: items.length,
     totalsByCurrency: Array.from(totalsByCurrency.entries()).map(([currency, total]) => ({
       currency,
@@ -440,12 +499,14 @@ export async function findExistingLineItems(
   invoiceId: number,
   commodityTicker: string,
   locationId: string
-): Promise<{
-  id: number
-  quantity: number
-  unitPrice: string
-  currency: Currency
-}[]> {
+): Promise<
+  {
+    id: number
+    quantity: number
+    unitPrice: string
+    currency: Currency
+  }[]
+> {
   const items = await db.query.invoiceLineItems.findMany({
     where: and(
       eq(invoiceLineItems.invoiceId, invoiceId),
@@ -620,5 +681,205 @@ export async function findUserByDiscordId(discordId: string): Promise<{
     username: profile.user.username,
     displayName: profile.user.displayName,
     fioUsername: fioMap.get(profile.user.id) ?? null,
+  }
+}
+
+// ==================== INVOICE STATE TRANSITIONS ====================
+
+/**
+ * Result of an invoice state transition
+ */
+export interface InvoiceTransitionResult {
+  success: boolean
+  error?: string
+}
+
+/**
+ * Confirm an invoice (counterparty accepts).
+ * Transitions: invoice pending -> confirmed, reservations pending -> confirmed.
+ */
+export async function confirmInvoice(
+  invoiceId: number,
+  counterpartyUserId: number
+): Promise<InvoiceTransitionResult> {
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, invoiceId),
+      eq(invoices.counterpartyUserId, counterpartyUserId),
+      eq(invoices.status, 'pending')
+    ),
+  })
+
+  if (!invoice) {
+    return {
+      success: false,
+      error: 'Invoice not found, not sent to you, or not in pending status.',
+    }
+  }
+
+  // Confirm all linked reservations
+  const items = await db.query.invoiceLineItems.findMany({
+    where: eq(invoiceLineItems.invoiceId, invoiceId),
+  })
+
+  for (const item of items) {
+    if (item.reservationId) {
+      await db
+        .update(orderReservations)
+        .set({ status: 'confirmed', updatedAt: new Date() })
+        .where(
+          and(eq(orderReservations.id, item.reservationId), eq(orderReservations.status, 'pending'))
+        )
+    }
+  }
+
+  // Update invoice status
+  await db
+    .update(invoices)
+    .set({ status: 'confirmed', updatedAt: new Date() })
+    .where(eq(invoices.id, invoiceId))
+
+  return { success: true }
+}
+
+/**
+ * Reject an invoice (counterparty declines).
+ * Transitions: invoice pending -> cancelled, reservations pending -> rejected.
+ */
+export async function rejectInvoice(
+  invoiceId: number,
+  counterpartyUserId: number
+): Promise<InvoiceTransitionResult> {
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, invoiceId),
+      eq(invoices.counterpartyUserId, counterpartyUserId),
+      eq(invoices.status, 'pending')
+    ),
+  })
+
+  if (!invoice) {
+    return {
+      success: false,
+      error: 'Invoice not found, not sent to you, or not in pending status.',
+    }
+  }
+
+  // Reject all linked reservations
+  const items = await db.query.invoiceLineItems.findMany({
+    where: eq(invoiceLineItems.invoiceId, invoiceId),
+  })
+
+  for (const item of items) {
+    if (item.reservationId) {
+      await db
+        .update(orderReservations)
+        .set({ status: 'rejected', updatedAt: new Date() })
+        .where(
+          and(eq(orderReservations.id, item.reservationId), eq(orderReservations.status, 'pending'))
+        )
+    }
+  }
+
+  // Cancel the invoice
+  await db
+    .update(invoices)
+    .set({ status: 'cancelled', updatedAt: new Date() })
+    .where(eq(invoices.id, invoiceId))
+
+  return { success: true }
+}
+
+/**
+ * Cancel an invoice (creator withdraws).
+ * Works for draft, pending, or confirmed invoices.
+ * Cancels all linked reservations that aren't already fulfilled.
+ */
+export async function cancelInvoice(
+  invoiceId: number,
+  userId: number
+): Promise<InvoiceTransitionResult> {
+  const invoice = await db.query.invoices.findFirst({
+    where: and(eq(invoices.id, invoiceId), eq(invoices.userId, userId)),
+  })
+
+  if (!invoice) {
+    return { success: false, error: 'Invoice not found or you are not the creator.' }
+  }
+
+  const terminalStatuses: string[] = ['fulfilled', 'partially_fulfilled', 'cancelled']
+  if (terminalStatuses.includes(invoice.status)) {
+    return { success: false, error: `Cannot cancel an invoice with status "${invoice.status}".` }
+  }
+
+  // Cancel all linked reservations that aren't already in a terminal state
+  const items = await db.query.invoiceLineItems.findMany({
+    where: eq(invoiceLineItems.invoiceId, invoiceId),
+  })
+
+  for (const item of items) {
+    if (item.reservationId) {
+      await db
+        .update(orderReservations)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(orderReservations.id, item.reservationId),
+            inArray(orderReservations.status, ['pending', 'confirmed'])
+          )
+        )
+    }
+  }
+
+  // Cancel the invoice
+  await db
+    .update(invoices)
+    .set({ status: 'cancelled', updatedAt: new Date() })
+    .where(eq(invoices.id, invoiceId))
+
+  return { success: true }
+}
+
+/**
+ * Get the status emoji for an invoice status
+ */
+export function getInvoiceStatusEmoji(status: InvoiceStatus): string {
+  switch (status) {
+    case 'draft':
+      return '📝'
+    case 'pending':
+      return '📤'
+    case 'confirmed':
+      return '✅'
+    case 'fulfilled':
+      return '🎉'
+    case 'partially_fulfilled':
+      return '⚠️'
+    case 'cancelled':
+      return '❌'
+    default:
+      return '❓'
+  }
+}
+
+/**
+ * Get a human-readable label for an invoice status
+ */
+export function getInvoiceStatusLabel(status: InvoiceStatus): string {
+  switch (status) {
+    case 'draft':
+      return 'Draft'
+    case 'pending':
+      return 'Pending'
+    case 'confirmed':
+      return 'Confirmed'
+    case 'fulfilled':
+      return 'Fulfilled'
+    case 'partially_fulfilled':
+      return 'Partially Fulfilled'
+    case 'cancelled':
+      return 'Cancelled'
+    default:
+      return status
   }
 }

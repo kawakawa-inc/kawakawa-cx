@@ -124,12 +124,14 @@ Manages FIO integration.
 Browse sell orders (supply) or create invoices.
 
 **Query mode** (no counterparty — shows sell orders):
+
 - [ ] Empty `!buy` → shows help embed with usage examples
 - [ ] `!buy RAT` → shows all sell orders for RAT
 - [ ] `!buy RAT BEN` → shows sell orders for RAT at Benten
 - [ ] `!buy 20 RAT BEN` → shows sell orders with availability emojis (✅⚠️❌)
 
 **Invoice mode** (with counterparty):
+
 - [ ] `!buy RAT BEN @alice` → prompts for quantity, then creates invoice
 - [ ] `!buy 20 RAT BEN @alice` → creates invoice (or detects duplicate → Update/Cancel)
 - [ ] Commodity display respects user preference (ticker vs name)
@@ -139,12 +141,14 @@ Browse sell orders (supply) or create invoices.
 Browse buy orders (demand) or create invoices.
 
 **Query mode** (no counterparty — shows buy orders):
+
 - [ ] Empty `!sell` → shows help embed with usage examples
 - [ ] `!sell RAT` → shows all buy orders for RAT
 - [ ] `!sell RAT BEN` → shows buy orders for RAT at Benten
 - [ ] `!sell 20 RAT BEN` → shows buy orders with availability emojis (✅⚠️❌)
 
 **Invoice mode** (with counterparty):
+
 - [ ] `!sell RAT BEN @alice` → prompts for quantity, then creates invoice
 - [ ] `!sell 20 RAT BEN @alice` → creates invoice (or detects duplicate → Update/Cancel)
 - [ ] Commodity display respects user preference (ticker vs name)
@@ -154,11 +158,13 @@ Browse buy orders (demand) or create invoices.
 Create or manage market orders (moved from old `/buy` and `/sell`).
 
 **Buy subcommand** (`!order buy`):
+
 - [ ] `!order buy RAT 100 BEN` → creates buy order with confirmation
 - [ ] Auto-pricing from price list
 - [ ] Updates existing order if same commodity/location
 
 **Sell subcommand** (`!order sell`):
+
 - [ ] `!order sell COF BEN` → creates sell order
 - [ ] `!order sell COF BEN reserve:100` → creates with limit
 - [ ] Auto-pricing from price list

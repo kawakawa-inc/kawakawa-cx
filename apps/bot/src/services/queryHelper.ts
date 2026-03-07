@@ -14,11 +14,7 @@ import {
   buildFilterDescription,
   type MultiResolvedFilters,
 } from './orderFormatter.js'
-import {
-  formatCommodity,
-  formatCommodityWithMode,
-  formatLocation,
-} from './display.js'
+import { formatCommodity, formatCommodityWithMode, formatLocation } from './display.js'
 import type { LocationDisplayMode, CommodityDisplayMode, Currency } from '@kawakawa/types'
 import {
   sendPaginatedResponseWithExtraButtons,

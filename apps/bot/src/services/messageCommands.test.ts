@@ -54,6 +54,7 @@ import {
   handleMessageCommand,
   getAllPrefixes,
   findMatchingPrefix,
+  expandPrefixes,
   clearPrefixCache,
 } from './messageCommands.js'
 import type { Message } from 'discord.js'
@@ -201,6 +202,22 @@ describe('messageCommands', () => {
       expect(helpCommand.execute).not.toHaveBeenCalled()
     })
 
+    it('ignores messages with wrong prefix character', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const message = createMockMessage({
+        content: '?help', // wrong prefix - channel is configured for '!'
+      })
+      const helpCommand = createMockCommand('help')
+      const client = createMockClient(new Map([['help', helpCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(helpCommand.execute).not.toHaveBeenCalled()
+    })
+
     it('ignores unknown commands', async () => {
       mockGetChannelConfig.mockResolvedValue({
         commandPrefix: '!',
@@ -265,20 +282,22 @@ describe('messageCommands', () => {
       expect(queryCommand.execute).toHaveBeenCalled()
     })
 
-    it('handles multi-character prefix', async () => {
+    it('handles multi-prefix string (each char is a valid prefix)', async () => {
       mockGetChannelConfig.mockResolvedValue({
-        commandPrefix: '!!',
+        commandPrefix: '!?',
       })
 
-      const message = createMockMessage({
-        content: '!!help',
-      })
+      // Both ! and ? should work
+      const message1 = createMockMessage({ content: '!help' })
+      const message2 = createMockMessage({ content: '?help' })
       const helpCommand = createMockCommand('help')
       const client = createMockClient(new Map([['help', helpCommand]]))
 
-      await handleMessageCommand(message, client)
+      await handleMessageCommand(message1, client)
+      expect(helpCommand.execute).toHaveBeenCalledTimes(1)
 
-      expect(helpCommand.execute).toHaveBeenCalled()
+      await handleMessageCommand(message2, client)
+      expect(helpCommand.execute).toHaveBeenCalledTimes(2)
     })
 
     it('handles command name case-insensitively', async () => {
@@ -581,8 +600,32 @@ describe('messageCommands', () => {
     })
   })
 
+  describe('expandPrefixes', () => {
+    it('expands a prefix string into individual characters', () => {
+      const result = expandPrefixes(['!?'])
+      expect(result).toEqual(expect.arrayContaining(['!', '?']))
+      expect(result).toHaveLength(2)
+    })
+
+    it('deduplicates characters across multiple strings', () => {
+      const result = expandPrefixes(['!?', '!.'])
+      expect(result).toEqual(expect.arrayContaining(['!', '?', '.']))
+      expect(result).toHaveLength(3)
+    })
+
+    it('handles single-character prefix strings', () => {
+      const result = expandPrefixes(['!'])
+      expect(result).toEqual(['!'])
+    })
+
+    it('handles empty input', () => {
+      const result = expandPrefixes([])
+      expect(result).toEqual([])
+    })
+  })
+
   describe('findMatchingPrefix', () => {
-    it('returns matching prefix', () => {
+    it('returns matching prefix character', () => {
       const result = findMatchingPrefix('!help', ['!', '?', '.'])
       expect(result).toBe('!')
     })
@@ -592,21 +635,19 @@ describe('messageCommands', () => {
       expect(result).toBeNull()
     })
 
-    it('matches longer prefixes first', () => {
-      // If content is '!!help', and both '!' and '!!' are valid prefixes,
-      // it should match '!!' not '!'
-      const result = findMatchingPrefix('!!help', ['!', '!!'])
-      expect(result).toBe('!!')
-    })
-
     it('handles empty prefix list', () => {
       const result = findMatchingPrefix('!help', [])
       expect(result).toBeNull()
     })
 
-    it('handles multi-character prefixes', () => {
-      const result = findMatchingPrefix('kawa help', ['kawa ', '!'])
-      expect(result).toBe('kawa ')
+    it('handles empty content', () => {
+      const result = findMatchingPrefix('', ['!'])
+      expect(result).toBeNull()
+    })
+
+    it('matches first character against prefix list', () => {
+      const result = findMatchingPrefix('?query COF', ['!', '?'])
+      expect(result).toBe('?')
     })
   })
 

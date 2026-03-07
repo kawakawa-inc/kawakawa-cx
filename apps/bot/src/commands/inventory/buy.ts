@@ -48,7 +48,9 @@ export const buy: Command = {
     .addStringOption(option =>
       option
         .setName('input')
-        .setDescription('Commodity, location, quantity, and/or username (e.g., "RAT BEN" or "20 RAT BEN @alice")')
+        .setDescription(
+          'Commodity, location, quantity, and/or username (e.g., "RAT BEN" or "20 RAT BEN @alice")'
+        )
         .setRequired(false)
     )
     .addStringOption(option =>
@@ -124,25 +126,34 @@ export const buy: Command = {
 
     // Parse input with unified parser
     const parsed = await parseTokens(input, botResolvers)
-    logger.debug({
-      cmd: 'buy',
-      input,
-      user: parsed.user?.username ?? null,
-      userId: parsed.user?.userId ?? null,
-      items: parsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
-      location: parsed.location?.naturalId ?? null,
-      unresolved: parsed.unresolved,
-    }, 'buy: parsed input')
+    logger.debug(
+      {
+        cmd: 'buy',
+        input,
+        user: parsed.user?.username ?? null,
+        userId: parsed.user?.userId ?? null,
+        items: parsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
+        location: parsed.location?.naturalId ?? null,
+        unresolved: parsed.unresolved,
+      },
+      'buy: parsed input'
+    )
 
     // Check for invoice mode (counterparty user in input)
     if (parsed.user) {
-      logger.debug({ cmd: 'buy', mode: 'invoice', counterparty: parsed.user.username }, 'buy: invoice mode')
+      logger.debug(
+        { cmd: 'buy', mode: 'invoice', counterparty: parsed.user.username },
+        'buy: invoice mode'
+      )
       // INVOICE MODE: Buy from counterparty's sell orders
       // Require linked account for invoice creation
       const result = await requireLinkedUser(interaction)
       if (!result) return
       const { userId } = result
-      logger.debug({ cmd: 'buy', currentUserId: userId, counterpartyUserId: parsed.user.userId }, 'buy: user IDs')
+      logger.debug(
+        { cmd: 'buy', currentUserId: userId, counterpartyUserId: parsed.user.userId },
+        'buy: user IDs'
+      )
 
       const invoiceResult = await handleInvoiceCommand({
         interaction,
@@ -152,7 +163,13 @@ export const buy: Command = {
         locationDisplayMode: displaySettings.locationDisplayMode,
         commodityDisplayMode: displaySettings.commodityDisplayMode,
       })
-      logger.debug({ cmd: 'buy', invoiceResult: { success: invoiceResult.success, hasErrors: !!invoiceResult.errors } }, 'buy: invoice result')
+      logger.debug(
+        {
+          cmd: 'buy',
+          invoiceResult: { success: invoiceResult.success, hasErrors: !!invoiceResult.errors },
+        },
+        'buy: invoice result'
+      )
       // handleInvoiceCommand handles all user-facing replies internally
       return
     }
@@ -160,12 +177,23 @@ export const buy: Command = {
     // QUERY MODE: Show available sell orders
     // Check if we have at least one commodity
     if (parsed.items.length === 0 && !parsed.location) {
-      logger.debug({ cmd: 'buy', mode: 'help', reason: 'no items or location' }, 'buy: nothing to query → help')
+      logger.debug(
+        { cmd: 'buy', mode: 'help', reason: 'no items or location' },
+        'buy: nothing to query → help'
+      )
       // Nothing to query - show help
       await showBuyHelp(interaction, prefix, isEphemeral)
       return
     }
-    logger.debug({ cmd: 'buy', mode: 'query', commodities: parsed.items.map(i => i.commodity.ticker), location: parsed.location?.naturalId }, 'buy: query mode')
+    logger.debug(
+      {
+        cmd: 'buy',
+        mode: 'query',
+        commodities: parsed.items.map(i => i.commodity.ticker),
+        location: parsed.location?.naturalId,
+      },
+      'buy: query mode'
+    )
 
     // Get current user's ID (if linked) for filtering own orders
     const currentUserProfile = await db.query.userDiscordProfiles.findFirst({

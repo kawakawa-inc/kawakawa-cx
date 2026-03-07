@@ -107,6 +107,9 @@ export class MockButtonBuilder {
     this.data.style = style
     return this
   }
+  setEmoji(_emoji: string) {
+    return this
+  }
   setDisabled(disabled: boolean) {
     this.data.disabled = disabled
     return this
@@ -136,6 +139,18 @@ class MockSlashCommandBuilder {
   }
   addBooleanOption(fn: (option: MockBooleanOption) => MockBooleanOption) {
     fn(new MockBooleanOption())
+    return this
+  }
+  addSubcommand(fn: (subcommand: MockSlashCommandBuilder) => MockSlashCommandBuilder) {
+    fn(new MockSlashCommandBuilder())
+    return this
+  }
+  addIntegerOption(fn: (option: MockIntegerOption) => MockIntegerOption) {
+    fn(new MockIntegerOption())
+    return this
+  }
+  addNumberOption(fn: (option: MockNumberOption) => MockNumberOption) {
+    fn(new MockNumberOption())
     return this
   }
 }
@@ -172,6 +187,42 @@ class MockBooleanOption {
     return this
   }
   setRequired(_req: boolean) {
+    return this
+  }
+}
+
+class MockIntegerOption {
+  setName(_name: string) {
+    return this
+  }
+  setDescription(_desc: string) {
+    return this
+  }
+  setRequired(_req: boolean) {
+    return this
+  }
+  setMinValue(_val: number) {
+    return this
+  }
+  setMaxValue(_val: number) {
+    return this
+  }
+}
+
+class MockNumberOption {
+  setName(_name: string) {
+    return this
+  }
+  setDescription(_desc: string) {
+    return this
+  }
+  setRequired(_req: boolean) {
+    return this
+  }
+  setMinValue(_val: number) {
+    return this
+  }
+  setMaxValue(_val: number) {
     return this
   }
 }

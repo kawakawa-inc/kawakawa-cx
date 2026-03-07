@@ -8,11 +8,7 @@
  * This command replaces the old order-creation functionality from /buy and /sell.
  * The /buy and /sell commands are now focused on browsing and invoice creation.
  */
-import {
-  SlashCommandBuilder,
-  MessageFlags,
-  ComponentType,
-} from 'discord.js'
+import { SlashCommandBuilder, MessageFlags, ComponentType } from 'discord.js'
 import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import { db, buyOrders, sellOrders, priceLists } from '@kawakawa/db'
@@ -209,7 +205,12 @@ export const order: Command = {
       direction === 'sell'
         ? (interaction.options.getString('limit_mode') as 'unlimited' | 'limited' | null)
         : null
-    const limitModeOption = limitModeRaw === 'limited' ? 'max_sell' as const : limitModeRaw === 'unlimited' ? 'none' as const : null
+    const limitModeOption =
+      limitModeRaw === 'limited'
+        ? ('max_sell' as const)
+        : limitModeRaw === 'unlimited'
+          ? ('none' as const)
+          : null
 
     // Handle empty input - show incomplete input dialog
     if (!input || input.trim() === '') {
@@ -783,23 +784,24 @@ async function createOrder(
   }
 
   // Check for existing orders that will be updated
-  const existingOrdersList = direction === 'buy'
-    ? await db.query.buyOrders.findMany({
-        where: and(
-          eq(buyOrders.userId, userId),
-          eq(buyOrders.locationId, locationId),
-          eq(buyOrders.orderType, orderType),
-          eq(buyOrders.currency, currency)
-        ),
-      })
-    : await db.query.sellOrders.findMany({
-        where: and(
-          eq(sellOrders.userId, userId),
-          eq(sellOrders.locationId, locationId),
-          eq(sellOrders.orderType, orderType),
-          eq(sellOrders.currency, currency)
-        ),
-      })
+  const existingOrdersList =
+    direction === 'buy'
+      ? await db.query.buyOrders.findMany({
+          where: and(
+            eq(buyOrders.userId, userId),
+            eq(buyOrders.locationId, locationId),
+            eq(buyOrders.orderType, orderType),
+            eq(buyOrders.currency, currency)
+          ),
+        })
+      : await db.query.sellOrders.findMany({
+          where: and(
+            eq(sellOrders.userId, userId),
+            eq(sellOrders.locationId, locationId),
+            eq(sellOrders.orderType, orderType),
+            eq(sellOrders.currency, currency)
+          ),
+        })
 
   const existingOrdersMap = new Map(
     existingOrdersList
@@ -1207,23 +1209,24 @@ async function createOrderFromModal(
   }
 
   // Check for existing orders
-  const existingOrdersList = direction === 'buy'
-    ? await db.query.buyOrders.findMany({
-        where: and(
-          eq(buyOrders.userId, userId),
-          eq(buyOrders.locationId, locationId),
-          eq(buyOrders.orderType, orderType),
-          eq(buyOrders.currency, currency)
-        ),
-      })
-    : await db.query.sellOrders.findMany({
-        where: and(
-          eq(sellOrders.userId, userId),
-          eq(sellOrders.locationId, locationId),
-          eq(sellOrders.orderType, orderType),
-          eq(sellOrders.currency, currency)
-        ),
-      })
+  const existingOrdersList =
+    direction === 'buy'
+      ? await db.query.buyOrders.findMany({
+          where: and(
+            eq(buyOrders.userId, userId),
+            eq(buyOrders.locationId, locationId),
+            eq(buyOrders.orderType, orderType),
+            eq(buyOrders.currency, currency)
+          ),
+        })
+      : await db.query.sellOrders.findMany({
+          where: and(
+            eq(sellOrders.userId, userId),
+            eq(sellOrders.locationId, locationId),
+            eq(sellOrders.orderType, orderType),
+            eq(sellOrders.currency, currency)
+          ),
+        })
 
   const existingOrdersMap = new Map(
     existingOrdersList

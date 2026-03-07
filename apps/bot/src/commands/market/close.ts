@@ -46,7 +46,18 @@ export const close: Command = {
     // Get user's draft invoices
     const drafts = await getDraftInvoices(userId)
 
-    logger.debug({ cmd: 'close', draftCount: drafts.length, drafts: drafts.map(d => ({ id: d.id, counterparty: d.counterpartyName, items: d.itemCount })) }, 'close: found drafts')
+    logger.debug(
+      {
+        cmd: 'close',
+        draftCount: drafts.length,
+        drafts: drafts.map(d => ({
+          id: d.id,
+          counterparty: d.counterpartyName,
+          items: d.itemCount,
+        })),
+      },
+      'close: found drafts'
+    )
 
     if (drafts.length === 0) {
       await interaction.reply({

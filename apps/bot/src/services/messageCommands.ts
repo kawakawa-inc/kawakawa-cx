@@ -47,8 +47,9 @@ export async function getAllPrefixes(): Promise<string[]> {
     .from(channelConfig)
     .where(eq(channelConfig.key, 'commandPrefix'))
 
-  // Extract unique non-empty prefixes
-  const prefixes = [...new Set(rows.map(r => r.value).filter(Boolean))]
+  // Each commandPrefix value is a string of allowed prefix characters (e.g., "!?" means both ! and ?)
+  const rawPrefixes = rows.map(r => r.value).filter(Boolean)
+  const prefixes = expandPrefixes(rawPrefixes)
 
   // Update cache
   cachedPrefixes = prefixes
@@ -68,17 +69,30 @@ export function clearPrefixCache(): void {
 }
 
 /**
- * Find a matching prefix from a list of prefixes.
+ * Expand prefix strings into individual prefix characters.
+ * Each character in a prefix string is treated as a separate valid prefix.
+ * e.g., "!?" becomes ["!", "?"], "!" stays ["!"]
+ */
+export function expandPrefixes(prefixStrings: string[]): string[] {
+  const chars = new Set<string>()
+  for (const str of prefixStrings) {
+    for (const ch of str) {
+      chars.add(ch)
+    }
+  }
+  return [...chars]
+}
+
+/**
+ * Find a matching prefix character from message content.
  * Returns the matching prefix or null if none match.
- * Checks longer prefixes first to handle overlapping prefixes correctly.
  */
 export function findMatchingPrefix(content: string, prefixes: string[]): string | null {
-  // Sort by length descending to match longer prefixes first
-  // e.g., '!!' should match before '!' for a message starting with '!!'
-  const sorted = [...prefixes].sort((a, b) => b.length - a.length)
+  if (content.length === 0) return null
 
-  for (const prefix of sorted) {
-    if (content.startsWith(prefix)) {
+  const firstChar = content[0]
+  for (const prefix of prefixes) {
+    if (prefix === firstChar) {
       return prefix
     }
   }
@@ -145,9 +159,15 @@ function parseCommandArgs(content: string): {
   if (parts.length > 1) {
     const inputValue = parts.slice(1).join(' ')
     options.set('input', inputValue)
-    options.set('query', inputValue)   // /query
-    options.set('target', inputValue)  // /close
-    options.set('topic', inputValue)   // /help
+    options.set('query', inputValue) // /query
+    options.set('target', inputValue) // /close
+    options.set('topic', inputValue) // /help
+
+    // For commands that take a numeric ID as primary argument (e.g., /invoice <id>)
+    const numericValue = parseInt(inputValue, 10)
+    if (!isNaN(numericValue) && numericValue.toString() === inputValue.trim()) {
+      options.set('id', numericValue)
+    }
   }
 
   return { commandName, options }
@@ -188,7 +208,14 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     }
   } else {
     // For guild channels, use channel-specific prefix
-    prefix = await getEffectivePrefix(message.channelId, isDM)
+    const channelPrefixStr = await getEffectivePrefix(message.channelId, isDM)
+    if (channelPrefixStr) {
+      // Each character in the prefix string is a valid prefix
+      const validPrefixes = expandPrefixes([channelPrefixStr])
+      prefix = findMatchingPrefix(message.content, validPrefixes)
+    } else {
+      prefix = null
+    }
   }
 
   // No prefix matched - ignore message

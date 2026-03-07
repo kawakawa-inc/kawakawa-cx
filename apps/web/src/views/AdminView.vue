@@ -873,7 +873,7 @@
                             <span v-else class="text-medium-emphasis">—</span>
                           </v-col>
                           <v-col cols="6" md="3">
-                            <div class="text-caption text-medium-emphasis">Command Prefix</div>
+                            <div class="text-caption text-medium-emphasis">Prefix Characters</div>
                             <v-chip
                               v-if="defaultChannelConfig.commandPrefix"
                               size="small"
@@ -1003,7 +1003,7 @@
                             <span v-else class="text-medium-emphasis">—</span>
                           </v-col>
                           <v-col cols="6" md="3">
-                            <div class="text-caption text-medium-emphasis">Command Prefix</div>
+                            <div class="text-caption text-medium-emphasis">Prefix Characters</div>
                             <v-chip v-if="config.commandPrefix" size="small" color="indigo">
                               {{ config.commandPrefix }}
                             </v-chip>
@@ -1211,10 +1211,10 @@
                 <v-col cols="12">
                   <v-text-field
                     v-model="channelConfigForm.commandPrefix"
-                    label="Command Prefix"
-                    placeholder="e.g., !, ?, ."
+                    label="Command Prefix Characters"
+                    placeholder="e.g., !? or !"
                     clearable
-                    hint="Prefix for text commands (e.g., !help, ?query). Leave empty to disable text commands."
+                    hint="Each character is a valid prefix. '!?' allows both !help and ?help. Leave empty to disable text commands."
                     persistent-hint
                     prepend-icon="mdi-pound"
                     maxlength="5"

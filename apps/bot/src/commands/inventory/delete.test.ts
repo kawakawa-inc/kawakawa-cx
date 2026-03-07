@@ -43,7 +43,7 @@ vi.mock('discord.js', () => {
       setDescription() {
         return this
       }
-      addStringOption(fn: Function) {
+      addStringOption(fn: (opt: unknown) => unknown) {
         fn(self)
         return this
       }
@@ -244,7 +244,7 @@ describe('delete command', () => {
     )
   })
 
-  it('deletes orders directly when 5 or fewer', async () => {
+  it('shows confirmation before deleting when 5 or fewer orders', async () => {
     mockRequireLinkedUser.mockResolvedValue({ userId: 1 })
     mockParseTokens.mockResolvedValue({
       items: [{ commodity: { ticker: 'COF' } }],
@@ -269,10 +269,12 @@ describe('delete command', () => {
     const interaction = createMockInteraction('COF BEN')
     await deleteCommand.execute(interaction)
 
-    expect(mockDbDelete).toHaveBeenCalled()
+    // Should NOT delete immediately — shows confirmation instead
+    expect(mockDbDelete).not.toHaveBeenCalled()
     expect((interaction as any).reply).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: expect.stringContaining('Deleted 1 order'),
+        content: expect.stringContaining('Delete 1 order'),
+        components: expect.any(Array),
       })
     )
   })

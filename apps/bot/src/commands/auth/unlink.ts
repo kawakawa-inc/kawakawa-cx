@@ -4,16 +4,31 @@ import type { Command } from '../../client.js'
 import { db, userDiscordProfiles } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import logger from '../../utils/logger.js'
-import { getCommandPrefix } from '../../adapters/messageInteraction.js'
+import { isMessageInteractionAdapter, getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const unlink: Command = {
   data: new SlashCommandBuilder()
     .setName('unlink')
     .setDescription('Disconnect your Discord from your Kawakawa account'),
 
+  helpInfo: {
+    category: 'getting_started',
+    details: 'Discord-only accounts will be warned before unlinking.',
+    examples: ['unlink', 'unlink confirm'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id
+
+    // Check for "confirm" argument (used for Discord-only account confirmation)
+    let forceConfirm = false
+    if (isMessageInteractionAdapter(interaction)) {
+      const input = interaction.options.getString('input')
+      if (input?.trim().toLowerCase() === 'confirm') {
+        forceConfirm = true
+      }
+    }
 
     // Find the Discord profile
     const profile = await db.query.userDiscordProfiles.findFirst({
@@ -34,7 +49,7 @@ export const unlink: Command = {
     // Check if this is a Discord-only account (no password set)
     const isDiscordOnlyAccount = profile.user.passwordHash.startsWith('discord:')
 
-    if (isDiscordOnlyAccount) {
+    if (isDiscordOnlyAccount && !forceConfirm) {
       // Warn user that they'll lose access
       const embed = new EmbedBuilder()
         .setTitle('⚠️ Warning: Discord-Only Account')
@@ -45,7 +60,7 @@ export const unlink: Command = {
             'Before unlinking, you should:\n' +
             '1. Log in to the website\n' +
             '2. Set a password in your account settings\n\n' +
-            `If you're sure you want to unlink anyway, use \`${prefix}unlink-confirm\`.`
+            `If you're sure you want to unlink anyway, use \`${prefix}unlink confirm\`.`
         )
 
       await interaction.reply({ embeds: [embed], ephemeral: true })

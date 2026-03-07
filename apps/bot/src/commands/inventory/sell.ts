@@ -75,6 +75,13 @@ export const sell: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'trading',
+    details:
+      'Without a counterparty: browse buy orders (demand).\nWith a counterparty: create an invoice to sell to them.',
+    examples: ['sell RAT', 'sell RAT BEN', 'sell 20 RAT BEN', 'sell 20 RAT BEN alice'],
+  },
+
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
 

@@ -32,6 +32,12 @@ export const list: Command = {
       option.setName('name').setDescription('List name (optional)').setRequired(false)
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'lists',
+    details: 'Create a shopping list from commodity quantities or XIT JSON.',
+    examples: ['list 100 COF 200 RAT'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
 

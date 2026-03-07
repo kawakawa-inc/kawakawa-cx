@@ -18,7 +18,7 @@ import type {
 } from 'discord.js'
 import type { Command } from '../../client.js'
 import { parseTokens } from '@kawakawa/parser'
-import { db, sellOrders, buyOrders, userDiscordProfiles } from '@kawakawa/db'
+import { db, sellOrders, buyOrders, userDiscordProfiles, priceLists } from '@kawakawa/db'
 import { eq, and, desc, or, isNull } from 'drizzle-orm'
 import { searchCommodities, searchLocations } from '../../autocomplete/index.js'
 import { botResolvers } from '../../utils/resolvers.js'
@@ -36,7 +36,7 @@ import {
   buildFilterDescription,
   type MultiResolvedFilters,
 } from '../../services/orderFormatter.js'
-import { isValidCurrency, VALID_CURRENCIES, type ValidCurrency } from '../../utils/validation.js'
+import { isValidCurrency, type ValidCurrency } from '../../utils/validation.js'
 import { replyError } from '../../utils/replies.js'
 import logger from '../../utils/logger.js'
 import { getCommandPrefix } from '../../adapters/messageInteraction.js'
@@ -74,6 +74,13 @@ export const orders: Command = {
           { name: 'Partner (trade partners)', value: 'partner' }
         )
     ) as SlashCommandBuilder,
+
+  helpInfo: {
+    category: 'orders',
+    details:
+      'Shows your orders by default. Add filters to search the market.\nUse the Manage button to edit or delete your orders.',
+    examples: ['orders', 'orders COF'],
+  },
 
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
@@ -589,6 +596,14 @@ async function sendOrdersWithManage(
               if (selectInteraction?.isStringSelectMenu()) {
                 const selected = selectInteraction.values[0]
                 const [selectedOrderType, selectedOrderId] = selected.split(':')
+                const selectedId = parseInt(selectedOrderId, 10)
+
+                // Build order summary for the selected message
+                const summary = await buildOrderSummary(
+                  selectedOrderType,
+                  selectedId,
+                  selectedOrderType === 'sell' ? userSellOrders : userBuyOrders
+                )
 
                 // Show edit/delete buttons for the selected order
                 const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -603,7 +618,7 @@ async function sendOrdersWithManage(
                 )
 
                 const actionReply = await selectInteraction.update({
-                  content: `**Selected:** ${selectedOrderType === 'sell' ? '📤 Sell' : '📥 Buy'} order #${selectedOrderId}\n\nWhat would you like to do?`,
+                  content: `**Selected:** ${selectedOrderType === 'sell' ? '📤 Sell' : '📥 Buy'} order #${selectedOrderId}\n${summary}\n\nWhat would you like to do?`,
                   components: [buttonRow],
                 })
 
@@ -724,23 +739,38 @@ async function handleOrderAction(
       .setCustomId(modalId)
       .setTitle(`Edit Sell Order: ${order.commodityTicker}`)
 
-    const priceInput = new TextInputBuilder()
-      .setCustomId('price')
-      .setLabel('Price')
+    // Mode: All (sell everything), Max (sell up to N), Reserve (keep N, sell rest)
+    const modeDefault =
+      order.limitMode === 'none' ? 'All' : order.limitMode === 'max_sell' ? 'Max' : 'Reserve'
+
+    const modeInput = new TextInputBuilder()
+      .setCustomId('mode')
+      .setLabel('Mode (All, Max, or Reserve)')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.price.toString())
+      .setValue(modeDefault)
       .setRequired(true)
 
-    const currencyInput = new TextInputBuilder()
-      .setCustomId('currency')
-      .setLabel('Currency (CIS, AIC, ICA, NCC)')
+    const quantityInput = new TextInputBuilder()
+      .setCustomId('quantity')
+      .setLabel('Quantity (ignored for All mode)')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.currency)
+      .setValue(order.limitQuantity?.toString() ?? '0')
+      .setRequired(true)
+
+    // Price: "100 CIS" for custom or "KAWA" for price list
+    const priceDefault = order.priceListCode ?? `${order.price} ${order.currency}`
+
+    const priceInput = new TextInputBuilder()
+      .setCustomId('price')
+      .setLabel('Price (e.g. "100 CIS" or "KAWA")')
+      .setStyle(TextInputStyle.Short)
+      .setValue(priceDefault)
       .setRequired(true)
 
     modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(currencyInput)
+      new ActionRowBuilder<TextInputBuilder>().addComponents(modeInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
     )
 
     await btnInteraction.showModal(modal)
@@ -751,21 +781,29 @@ async function handleOrderAction(
         time: 60000,
       })
 
-      const newPrice = parseFloat(modalSubmit.fields.getTextInputValue('price'))
-      const newCurrency = modalSubmit.fields.getTextInputValue('currency').toUpperCase()
-
-      if (isNaN(newPrice) || newPrice <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid price. Please enter a positive number.',
-          flags: MessageFlags.Ephemeral,
-        })
+      // Parse mode
+      const modeValue = modalSubmit.fields.getTextInputValue('mode').trim().toLowerCase()
+      const limitMode = parseLimitMode(modeValue)
+      if (!limitMode) {
+        await replyError(modalSubmit, 'Invalid mode. Use "All", "Max", or "Reserve".')
         return
       }
 
-      if (!isValidCurrency(newCurrency)) {
+      // Parse quantity
+      const quantityValue = modalSubmit.fields.getTextInputValue('quantity').trim()
+      const quantity = parseInt(quantityValue, 10)
+      if (limitMode !== 'none' && (isNaN(quantity) || quantity <= 0)) {
+        await replyError(modalSubmit, 'Quantity must be a positive number for Max/Reserve mode.')
+        return
+      }
+
+      // Parse price
+      const priceValue = modalSubmit.fields.getTextInputValue('price').trim()
+      const parsed = await parsePriceInput(priceValue)
+      if (!parsed) {
         await replyError(
           modalSubmit,
-          `Invalid currency. Must be one of: ${VALID_CURRENCIES.join(', ')}`
+          'Invalid price. Use a number with currency (e.g. "100 CIS") or a price list code (e.g. "KAWA").'
         )
         return
       }
@@ -773,16 +811,26 @@ async function handleOrderAction(
       await db
         .update(sellOrders)
         .set({
-          price: newPrice.toString(),
-          currency: newCurrency as ValidCurrency,
+          price: parsed.price.toString(),
+          priceListCode: parsed.priceListCode,
+          currency: parsed.currency,
+          limitMode,
+          limitQuantity: limitMode !== 'none' ? quantity : null,
           updatedAt: new Date(),
         })
         .where(and(eq(sellOrders.id, orderId), eq(sellOrders.userId, userId)))
 
-      logger.info({ orderId, orderType: 'sell', userId, newPrice, newCurrency }, 'Order updated')
+      const displayMode =
+        limitMode === 'none' ? 'All' : limitMode === 'max_sell' ? 'Max' : 'Reserve'
+      const displayQty = limitMode !== 'none' ? ` ${quantity}x` : ''
+      const displayPrice = parsed.priceListCode ?? `${parsed.price} ${parsed.currency}`
+      logger.info(
+        { orderId, orderType: 'sell', userId, limitMode, quantity, ...parsed },
+        'Order updated'
+      )
 
       await modalSubmit.reply({
-        content: `✅ Sell order updated: ${newPrice} ${newCurrency}`,
+        content: `✅ Sell order updated: ${displayMode}${displayQty} @ ${displayPrice}`,
         flags: MessageFlags.Ephemeral,
       })
     } catch {
@@ -812,24 +860,19 @@ async function handleOrderAction(
       .setValue(order.quantity.toString())
       .setRequired(true)
 
+    // Price: "100 CIS" for custom or "KAWA" for price list
+    const priceDefault = order.priceListCode ?? `${order.price} ${order.currency}`
+
     const priceInput = new TextInputBuilder()
       .setCustomId('price')
-      .setLabel('Price')
+      .setLabel('Price (e.g. "100 CIS" or "KAWA")')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.price.toString())
-      .setRequired(true)
-
-    const currencyInput = new TextInputBuilder()
-      .setCustomId('currency')
-      .setLabel('Currency (CIS, AIC, ICA, NCC)')
-      .setStyle(TextInputStyle.Short)
-      .setValue(order.currency)
+      .setValue(priceDefault)
       .setRequired(true)
 
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(currencyInput)
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
     )
 
     await btnInteraction.showModal(modal)
@@ -841,29 +884,19 @@ async function handleOrderAction(
       })
 
       const newQuantity = parseInt(modalSubmit.fields.getTextInputValue('quantity'), 10)
-      const newPrice = parseFloat(modalSubmit.fields.getTextInputValue('price'))
-      const newCurrency = modalSubmit.fields.getTextInputValue('currency').toUpperCase()
+      const priceValue = modalSubmit.fields.getTextInputValue('price').trim()
 
       if (isNaN(newQuantity) || newQuantity <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid quantity. Please enter a positive integer.',
-          flags: MessageFlags.Ephemeral,
-        })
+        await replyError(modalSubmit, 'Quantity must be a positive number.')
         return
       }
 
-      if (isNaN(newPrice) || newPrice <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid price. Please enter a positive number.',
-          flags: MessageFlags.Ephemeral,
-        })
-        return
-      }
-
-      if (!isValidCurrency(newCurrency)) {
+      // Parse price
+      const parsed = await parsePriceInput(priceValue)
+      if (!parsed) {
         await replyError(
           modalSubmit,
-          `Invalid currency. Must be one of: ${VALID_CURRENCIES.join(', ')}`
+          'Invalid price. Use a number with currency (e.g. "100 CIS") or a price list code (e.g. "KAWA").'
         )
         return
       }
@@ -872,23 +905,132 @@ async function handleOrderAction(
         .update(buyOrders)
         .set({
           quantity: newQuantity,
-          price: newPrice.toString(),
-          currency: newCurrency as ValidCurrency,
+          price: parsed.price.toString(),
+          priceListCode: parsed.priceListCode,
+          currency: parsed.currency,
           updatedAt: new Date(),
         })
         .where(and(eq(buyOrders.id, orderId), eq(buyOrders.userId, userId)))
 
-      logger.info(
-        { orderId, orderType: 'buy', userId, newQuantity, newPrice, newCurrency },
-        'Order updated'
-      )
+      const displayPrice = parsed.priceListCode ?? `${parsed.price} ${parsed.currency}`
+      logger.info({ orderId, orderType: 'buy', userId, newQuantity, ...parsed }, 'Order updated')
 
       await modalSubmit.reply({
-        content: `✅ Buy order updated: ${newQuantity}x @ ${newPrice} ${newCurrency}`,
+        content: `✅ Buy order updated: ${newQuantity}x @ ${displayPrice}`,
         flags: MessageFlags.Ephemeral,
       })
     } catch {
       // Modal timed out or was dismissed
     }
   }
+}
+
+/**
+ * Build a summary string for a selected order.
+ */
+async function buildOrderSummary(
+  orderType: string,
+  orderId: number,
+  orders: {
+    id: number
+    commodityTicker: string
+    locationId: string
+    price: string
+    currency: ValidCurrency
+    priceListCode: string | null
+    quantity?: number
+    limitMode?: string
+    limitQuantity?: number | null
+    orderType: string
+  }[]
+): Promise<string> {
+  const order = orders.find(o => o.id === orderId)
+  if (!order) return ''
+
+  const priceInfo = await getOrderDisplayPrice({
+    price: order.price,
+    currency: order.currency,
+    priceListCode: order.priceListCode,
+    commodityTicker: order.commodityTicker,
+    locationId: order.locationId,
+  })
+
+  const priceDisplay = order.priceListCode
+    ? `${order.priceListCode}${priceInfo ? ` (${priceInfo.price.toFixed(2)} ${priceInfo.currency})` : ''}`
+    : priceInfo
+      ? `${priceInfo.price.toFixed(2)} ${priceInfo.currency}`
+      : `${order.price} ${order.currency}`
+
+  const lines: string[] = [
+    `> **${order.commodityTicker}** @ ${order.locationId}`,
+    `> Price: ${priceDisplay} · Visibility: ${order.orderType}`,
+  ]
+
+  if (orderType === 'sell' && order.limitMode) {
+    const mode =
+      order.limitMode === 'none' ? 'All' : order.limitMode === 'max_sell' ? 'Max' : 'Reserve'
+    const qty = order.limitMode !== 'none' && order.limitQuantity ? ` (${order.limitQuantity})` : ''
+    lines.push(`> Mode: ${mode}${qty}`)
+  }
+
+  if (orderType === 'buy' && order.quantity != null) {
+    lines.push(`> Quantity: ${order.quantity}`)
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * Parse a limit mode string into the DB enum value.
+ */
+function parseLimitMode(value: string): 'none' | 'max_sell' | 'reserve' | null {
+  switch (value) {
+    case 'all':
+    case 'none':
+      return 'none'
+    case 'max':
+    case 'max_sell':
+      return 'max_sell'
+    case 'reserve':
+      return 'reserve'
+    default:
+      return null
+  }
+}
+
+interface ParsedPrice {
+  price: number
+  priceListCode: string | null
+  currency: ValidCurrency
+}
+
+/**
+ * Parse a price input that can be:
+ * - "100 CIS" -> custom price with currency
+ * - "KAWA" -> price list code (dynamic pricing)
+ */
+async function parsePriceInput(value: string): Promise<ParsedPrice | null> {
+  const parts = value.split(/\s+/)
+
+  // Try "100 CIS" format: number + currency
+  if (parts.length === 2) {
+    const num = parseFloat(parts[0])
+    const cur = parts[1].toUpperCase()
+    if (!isNaN(num) && num > 0 && isValidCurrency(cur)) {
+      return { price: num, priceListCode: null, currency: cur }
+    }
+  }
+
+  // Try single token as price list code
+  if (parts.length === 1) {
+    const code = parts[0].toUpperCase()
+    const priceList = await db.query.priceLists.findFirst({
+      where: eq(priceLists.code, code),
+    })
+    if (priceList) {
+      return { price: 0, priceListCode: code, currency: priceList.currency }
+    }
+  }
+
+  return null
 }

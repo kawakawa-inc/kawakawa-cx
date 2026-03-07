@@ -181,7 +181,7 @@ function createOrderInteraction(opts: {
     .fn()
     .mockImplementation((name: string) => numberOptions[name] ?? null)
   // Add channelId
-  ;(interaction as Record<string, unknown>).channelId = 'test-channel-id'
+  ;(interaction as unknown as Record<string, unknown>).channelId = 'test-channel-id'
 
   return { interaction, replyFn, editReplyFn }
 }

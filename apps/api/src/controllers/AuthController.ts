@@ -12,7 +12,7 @@ import {
   Request,
 } from 'tsoa'
 import type { Request as ExpressRequest } from 'express'
-import { eq, and, inArray } from 'drizzle-orm'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 import type { Role } from '@kawakawa/types'
 import {
   db,
@@ -150,6 +150,7 @@ export class AuthController extends Controller {
       userId: user.id,
       username: user.username,
       roles: roleIds,
+      tokenVersion: user.tokenVersion,
     })
 
     return {
@@ -221,6 +222,7 @@ export class AuthController extends Controller {
       userId: newUser.id,
       username: newUser.username,
       roles: ['unverified'],
+      tokenVersion: newUser.tokenVersion,
     })
 
     // Notify admins (users with admin.manage_users permission) about new registration
@@ -341,10 +343,14 @@ export class AuthController extends Controller {
     // Hash new password
     const passwordHash = await hashPassword(body.newPassword)
 
-    // Update user password
+    // Update user password and bump tokenVersion to invalidate existing sessions
     await db
       .update(users)
-      .set({ passwordHash, updatedAt: new Date() })
+      .set({
+        passwordHash,
+        tokenVersion: sql<number>`${users.tokenVersion} + 1`,
+        updatedAt: new Date(),
+      })
       .where(eq(users.id, resetToken.userId))
 
     // Mark token as used

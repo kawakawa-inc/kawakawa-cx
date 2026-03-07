@@ -27,6 +27,13 @@ export const link: Command = {
     .setName('link')
     .setDescription('Link your Discord to an existing Kawakawa account'),
 
+  helpInfo: {
+    category: 'getting_started',
+    details:
+      'Generates a secure link to connect your Discord account to an existing Kawakawa account. Click the button, log in on the website, and your accounts are linked.',
+    examples: ['link'],
+  },
+
   // Prefix commands send response via DM (ephemeral flag triggers DM routing)
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {

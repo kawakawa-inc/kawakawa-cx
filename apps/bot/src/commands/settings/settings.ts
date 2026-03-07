@@ -215,6 +215,13 @@ export const settings: Command = {
     .setName('settings')
     .setDescription('View and manage your settings') as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'settings',
+    details:
+      'Configure location/commodity display modes, preferred currency, default price list, and favorites.',
+    examples: ['settings'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     // Require linked account
     const result = await requireLinkedUser(interaction)

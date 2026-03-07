@@ -1,6 +1,6 @@
 # Kawakawa CX - Development Commands
 
-.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web dev-bot bot-deploy start stop restart reload status
+.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web dev-bot bot-deploy start stop restart reload status logs
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -152,3 +152,6 @@ reload: ## Hot-reload a dev service via tsx stdin (usage: make reload S=bot)
 
 status: ## Show status of dev services
 	@./scripts/dev.sh status
+
+logs: ## Tail dev service logs (usage: make logs S=bot)
+	@tail -f .dev/logs/$(or $(S),*)*.log

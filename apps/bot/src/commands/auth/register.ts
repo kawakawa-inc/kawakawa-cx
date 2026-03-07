@@ -27,6 +27,13 @@ export const register: Command = {
         .setMaxLength(100)
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'getting_started',
+    details:
+      'Creates a new Kawakawa account and links it to your Discord. You must provide a username and display name.',
+    examples: ['register myuser My Display Name'],
+  },
+
   // Prefix commands send response via DM (ephemeral flag triggers DM routing)
   // Usage: !register username [display name]
 
@@ -35,6 +42,21 @@ export const register: Command = {
     const discordUsername = interaction.user.username
     const discordAvatar = interaction.user.avatar
     const prefix = getCommandPrefix(interaction)
+
+    // Check if user already has a linked account (before prompting for input)
+    const existingProfile = await db.query.userDiscordProfiles.findFirst({
+      where: eq(userDiscordProfiles.discordId, discordId),
+    })
+
+    if (existingProfile) {
+      await interaction.reply({
+        content:
+          'You already have a linked Kawakawa account.\n\n' +
+          `Use \`${prefix}whoami\` to see your account details, or \`${prefix}unlink\` to disconnect.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
 
     // Parse options - for prefix commands, parse from 'input'
     let username: string
@@ -67,21 +89,6 @@ export const register: Command = {
     if (username.length < 3 || username.length > 50) {
       await interaction.reply({
         content: 'Username must be between 3 and 50 characters.',
-        flags: MessageFlags.Ephemeral,
-      })
-      return
-    }
-
-    // Check if user already has a linked account
-    const existingProfile = await db.query.userDiscordProfiles.findFirst({
-      where: eq(userDiscordProfiles.discordId, discordId),
-    })
-
-    if (existingProfile) {
-      await interaction.reply({
-        content:
-          'You already have a linked Kawakawa account.\n\n' +
-          `Use \`${prefix}whoami\` to see your account details, or \`${prefix}unlink\` to disconnect.`,
         flags: MessageFlags.Ephemeral,
       })
       return

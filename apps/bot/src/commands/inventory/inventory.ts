@@ -171,6 +171,12 @@ export const inventory: Command = {
         .setRequired(false)
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'inventory',
+    details: 'Filter by commodity or location. Use the Share button to post publicly.',
+    examples: ['inventory', 'inv COF', 'inv BEN'],
+  },
+
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
     const query = focusedOption.value

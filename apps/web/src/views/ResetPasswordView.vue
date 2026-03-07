@@ -155,6 +155,8 @@ const handleReset = async () => {
       token: token.value,
       newPassword: newPassword.value,
     })
+    // Clear any existing session — the old JWT is now invalid
+    localStorage.removeItem('jwt')
     success.value = true
   } catch (error) {
     console.error('Password reset error:', error)

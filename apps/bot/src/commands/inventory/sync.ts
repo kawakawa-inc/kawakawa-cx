@@ -25,6 +25,13 @@ export const sync: Command = {
     .setName('sync')
     .setDescription('Check your FIO sync status and configure credentials'),
 
+  helpInfo: {
+    category: 'inventory',
+    details:
+      'View your FIO sync status, set or clear API credentials, and manually trigger an inventory sync.',
+    examples: ['sync'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
 

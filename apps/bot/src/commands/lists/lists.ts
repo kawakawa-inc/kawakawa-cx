@@ -86,6 +86,12 @@ export const lists: Command = {
     .setName('lists')
     .setDescription('View and manage your shopping lists') as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'lists',
+    details: 'View and manage your lists. Query the market, share, rename, or delete.',
+    examples: ['lists'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
 

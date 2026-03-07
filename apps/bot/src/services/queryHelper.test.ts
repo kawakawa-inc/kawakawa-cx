@@ -134,7 +134,7 @@ describe('queryHelper', () => {
       visibility: 'all',
       channelSettings: null,
       locationDisplayMode: 'natural-ids-only',
-      commodityDisplayMode: 'tickers-only',
+      commodityDisplayMode: 'ticker-only',
       isEphemeral: true,
     }
 
@@ -266,7 +266,7 @@ describe('queryHelper', () => {
         interaction,
         {
           hasOrders: true,
-          items: [{ content: 'line', sortKey: 'a' }],
+          items: [{ name: '', value: 'line' }],
           embed: {} as never,
           filterDescription: 'All orders',
         },

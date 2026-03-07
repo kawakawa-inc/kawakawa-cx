@@ -19,17 +19,35 @@ vi.mock('../utils/requestContext.js', () => ({
   setContextValue: vi.fn(),
 }))
 
-// Mock database to return proper permission results
-const mockDbWhere = vi.fn()
+// Track which table is being queried so we can return appropriate mock data
+const mockPermissionsWhere = vi.fn()
+let mockUsersResult: unknown[] = [{ tokenVersion: 0 }]
+let mockJoinResult: unknown[] = []
 
 vi.mock('../db/index.js', () => ({
   db: {
-    select: () => ({
-      from: () => ({
-        where: mockDbWhere,
+    select: vi.fn().mockImplementation(() => ({
+      from: vi.fn().mockImplementation((table: unknown) => {
+        if (table === 'users_table') {
+          return {
+            // Cache hit path: select tokenVersion from users where ... limit 1
+            where: () => ({
+              limit: () => Promise.resolve(mockUsersResult),
+            }),
+            // Cache miss path: select from users left join user_roles where ...
+            leftJoin: () => ({
+              where: () => Promise.resolve(mockJoinResult),
+            }),
+          }
+        }
+        // Permissions query path (from rolePermissions)
+        return {
+          where: mockPermissionsWhere,
+        }
       }),
-    }),
+    })),
   },
+  users: 'users_table',
   userRoles: {
     userId: 'userId',
     roleId: 'roleId',
@@ -51,8 +69,11 @@ describe('expressAuthentication', () => {
         authorization: 'Bearer valid-token',
       },
     }
+    // Default: user exists with tokenVersion 0
+    mockUsersResult = [{ tokenVersion: 0 }]
+    mockJoinResult = [{ tokenVersion: 0, roleId: 'member' }]
     // Default: return empty permissions (no permissions granted)
-    mockDbWhere.mockResolvedValue([])
+    mockPermissionsWhere.mockResolvedValue([])
   })
 
   describe('jwt authentication', () => {
@@ -84,12 +105,35 @@ describe('expressAuthentication', () => {
       expect(result).toEqual(payload)
     })
 
+    it('should reject when tokenVersion does not match', async () => {
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
+      // User's tokenVersion was bumped (password changed)
+      mockUsersResult = [{ tokenVersion: 1 }]
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'Token has been invalidated'
+      )
+    })
+
+    it('should reject when user not found in database', async () => {
+      const payload = { userId: 999, username: 'ghost', roles: ['member'] }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
+      mockUsersResult = []
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'Token has been invalidated'
+      )
+    })
+
     it('should pass when user has required permission', async () => {
       const payload = { userId: 1, username: 'admin', roles: ['admin'] }
       vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
       vi.mocked(roleCache.getCachedRoles).mockReturnValue(['admin'])
       // Mock: admin role has 'prices.manage' permission
-      mockDbWhere.mockResolvedValue([{ permissionId: 'prices.manage' }])
+      mockPermissionsWhere.mockResolvedValue([{ permissionId: 'prices.manage' }])
 
       const result = await expressAuthentication(mockRequest as Request, 'jwt', ['prices.manage'])
 
@@ -101,7 +145,7 @@ describe('expressAuthentication', () => {
       vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
       vi.mocked(roleCache.getCachedRoles).mockReturnValue(['admin'])
       // Mock: admin role has both permissions
-      mockDbWhere.mockResolvedValue([
+      mockPermissionsWhere.mockResolvedValue([
         { permissionId: 'prices.manage' },
         { permissionId: 'prices.view' },
       ])
@@ -119,7 +163,7 @@ describe('expressAuthentication', () => {
       vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
       vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
       // Mock: member role doesn't have 'admin.manage_users' permission
-      mockDbWhere.mockResolvedValue([])
+      mockPermissionsWhere.mockResolvedValue([])
 
       await expect(
         expressAuthentication(mockRequest as Request, 'jwt', ['admin.manage_users'])
@@ -131,7 +175,7 @@ describe('expressAuthentication', () => {
       vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
       vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
       // Mock: member role only has prices.view, not prices.manage
-      mockDbWhere.mockResolvedValue([{ permissionId: 'prices.view' }])
+      mockPermissionsWhere.mockResolvedValue([{ permissionId: 'prices.view' }])
 
       await expect(
         expressAuthentication(mockRequest as Request, 'jwt', ['prices.view', 'prices.manage'])
@@ -139,14 +183,14 @@ describe('expressAuthentication', () => {
     })
 
     it('should use current roles from cache/db for permission check when roles changed', async () => {
-      const tokenPayload = { userId: 1, username: 'user', roles: ['member'] }
+      const tokenPayload = { userId: 1, username: 'user', roles: ['member'], tokenVersion: 0 }
       const currentRoles = ['member', 'admin']
 
       vi.mocked(jwtUtils.verifyToken).mockReturnValue(tokenPayload)
       vi.mocked(roleCache.getCachedRoles).mockReturnValue(currentRoles)
       vi.mocked(jwtUtils.generateToken).mockReturnValue('new-token')
       // Mock: admin role has 'admin.manage_users' permission
-      mockDbWhere.mockResolvedValue([{ permissionId: 'admin.manage_users' }])
+      mockPermissionsWhere.mockResolvedValue([{ permissionId: 'admin.manage_users' }])
 
       // Should pass because current roles (not token roles) include admin which has the permission
       const result = await expressAuthentication(mockRequest as Request, 'jwt', [
@@ -157,8 +201,22 @@ describe('expressAuthentication', () => {
         userId: 1,
         username: 'user',
         roles: currentRoles,
+        tokenVersion: 0,
       })
       expect(requestContext.setContextValue).toHaveBeenCalledWith('refreshedToken', 'new-token')
+    })
+
+    it('should fetch tokenVersion and roles in one query on cache miss', async () => {
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      // Cache miss
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(undefined)
+      mockJoinResult = [{ tokenVersion: 0, roleId: 'member' }]
+
+      const result = await expressAuthentication(mockRequest as Request, 'jwt')
+
+      expect(result).toEqual(payload)
+      expect(roleCache.setCachedRoles).toHaveBeenCalledWith(1, ['member'])
     })
   })
 

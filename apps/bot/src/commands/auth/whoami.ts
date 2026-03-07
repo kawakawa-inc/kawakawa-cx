@@ -10,6 +10,12 @@ export const whoami: Command = {
     .setName('whoami')
     .setDescription('Show your linked Kawakawa account information'),
 
+  helpInfo: {
+    category: 'getting_started',
+    details: 'Shows your linked username, display name, and roles.',
+    examples: ['whoami'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id

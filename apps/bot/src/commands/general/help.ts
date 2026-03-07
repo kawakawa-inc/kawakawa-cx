@@ -1,132 +1,165 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
-import type { Command, BotClient } from '../../client.js'
+import type { Command, BotClient, HelpCategory } from '../../client.js'
 import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
-interface HelpCommandEntry {
-  /** Command name without prefix (e.g., 'register') */
-  name: string
-  /** Extended help details (optional, shown below the command description) */
-  details?: string
-}
-
-interface HelpSection {
+interface CategoryMeta {
   title: string
   emoji: string
-  commands: HelpCommandEntry[]
 }
 
-/**
- * Command sections - descriptions are pulled from registered commands at runtime.
- * Only store command names and optional extended details here.
- */
-const SECTIONS: Record<string, HelpSection> = {
-  getting_started: {
-    title: 'Getting Started',
-    emoji: '🚀',
-    commands: [{ name: 'register' }, { name: 'link' }, { name: 'whoami' }, { name: 'unlink' }],
-  },
-  inventory: {
-    title: 'Inventory',
-    emoji: '📦',
-    commands: [
-      {
-        name: 'inventory',
-        details: 'Filter by commodity or location. Use the Share button to post publicly.',
-      },
-      { name: 'sync' },
-    ],
-  },
-  orders: {
-    title: 'Creating Orders',
-    emoji: '💰',
-    commands: [
-      { name: 'sell' },
-      { name: 'buy' },
-      {
-        name: 'bulksell',
-        details:
-          'Format: `TICKER LOCATION [limit] PRICE [CURRENCY]`\n' +
-          'Examples:\n' +
-          '`COF UV-351a 150`\n' +
-          '`RAT BEN max:500 125.50 ICA`\n' +
-          '`DW MOR reserve:100 75`',
-      },
-      {
-        name: 'bulkbuy',
-        details:
-          'Format: `TICKER LOCATION QUANTITY PRICE [CURRENCY]`\n' +
-          'Examples:\n' +
-          '`COF UV-351a 1000 150`\n' +
-          '`RAT BEN 500 125.50 ICA`',
-      },
-    ],
-  },
-  market: {
-    title: 'Market',
-    emoji: '📊',
-    commands: [
-      {
-        name: 'orders',
-        details:
-          'Shows your orders by default. Add filters to search the market.\n' +
-          'Use the Manage button to edit or delete your orders.',
-      },
-      {
-        name: 'query',
-        details: 'Find what others are selling or buying.',
-      },
-    ],
-  },
-  reservations: {
-    title: 'Reservations',
-    emoji: '📝',
-    commands: [
-      {
-        name: 'reserve',
-        details:
-          'Browse available sell orders for a commodity, then reserve a quantity.\n' +
-          'The seller will be notified and can confirm or reject.',
-      },
-      {
-        name: 'fill',
-        details:
-          'Browse open buy orders for a commodity, then offer to supply.\n' +
-          'The buyer will be notified and can confirm or reject.',
-      },
-      {
-        name: 'reservations',
-        details:
-          'See reservations where you are the order owner or counterparty.\n' +
-          'Confirm, reject, fulfill, or cancel reservations.',
-      },
-    ],
-  },
-  settings: {
-    title: 'Settings',
-    emoji: '⚙️',
-    commands: [
-      {
-        name: 'settings',
-        details:
-          '- Location/commodity display modes\n' +
-          '- Preferred currency\n' +
-          '- Default price list for auto-pricing\n' +
-          '- Favorite locations and commodities',
-      },
-    ],
-  },
+/** Display metadata for each category */
+const CATEGORIES: Record<HelpCategory, CategoryMeta> = {
+  getting_started: { title: 'Getting Started', emoji: '🚀' },
+  inventory: { title: 'Inventory', emoji: '📦' },
+  trading: { title: 'Trading', emoji: '🔄' },
+  orders: { title: 'Managing Orders', emoji: '💰' },
+  invoices: { title: 'Invoices & Reservations', emoji: '📝' },
+  lists: { title: 'Shopping Lists', emoji: '📋' },
+  settings: { title: 'Settings', emoji: '⚙️' },
 }
+
+/** Category display order */
+const CATEGORY_ORDER: HelpCategory[] = [
+  'getting_started',
+  'inventory',
+  'trading',
+  'orders',
+  'invoices',
+  'lists',
+  'settings',
+]
 
 /** Format a command name with the appropriate prefix */
 function cmd(name: string, prefix: string): string {
   return `${prefix}${name}`
 }
 
-/** Get command description from registered commands */
-function getCommandDescription(client: BotClient, commandName: string): string {
-  const command = client.commands.get(commandName)
-  return command?.data.description ?? 'No description available'
+/**
+ * Resolve user input to a category key or command name.
+ * Returns { type: 'category', key } or { type: 'command', command } or null.
+ */
+function resolveInput(
+  input: string,
+  client: BotClient
+): { type: 'category'; key: HelpCategory } | { type: 'command'; command: Command } | null {
+  const normalized = input.toLowerCase().replace(/[^a-z_]/g, '')
+
+  // Try exact category key match
+  if (normalized in CATEGORIES) {
+    return { type: 'category', key: normalized as HelpCategory }
+  }
+
+  // Try category title match
+  for (const [key, meta] of Object.entries(CATEGORIES)) {
+    if (meta.title.toLowerCase().replace(/[^a-z]/g, '') === normalized.replace(/_/g, '')) {
+      return { type: 'category', key: key as HelpCategory }
+    }
+  }
+
+  // Try command name match
+  const command = client.commands.get(normalized)
+  if (command) {
+    return { type: 'command', command }
+  }
+
+  return null
+}
+
+/** Build the overview embed showing all categories */
+function buildOverviewEmbed(client: BotClient, prefix: string): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setTitle('Kawakawa Exchange Bot')
+    .setColor(0x5865f2)
+    .setDescription(
+      'Welcome to the Kawakawa internal commodity exchange!\n\n' +
+        'This bot helps you manage inventory, create buy/sell orders, and trade with other members.\n\n' +
+        `Use \`${cmd('help', prefix)} <topic>\` for a category, or \`${cmd('help', prefix)} <command>\` for details.`
+    )
+
+  // Group commands by category
+  for (const catKey of CATEGORY_ORDER) {
+    const meta = CATEGORIES[catKey]
+    const commands = getCommandsInCategory(client, catKey)
+    if (commands.length === 0) continue
+
+    const commandList = commands.map(c => `\`${cmd(c.data.name, prefix)}\``).join(', ')
+    embed.addFields({
+      name: `${meta.emoji} ${meta.title}`,
+      value: commandList,
+      inline: false,
+    })
+  }
+
+  // Quick start guide
+  embed.addFields({
+    name: '📋 Quick Start',
+    value:
+      `1. \`${cmd('register', prefix)}\` - Create your account\n` +
+      `2. \`${cmd('sync', prefix)}\` - Connect your FIO inventory\n` +
+      `3. \`${cmd('bulksell', prefix)}\` - Post your sell orders\n` +
+      `4. \`${cmd('buy', prefix)}\` - Browse what others are selling\n` +
+      `5. \`${cmd('settings', prefix)}\` - Customize display preferences`,
+    inline: false,
+  })
+
+  embed.setFooter({
+    text: 'Tip: Most commands are ephemeral (only you see them). Use Share buttons to post publicly.',
+  })
+
+  return embed
+}
+
+/** Build an embed for a specific category */
+function buildCategoryEmbed(client: BotClient, catKey: HelpCategory, prefix: string): EmbedBuilder {
+  const meta = CATEGORIES[catKey]
+  const commands = getCommandsInCategory(client, catKey)
+
+  const embed = new EmbedBuilder().setTitle(`${meta.emoji} ${meta.title}`).setColor(0x5865f2)
+
+  for (const command of commands) {
+    let value = command.data.description
+    if (command.helpInfo?.details) {
+      value += `\n\n${command.helpInfo.details}`
+    }
+    embed.addFields({ name: cmd(command.data.name, prefix), value, inline: false })
+  }
+
+  return embed
+}
+
+/** Build an embed for a specific command */
+function buildCommandEmbed(command: Command, prefix: string): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setTitle(`${cmd(command.data.name, prefix)}`)
+    .setColor(0x5865f2)
+    .setDescription(command.data.description)
+
+  if (command.helpInfo?.details) {
+    embed.addFields({ name: 'Details', value: command.helpInfo.details, inline: false })
+  }
+
+  if (command.helpInfo?.examples && command.helpInfo.examples.length > 0) {
+    const exampleLines = command.helpInfo.examples.map(ex => `\`${cmd(ex, prefix)}\``).join('\n')
+    embed.addFields({ name: 'Examples', value: exampleLines, inline: false })
+  }
+
+  if (command.prefixEnabled === false) {
+    embed.setFooter({ text: 'This command is slash-only (requires Discord UI).' })
+  }
+
+  return embed
+}
+
+/** Get all commands in a category, sorted by name */
+function getCommandsInCategory(client: BotClient, catKey: HelpCategory): Command[] {
+  const commands: Command[] = []
+  for (const command of client.commands.values()) {
+    if (command.helpInfo?.category === catKey) {
+      commands.push(command)
+    }
+  }
+  return commands
 }
 
 export const help: Command = {
@@ -136,85 +169,43 @@ export const help: Command = {
     .addStringOption(option =>
       option
         .setName('topic')
-        .setDescription('Get help on a specific topic')
+        .setDescription('A category or command name')
         .setRequired(false)
         .addChoices(
-          { name: 'Getting Started', value: 'getting_started' },
-          { name: 'Inventory', value: 'inventory' },
-          { name: 'Creating Orders', value: 'orders' },
-          { name: 'Market', value: 'market' },
-          { name: 'Reservations', value: 'reservations' },
-          { name: 'Settings', value: 'settings' }
+          ...CATEGORY_ORDER.map(key => ({
+            name: CATEGORIES[key].title,
+            value: key,
+          }))
         )
     ) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const topic = interaction.options.getString('topic')
+    const rawTopic = interaction.options.getString('topic')
     const prefix = getCommandPrefix(interaction)
     const client = interaction.client as BotClient
 
-    if (topic && topic in SECTIONS) {
-      // Show specific topic
-      const section = SECTIONS[topic]
-      const embed = new EmbedBuilder()
-        .setTitle(`${section.emoji} ${section.title}`)
-        .setColor(0x5865f2)
+    if (!rawTopic) {
+      const embed = buildOverviewEmbed(client, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
+      return
+    }
 
-      for (const command of section.commands) {
-        // Get description from the registered command
-        let value = getCommandDescription(client, command.name)
-        if (command.details) {
-          value += `\n\n${command.details}`
-        }
-        embed.addFields({ name: cmd(command.name, prefix), value, inline: false })
-      }
+    const resolved = resolveInput(rawTopic, client)
 
+    if (!resolved) {
       await interaction.reply({
-        embeds: [embed],
+        content: `Unknown topic or command: \`${rawTopic}\`\n\nUse \`${cmd('help', prefix)}\` to see available topics.`,
         flags: MessageFlags.Ephemeral,
       })
       return
     }
 
-    // Show overview
-    const embed = new EmbedBuilder()
-      .setTitle('Kawakawa Exchange Bot')
-      .setColor(0x5865f2)
-      .setDescription(
-        'Welcome to the Kawakawa internal commodity exchange!\n\n' +
-          'This bot helps you manage inventory, create buy/sell orders, and trade with other members.\n\n' +
-          `Use \`${cmd('help', prefix)} topic:\` to learn more about a specific area.`
-      )
-
-    // Add sections overview
-    for (const section of Object.values(SECTIONS)) {
-      const commandList = section.commands.map(c => `\`${cmd(c.name, prefix)}\``).join(', ')
-      embed.addFields({
-        name: `${section.emoji} ${section.title}`,
-        value: commandList,
-        inline: false,
-      })
+    if (resolved.type === 'category') {
+      const embed = buildCategoryEmbed(client, resolved.key, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
+    } else {
+      const embed = buildCommandEmbed(resolved.command, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
     }
-
-    // Quick start guide
-    embed.addFields({
-      name: '📋 Quick Start',
-      value:
-        `1. \`${cmd('register', prefix)}\` - ${getCommandDescription(client, 'register')}\n` +
-        `2. \`${cmd('settings', prefix)}\` - ${getCommandDescription(client, 'settings')}\n` +
-        `3. \`${cmd('sync', prefix)}\` - ${getCommandDescription(client, 'sync')}\n` +
-        `4. \`${cmd('bulksell', prefix)}\` - ${getCommandDescription(client, 'bulksell')}\n` +
-        `5. \`${cmd('query', prefix)}\` - ${getCommandDescription(client, 'query')}`,
-      inline: false,
-    })
-
-    embed.setFooter({
-      text: 'Tip: Most commands are ephemeral (only you see them). Use Share buttons to post publicly.',
-    })
-
-    await interaction.reply({
-      embeds: [embed],
-      flags: MessageFlags.Ephemeral,
-    })
   },
 }

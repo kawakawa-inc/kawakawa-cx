@@ -156,6 +156,12 @@ export const order: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'orders',
+    details: 'Create or update buy/sell orders with auto-pricing from your price list.',
+    examples: ['order sell COF BEN', 'order buy RAT BEN 100 150'],
+  },
+
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
 

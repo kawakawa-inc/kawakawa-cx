@@ -34,9 +34,7 @@
           :direction="invoice.direction"
         />
 
-        <div v-else class="text-center pa-6 text-medium-emphasis">
-          No items in this invoice
-        </div>
+        <div v-else class="text-center pa-6 text-medium-emphasis">No items in this invoice</div>
 
         <!-- Net Position -->
         <template v-if="netTotals.length > 0">
@@ -125,8 +123,7 @@ const netTotals = computed(() => {
   const sellTotals = new Map<Currency, number>()
 
   for (const item of props.invoice.lineItems) {
-    const isBuy =
-      direction === 'sent' ? item.orderType === 'sell' : item.orderType === 'buy'
+    const isBuy = direction === 'sent' ? item.orderType === 'sell' : item.orderType === 'buy'
 
     const map = isBuy ? buyTotals : sellTotals
     map.set(item.currency, (map.get(item.currency) ?? 0) + item.totalValue)

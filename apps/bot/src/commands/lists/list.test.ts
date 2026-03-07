@@ -8,7 +8,7 @@ const {
   mockFormatCommodity,
   mockDbInsert,
   mockReturning,
-  mockValues,
+  _mockValues,
 } = vi.hoisted(() => {
   const mockReturning = vi.fn()
   const mockValues = vi.fn().mockReturnValue({ returning: mockReturning })
@@ -20,7 +20,7 @@ const {
     mockFormatCommodity: vi.fn(),
     mockDbInsert: vi.fn().mockReturnValue({ values: mockValues }),
     mockReturning,
-    mockValues,
+    _mockValues: mockValues,
   }
 })
 
@@ -32,7 +32,7 @@ vi.mock('discord.js', () => ({
     setDescription() {
       return this
     }
-    addStringOption(fn: Function) {
+    addStringOption(fn: (opt: unknown) => unknown) {
       fn({ setName: () => ({ setDescription: () => ({ setRequired: () => ({}) }) }) })
       return this
     }

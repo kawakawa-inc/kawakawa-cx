@@ -600,6 +600,98 @@ describe('messageCommands', () => {
     })
   })
 
+  describe('fuzzy command matching', () => {
+    it('suggests commands when input is a typo (transposition)', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!ivnoice',
+        reply: mockReply,
+      })
+      const invoiceCommand = createMockCommand('invoice')
+      const invoicesCommand = createMockCommand('invoices')
+      const client = createMockClient(
+        new Map([
+          ['invoice', invoiceCommand],
+          ['invoices', invoicesCommand],
+        ])
+      )
+
+      await handleMessageCommand(message, client)
+
+      expect(invoiceCommand.execute).not.toHaveBeenCalled()
+      expect(mockReply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('Did you mean'),
+          allowedMentions: { repliedUser: false },
+        })
+      )
+      const content = mockReply.mock.calls[0][0].content as string
+      expect(content).toContain('!invoice')
+    })
+
+    it('suggests single command for close typo', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!hlep',
+        reply: mockReply,
+      })
+      const helpCommand = createMockCommand('help')
+      const client = createMockClient(new Map([['help', helpCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(mockReply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('`!help`'),
+        })
+      )
+    })
+
+    it('does not suggest when input is too different', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!abcdefg',
+        reply: mockReply,
+      })
+      const helpCommand = createMockCommand('help')
+      const client = createMockClient(new Map([['help', helpCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(mockReply).not.toHaveBeenCalled()
+    })
+
+    it('excludes prefixEnabled: false commands from fuzzy matching', async () => {
+      mockGetChannelConfig.mockResolvedValue({
+        commandPrefix: '!',
+      })
+
+      const mockReply = vi.fn()
+      const message = createMockMessage({
+        content: '!settigns',
+        reply: mockReply,
+      })
+      const settingsCommand = { ...createMockCommand('settings'), prefixEnabled: false as const }
+      const client = createMockClient(new Map([['settings', settingsCommand]]))
+
+      await handleMessageCommand(message, client)
+
+      expect(mockReply).not.toHaveBeenCalled()
+    })
+  })
+
   describe('expandPrefixes', () => {
     it('expands a prefix string into individual characters', () => {
       const result = expandPrefixes(['!?'])

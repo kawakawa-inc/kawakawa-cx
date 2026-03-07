@@ -49,6 +49,12 @@ export const invoice: Command = {
       option.setName('id').setDescription('Invoice ID (e.g., 5)').setRequired(true).setMinValue(1)
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'invoices',
+    details: 'View invoice details and take actions (submit, confirm, reject, cancel).',
+    examples: ['invoice 5'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
 

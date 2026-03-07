@@ -7,6 +7,8 @@ export interface JwtPayload {
   userId: number
   username: string
   roles: string[]
+  /** Bumped on password change to invalidate all existing tokens. Defaults to 0 for legacy tokens. */
+  tokenVersion?: number
 }
 
 export const generateToken = (payload: JwtPayload): string => {

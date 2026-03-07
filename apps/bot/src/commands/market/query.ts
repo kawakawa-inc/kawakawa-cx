@@ -148,6 +148,12 @@ export const query: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'trading',
+    details: 'Flexible market search. Accepts commodity tickers, locations, or XIT JSON.',
+    examples: ['query COF BEN', 'query 100 COF'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
 

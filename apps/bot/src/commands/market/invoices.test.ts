@@ -231,7 +231,43 @@ describe('/invoices command', () => {
     expect(sentField).toBeUndefined()
   })
 
-  it('truncates invoice list at 10 items and shows overflow message', async () => {
+  it('shows no pagination buttons when invoices fit on one page', async () => {
+    const drafts = [makeInvoiceSummary({ id: 1, counterpartyName: 'bob', status: 'draft' })]
+    mockGetInboxInvoices.mockResolvedValueOnce([])
+    mockGetDraftInvoices.mockResolvedValueOnce(drafts)
+    mockGetSentInvoices.mockResolvedValueOnce([])
+
+    const { interaction, replyFn } = createMockInteraction()
+    await invoicesCommand.execute(interaction as never)
+
+    const call = replyFn.mock.calls[0][0]
+    // Single page should have no components
+    expect(call.components).toBeUndefined()
+  })
+
+  it('shows pagination buttons when invoices span multiple pages', async () => {
+    // 12 drafts should require 2 pages (10 per page)
+    const manyDrafts = Array.from({ length: 12 }, (_, i) =>
+      makeInvoiceSummary({
+        id: i + 1,
+        counterpartyName: `user${i + 1}`,
+        status: 'draft',
+      })
+    )
+    mockGetInboxInvoices.mockResolvedValueOnce([])
+    mockGetDraftInvoices.mockResolvedValueOnce(manyDrafts)
+    mockGetSentInvoices.mockResolvedValueOnce([])
+
+    const { interaction, replyFn } = createMockInteraction()
+    await invoicesCommand.execute(interaction as never)
+
+    const call = replyFn.mock.calls[0][0]
+    // Should have components (pagination buttons)
+    expect(call.components).toBeDefined()
+    expect(call.components.length).toBeGreaterThan(0)
+  })
+
+  it('first page shows first 10 invoices, not all', async () => {
     const manyDrafts = Array.from({ length: 12 }, (_, i) =>
       makeInvoiceSummary({
         id: i + 1,
@@ -251,12 +287,10 @@ describe('/invoices command', () => {
     const draftsField = fieldsFlat.find((f: { name: string }) => f.name.includes('Drafts'))
 
     expect(draftsField).toBeDefined()
-    // Should show only 10 entries plus overflow message
-    expect(draftsField.value).toContain('...and 2 more')
-    // First 10 should be present
+    // First page should have first 10
     expect(draftsField.value).toContain('#1')
     expect(draftsField.value).toContain('#10')
-    // Items beyond 10 should not appear as direct listings
+    // Items 11-12 should be on page 2
     expect(draftsField.value).not.toMatch(/#11\b.*user11/)
   })
 
@@ -405,5 +439,20 @@ describe('/invoices command', () => {
     expect(inboxField).toBeUndefined()
     expect(draftsField).toBeUndefined()
     expect(sentField).toBeDefined()
+  })
+
+  it('shows page number in footer when paginated', async () => {
+    const manyDrafts = Array.from({ length: 12 }, (_, i) =>
+      makeInvoiceSummary({ id: i + 1, counterpartyName: `user${i + 1}`, status: 'draft' })
+    )
+    mockGetInboxInvoices.mockResolvedValueOnce([])
+    mockGetDraftInvoices.mockResolvedValueOnce(manyDrafts)
+    mockGetSentInvoices.mockResolvedValueOnce([])
+
+    const { interaction, replyFn } = createMockInteraction()
+    await invoicesCommand.execute(interaction as never)
+
+    const embed = replyFn.mock.calls[0][0].embeds[0]
+    expect(embed.data.footer.text).toContain('Page 1/')
   })
 })

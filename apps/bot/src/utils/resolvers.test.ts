@@ -121,7 +121,7 @@ describe('resolvers', () => {
         fioUsername: null,
       })
 
-      const result = await botResolvers.resolveDiscordMention('123456')
+      const result = await botResolvers.resolveDiscordMention!('123456')
 
       expect(result).toEqual({
         userId: 2,
@@ -134,7 +134,7 @@ describe('resolvers', () => {
     it('returns null when discord user not found', async () => {
       mockFindUserByDiscordId.mockResolvedValue(null)
 
-      const result = await botResolvers.resolveDiscordMention('999999')
+      const result = await botResolvers.resolveDiscordMention!('999999')
 
       expect(result).toBeNull()
     })

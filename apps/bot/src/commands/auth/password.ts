@@ -24,6 +24,13 @@ export const password: Command = {
     .setName('password')
     .setDescription('Get a link to set or change your password on the website'),
 
+  helpInfo: {
+    category: 'getting_started',
+    details:
+      'Generates a password reset link (24h expiry). For Discord-only accounts, this lets you set a password for website login.',
+    examples: ['password'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id

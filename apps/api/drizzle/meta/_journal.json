@@ -64,6 +64,13 @@
       "when": 1768486664719,
       "tag": "0008_chilly_salo",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1772919019426,
+      "tag": "0009_stormy_scrambler",
+      "breakpoints": true
     }
   ]
 }

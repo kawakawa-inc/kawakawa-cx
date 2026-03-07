@@ -259,7 +259,15 @@ export async function handleMessageCommand(message: Message, client: BotClient):
       })
       return
     } else {
-      // No matches at all - ignore silently
+      // No partial matches - try fuzzy matching for typos
+      const fuzzyMatches = findFuzzyMatches(commandName, client.commands)
+      if (fuzzyMatches.length > 0) {
+        const suggestions = fuzzyMatches.map(cmd => `\`${prefix}${cmd.data.name}\``).join(' or ')
+        await message.reply({
+          content: `Did you mean ${suggestions}?`,
+          allowedMentions: { repliedUser: false },
+        })
+      }
       return
     }
   }
@@ -315,4 +323,62 @@ export async function handleMessageCommand(message: Message, client: BotClient):
       // Ignore follow-up errors
     }
   }
+}
+
+const MAX_FUZZY_DISTANCE = 2
+
+/**
+ * Damerau-Levenshtein distance between two strings.
+ * Handles insertions, deletions, substitutions, and transpositions.
+ */
+function damerauLevenshtein(a: string, b: string): number {
+  const lenA = a.length
+  const lenB = b.length
+
+  // Quick exits
+  if (lenA === 0) return lenB
+  if (lenB === 0) return lenA
+  if (Math.abs(lenA - lenB) > MAX_FUZZY_DISTANCE) return MAX_FUZZY_DISTANCE + 1
+
+  const d: number[][] = Array.from({ length: lenA + 1 }, () => new Array(lenB + 1).fill(0))
+
+  for (let i = 0; i <= lenA; i++) d[i][0] = i
+  for (let j = 0; j <= lenB; j++) d[0][j] = j
+
+  for (let i = 1; i <= lenA; i++) {
+    for (let j = 1; j <= lenB; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1, // deletion
+        d[i][j - 1] + 1, // insertion
+        d[i - 1][j - 1] + cost // substitution
+      )
+      // transposition
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost)
+      }
+    }
+  }
+
+  return d[lenA][lenB]
+}
+
+/**
+ * Find commands that are within edit distance 2 of the input.
+ * Only considers prefix-enabled commands.
+ */
+function findFuzzyMatches(input: string, commands: Map<string, Command>): Command[] {
+  const matches: { cmd: Command; distance: number }[] = []
+
+  for (const [name, cmd] of commands) {
+    if (cmd.prefixEnabled === false) continue
+    const dist = damerauLevenshtein(input, name)
+    if (dist <= MAX_FUZZY_DISTANCE) {
+      matches.push({ cmd, distance: dist })
+    }
+  }
+
+  // Sort by distance (closest first), then alphabetically
+  matches.sort((a, b) => a.distance - b.distance || a.cmd.data.name.localeCompare(b.cmd.data.name))
+  return matches.map(m => m.cmd)
 }

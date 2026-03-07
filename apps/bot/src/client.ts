@@ -13,6 +13,24 @@ import { getConfig } from './config.js'
 import logger from './utils/logger.js'
 import { handleMessageCommand } from './services/messageCommands.js'
 
+export type HelpCategory =
+  | 'getting_started'
+  | 'inventory'
+  | 'trading'
+  | 'orders'
+  | 'invoices'
+  | 'lists'
+  | 'settings'
+
+export interface HelpInfo {
+  /** Which section this command belongs to in !help */
+  category: HelpCategory
+  /** Extended help text shown in category view and !help <command> */
+  details: string
+  /** Usage examples shown in !help <command> (without prefix) */
+  examples: string[]
+}
+
 export interface Command {
   data: {
     name: string
@@ -24,6 +42,8 @@ export interface Command {
   /** Whether this command can be invoked via prefix (text) commands. Defaults to true.
    * Set to false for commands that require ephemeral responses or have sensitive data. */
   prefixEnabled?: boolean
+  /** Help information for the !help command */
+  helpInfo?: HelpInfo
 }
 
 export interface BotClient extends Client {

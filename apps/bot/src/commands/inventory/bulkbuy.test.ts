@@ -14,7 +14,7 @@ vi.mock('discord.js', () => ({
     setDescription() {
       return this
     }
-    addStringOption(fn: Function) {
+    addStringOption(fn: (opt: unknown) => unknown) {
       fn({
         setName: () => ({
           setDescription: () => ({

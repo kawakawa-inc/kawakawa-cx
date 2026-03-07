@@ -31,6 +31,12 @@ export const close: Command = {
         .setRequired(false)
     ),
 
+  helpInfo: {
+    category: 'invoices',
+    details: 'Submit a draft invoice to a target user, creating reservations.',
+    examples: ['close alice', 'close 5'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     // Get command prefix (/ or ! or custom)
     const prefix = getCommandPrefix(interaction)

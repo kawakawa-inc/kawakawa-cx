@@ -48,6 +48,13 @@ export const bulkbuy: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'orders',
+    details:
+      'Format: `TICKER LOCATION QUANTITY PRICE [CURRENCY]`\nExamples:\n`COF UV-351a 1000 150`\n`RAT BEN 500 125.50 ICA`',
+    examples: ['bulkbuy'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const visibilityOption = interaction.options.getString('visibility') as Visibility | null
 

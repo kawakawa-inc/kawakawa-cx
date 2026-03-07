@@ -2,7 +2,7 @@ import { Request } from 'express'
 import { eq, and, inArray } from 'drizzle-orm'
 import { verifyToken, generateToken, JwtPayload } from '../utils/jwt.js'
 import { getCachedRoles, setCachedRoles } from '../utils/roleCache.js'
-import { db, userRoles, rolePermissions } from '../db/index.js'
+import { db, users, userRoles, rolePermissions } from '../db/index.js'
 import { setContextValue } from '../utils/requestContext.js'
 import { Unauthorized, Forbidden } from '../utils/errors.js'
 
@@ -17,25 +17,43 @@ function rolesMatch(a: string[], b: string[]): boolean {
 }
 
 /**
- * Get current roles for a user, using cache when available
+ * Fetch user's tokenVersion and current roles in a single query.
+ * Returns null if user not found.
  */
-async function getCurrentRoles(userId: number): Promise<string[]> {
-  // Check cache first
-  const cached = getCachedRoles(userId)
-  if (cached) return cached
+async function getUserAuthInfo(
+  userId: number
+): Promise<{ tokenVersion: number; roles: string[] } | null> {
+  // Check role cache first — if hit, we still need tokenVersion from DB
+  const cachedRoles = getCachedRoles(userId)
+  if (cachedRoles) {
+    const [user] = await db
+      .select({ tokenVersion: users.tokenVersion })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+    if (!user) return null
+    return { tokenVersion: user.tokenVersion, roles: cachedRoles }
+  }
 
-  // Fetch from database
-  const roles = await db
-    .select({ roleId: userRoles.roleId })
-    .from(userRoles)
-    .where(eq(userRoles.userId, userId))
+  // Cache miss: fetch tokenVersion and roles in one query via left join
+  const rows = await db
+    .select({
+      tokenVersion: users.tokenVersion,
+      roleId: userRoles.roleId,
+    })
+    .from(users)
+    .leftJoin(userRoles, eq(users.id, userRoles.userId))
+    .where(eq(users.id, userId))
 
-  const roleIds = roles.map(r => r.roleId)
+  if (rows.length === 0) return null
 
-  // Cache for future requests
-  setCachedRoles(userId, roleIds)
+  const tokenVersion = rows[0].tokenVersion
+  const roles = rows.filter(r => r.roleId !== null).map(r => r.roleId!)
 
-  return roleIds
+  // Cache roles for future requests
+  setCachedRoles(userId, roles)
+
+  return { tokenVersion, roles }
 }
 
 /**
@@ -80,19 +98,24 @@ export async function expressAuthentication(
     try {
       const decoded = verifyToken(token)
 
-      // Get current roles from cache/database
-      const currentRoles = await getCurrentRoles(decoded.userId)
+      // Fetch tokenVersion + roles in a single DB round-trip (or cache hit + 1 query)
+      const authInfo = await getUserAuthInfo(decoded.userId)
+
+      if (!authInfo || authInfo.tokenVersion !== (decoded.tokenVersion ?? 0)) {
+        return Promise.reject(Unauthorized('Token has been invalidated. Please log in again.'))
+      }
 
       // Determine the payload to use (with current roles if they changed)
       let payload: JwtPayload = decoded
 
       // Check if roles have changed
-      if (!rolesMatch(decoded.roles, currentRoles)) {
+      if (!rolesMatch(decoded.roles, authInfo.roles)) {
         // Generate refreshed token with current roles
         payload = {
           userId: decoded.userId,
           username: decoded.username,
-          roles: currentRoles,
+          roles: authInfo.roles,
+          tokenVersion: authInfo.tokenVersion,
         }
         setContextValue('refreshedToken', generateToken(payload))
       }

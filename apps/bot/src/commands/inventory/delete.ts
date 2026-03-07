@@ -67,6 +67,13 @@ export const deleteCommand: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'orders',
+    details:
+      'Delete sell and/or buy orders by commodity and location. Supports comma-separated tickers and type filtering (all/sell/buy).',
+    examples: ['delete COF BEN', 'delete COF,RAT BEN'],
+  },
+
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
 
@@ -211,14 +218,13 @@ export const deleteCommand: Command = {
       return
     }
 
-    // If single order or only one per ticker, delete directly
+    // Show confirmation before deleting
     if (ordersToDelete.length <= 5) {
-      // Simple case: delete all and confirm
-      await deleteOrdersAndReply(interaction, ordersToDelete, displaySettings.locationDisplayMode)
+      await showDeleteConfirmation(interaction, ordersToDelete, displaySettings.locationDisplayMode)
       return
     }
 
-    // Multiple matches - show selection menu
+    // Many matches - show selection menu
     await showDeleteSelectionMenu(
       interaction,
       ordersToDelete,
@@ -229,64 +235,100 @@ export const deleteCommand: Command = {
 }
 
 /**
- * Delete orders and reply with confirmation
+ * Show a confirmation prompt before deleting orders.
  */
-async function deleteOrdersAndReply(
+async function showDeleteConfirmation(
   interaction: ChatInputCommandInteraction,
   orders: OrderToDelete[],
-  _locationDisplayMode: string
+  locationDisplayMode: string
 ): Promise<void> {
-  const deleted: string[] = []
-  const errors: string[] = []
+  const locationDisplay = await formatLocation(
+    orders[0].locationId,
+    locationDisplayMode as 'natural-ids-only' | 'names-only' | 'both'
+  )
 
-  for (const order of orders) {
-    try {
-      if (order.type === 'sell') {
-        await db.delete(sellOrders).where(eq(sellOrders.id, order.id))
-      } else {
-        await db.delete(buyOrders).where(eq(buyOrders.id, order.id))
-      }
-
+  const orderList = orders
+    .map(order => {
       const commodityDisplay = formatCommodity(order.commodityTicker)
       const priceDisplay =
         parseFloat(order.price) > 0 ? `${order.price} ${order.currency}` : `-- ${order.currency}`
-      const orderDesc =
-        order.type === 'sell'
-          ? `SELL ${commodityDisplay} - ${priceDisplay} (${order.orderType})`
-          : `BUY ${commodityDisplay} - ${order.quantity}x @ ${priceDisplay} (${order.orderType})`
+      return order.type === 'sell'
+        ? `• SELL ${commodityDisplay} - ${priceDisplay} (${order.orderType})`
+        : `• BUY ${commodityDisplay} - ${order.quantity}x @ ${priceDisplay} (${order.orderType})`
+    })
+    .join('\n')
 
-      deleted.push(orderDesc)
+  const idPrefix = `delete-confirm:${Date.now()}`
+  const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${idPrefix}:yes`)
+      .setLabel(`Delete ${orders.length} order(s)`)
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${idPrefix}:no`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  )
 
-      logger.info(
-        {
-          orderId: order.id,
-          type: order.type,
-          commodityTicker: order.commodityTicker,
-          locationId: order.locationId,
-        },
-        'Order deleted'
-      )
-    } catch (error) {
-      logger.error({ error, orderId: order.id, type: order.type }, 'Failed to delete order')
-      errors.push(`${order.type.toUpperCase()} ${order.commodityTicker}`)
-    }
-  }
-
-  let response = ''
-
-  if (deleted.length > 0) {
-    response = `✅ Deleted ${deleted.length} order(s):\n\n`
-    response += deleted.map(d => `• ${d}`).join('\n')
-  }
-
-  if (errors.length > 0) {
-    response += `\n\n⚠️ Failed to delete:\n${errors.map(e => `• ${e}`).join('\n')}`
-  }
-
-  await interaction.reply({
-    content: response,
+  const response = await interaction.reply({
+    content: `**Delete ${orders.length} order(s) at ${locationDisplay}?**\n\n${orderList}`,
+    components: [buttonRow],
     flags: MessageFlags.Ephemeral,
   })
+
+  try {
+    const btnInteraction = await response.awaitMessageComponent({
+      filter: i => i.customId.startsWith(idPrefix) && i.user.id === interaction.user.id,
+      time: 30000,
+    })
+
+    const action = btnInteraction.customId.split(':')[2]
+
+    if (action === 'yes') {
+      await executeDeletes(orders)
+      await btnInteraction.update({
+        content: `✅ Deleted ${orders.length} order(s):\n\n${orderList}`,
+        components: [],
+      })
+    } else {
+      await btnInteraction.update({
+        content: '❌ Delete cancelled.',
+        components: [],
+      })
+    }
+  } catch {
+    // Timed out
+    try {
+      await interaction.editReply({
+        content: '⏰ Delete confirmation timed out.',
+        components: [],
+      })
+    } catch {
+      // Message may have been deleted
+    }
+  }
+}
+
+/**
+ * Execute the actual order deletions.
+ */
+async function executeDeletes(orders: OrderToDelete[]): Promise<void> {
+  for (const order of orders) {
+    if (order.type === 'sell') {
+      await db.delete(sellOrders).where(eq(sellOrders.id, order.id))
+    } else {
+      await db.delete(buyOrders).where(eq(buyOrders.id, order.id))
+    }
+    logger.info(
+      {
+        orderId: order.id,
+        type: order.type,
+        commodityTicker: order.commodityTicker,
+        locationId: order.locationId,
+      },
+      'Order deleted'
+    )
+  }
 }
 
 /**

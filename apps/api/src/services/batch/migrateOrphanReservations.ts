@@ -168,39 +168,45 @@ export const migrateOrphanReservations: BatchProcess = {
         // Determine invoice status from reservation statuses
         const invoiceStatus = reservationStatusToInvoiceStatus(reservations.map(r => r.status))
 
-        // Create invoice — counterparty placed the reservation, so they're the invoice creator
-        const [newInvoice] = await db
-          .insert(invoices)
-          .values({
-            userId: counterpartyUserId,
-            counterpartyUserId: orderOwnerId,
-            status: invoiceStatus,
-            notes: 'Migrated from standalone reservations',
-            submittedAt: reservations[0].createdAt,
-          })
-          .returning({ id: invoices.id })
+        // Wrap in transaction so invoice + line items are atomic per group
+        const newInvoiceId = await db.transaction(async tx => {
+          // Create invoice — counterparty placed the reservation, so they're the invoice creator
+          const [newInvoice] = await tx
+            .insert(invoices)
+            .values({
+              userId: counterpartyUserId,
+              counterpartyUserId: orderOwnerId,
+              status: invoiceStatus,
+              notes: 'Migrated from standalone reservations',
+              submittedAt: reservations[0].createdAt,
+            })
+            .returning({ id: invoices.id })
 
-        // Create line items and link to existing reservations
-        for (const res of reservations) {
-          await db.insert(invoiceLineItems).values({
-            invoiceId: newInvoice.id,
-            sellOrderId: res.sellOrderId,
-            buyOrderId: res.buyOrderId,
-            reservationId: res.id,
-            commodityTicker: res.commodityTicker,
-            locationId: res.locationId,
-            quantity: res.quantity,
-            unitPrice: res.price,
-            currency: res.currency,
-            priceListCode: res.priceListCode,
-            notes: res.notes,
-          })
-          result.processed++
-        }
+          // Create line items and link to existing reservations
+          for (const res of reservations) {
+            await tx.insert(invoiceLineItems).values({
+              invoiceId: newInvoice.id,
+              sellOrderId: res.sellOrderId,
+              buyOrderId: res.buyOrderId,
+              reservationId: res.id,
+              commodityTicker: res.commodityTicker,
+              locationId: res.locationId,
+              quantity: res.quantity,
+              unitPrice: res.price,
+              currency: res.currency,
+              priceListCode: res.priceListCode,
+              notes: res.notes,
+            })
+          }
+
+          return newInvoice.id
+        })
+
+        result.processed += reservations.length
 
         logger.info(
           {
-            invoiceId: newInvoice.id,
+            invoiceId: newInvoiceId,
             counterpartyUserId,
             orderOwnerId,
             reservationCount: reservations.length,

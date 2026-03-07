@@ -1,10 +1,17 @@
-import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  MessageFlags,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import { db, userDiscordProfiles } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import logger from '../../utils/logger.js'
-import { isMessageInteractionAdapter, getCommandPrefix } from '../../adapters/messageInteraction.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const unlink: Command = {
   data: new SlashCommandBuilder()
@@ -14,21 +21,12 @@ export const unlink: Command = {
   helpInfo: {
     category: 'getting_started',
     details: 'Discord-only accounts will be warned before unlinking.',
-    examples: ['unlink', 'unlink confirm'],
+    examples: ['unlink'],
   },
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id
-
-    // Check for "confirm" argument (used for Discord-only account confirmation)
-    let forceConfirm = false
-    if (isMessageInteractionAdapter(interaction)) {
-      const input = interaction.options.getString('input')
-      if (input?.trim().toLowerCase() === 'confirm') {
-        forceConfirm = true
-      }
-    }
 
     // Find the Discord profile
     const profile = await db.query.userDiscordProfiles.findFirst({
@@ -49,46 +47,90 @@ export const unlink: Command = {
     // Check if this is a Discord-only account (no password set)
     const isDiscordOnlyAccount = profile.user.passwordHash.startsWith('discord:')
 
-    if (isDiscordOnlyAccount && !forceConfirm) {
-      // Warn user that they'll lose access
+    if (isDiscordOnlyAccount) {
+      // Show warning with confirm/cancel buttons
+      const idPrefix = `unlink-confirm:${Date.now()}`
       const embed = new EmbedBuilder()
-        .setTitle('⚠️ Warning: Discord-Only Account')
-        .setColor(0xed4245) // Red
+        .setTitle('Warning: Discord-Only Account')
+        .setColor(0xed4245)
         .setDescription(
           'Your account was created via Discord and has no password.\n\n' +
             "**If you unlink, you won't be able to log in!**\n\n" +
             'Before unlinking, you should:\n' +
             '1. Log in to the website\n' +
-            '2. Set a password in your account settings\n\n' +
-            `If you're sure you want to unlink anyway, use \`${prefix}unlink confirm\`.`
+            '2. Set a password in your account settings'
         )
 
-      await interaction.reply({ embeds: [embed], ephemeral: true })
+      const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`${idPrefix}:yes`)
+          .setLabel('Unlink Anyway')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`${idPrefix}:no`)
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary)
+      )
+
+      const response = await interaction.reply({
+        embeds: [embed],
+        components: [buttonRow],
+        flags: MessageFlags.Ephemeral,
+      })
+
+      try {
+        const btnInteraction = await response.awaitMessageComponent({
+          filter: i => i.customId.startsWith(idPrefix) && i.user.id === interaction.user.id,
+          time: 30000,
+        })
+
+        if (btnInteraction.customId.endsWith(':yes')) {
+          await performUnlink(discordId, profile, prefix)
+          await btnInteraction.update({
+            content:
+              `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
+              '**Warning:** You no longer have a way to log in. ' +
+              `Use \`${prefix}register\` to create a new account, or \`${prefix}link\` to connect to an existing one.`,
+            embeds: [],
+            components: [],
+          })
+        } else {
+          await btnInteraction.update({
+            content: 'Unlink cancelled.',
+            embeds: [],
+            components: [],
+          })
+        }
+      } catch {
+        await interaction.editReply({
+          content: 'Confirmation timed out. Use the command again if you want to unlink.',
+          embeds: [],
+          components: [],
+        })
+      }
       return
     }
 
-    // Delete the Discord profile link
-    try {
-      await db.delete(userDiscordProfiles).where(eq(userDiscordProfiles.discordId, discordId))
-
-      logger.info(
-        { userId: profile.user.id, username: profile.user.username, discordId },
-        'Discord account unlinked'
-      )
-
-      await interaction.reply({
-        content:
-          `✅ Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
-          'You can still log in with your username and password on the website.\n' +
-          `Use \`${prefix}link\` to reconnect your Discord later.`,
-        flags: MessageFlags.Ephemeral,
-      })
-    } catch (error) {
-      logger.error({ error, discordId }, 'Failed to unlink Discord')
-      await interaction.reply({
-        content: 'An error occurred while unlinking your account. Please try again.',
-        flags: MessageFlags.Ephemeral,
-      })
-    }
+    // Normal unlink (has password)
+    await performUnlink(discordId, profile, prefix)
+    await interaction.reply({
+      content:
+        `Successfully unlinked your Discord from **${profile.user.username}**.\n\n` +
+        'You can still log in with your username and password on the website.\n' +
+        `Use \`${prefix}link\` to reconnect your Discord later.`,
+      flags: MessageFlags.Ephemeral,
+    })
   },
+}
+
+async function performUnlink(
+  discordId: string,
+  profile: { user: { id: number; username: string } },
+  _prefix: string
+): Promise<void> {
+  await db.delete(userDiscordProfiles).where(eq(userDiscordProfiles.discordId, discordId))
+  logger.info(
+    { userId: profile.user.id, username: profile.user.username, discordId },
+    'Discord account unlinked'
+  )
 }

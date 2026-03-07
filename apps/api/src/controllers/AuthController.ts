@@ -26,7 +26,7 @@ import {
 } from '../db/index.js'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken } from '../utils/jwt.js'
-import { Unauthorized, Forbidden, BadRequest } from '../utils/errors.js'
+import { Unauthorized, Forbidden, BadRequest, Conflict } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
 import crypto from 'crypto'
 import { notificationService } from '../services/notificationService.js'
@@ -572,8 +572,7 @@ export class AuthController extends Controller {
     })
 
     if (existingUserProfile) {
-      this.setStatus(409)
-      throw new Error('Your account already has a Discord linked. Unlink it first via Discord.')
+      throw Conflict('Your account already has a Discord linked. Unlink it first via Discord.')
     }
 
     // Check if this Discord is already linked to another account

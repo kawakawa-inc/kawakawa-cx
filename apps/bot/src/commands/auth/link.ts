@@ -62,15 +62,24 @@ export const link: Command = {
     const expirationMinutes = 15 // Short expiration for security
     const expiresAt = new Date(Date.now() + expirationMinutes * 60 * 1000)
 
-    // Store token with Discord info
-    await db.insert(discordLinkTokens).values({
-      token,
-      discordId,
-      discordUsername,
-      discordAvatar,
-      expiresAt,
-      used: false,
-    })
+    try {
+      // Store token with Discord info
+      await db.insert(discordLinkTokens).values({
+        token,
+        discordId,
+        discordUsername,
+        discordAvatar,
+        expiresAt,
+        used: false,
+      })
+    } catch (error) {
+      logger.error({ error, discordId }, 'Failed to create Discord link token')
+      await interaction.reply({
+        content: 'An error occurred while generating the link. Please try again.',
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
 
     logger.info({ discordId, discordUsername }, 'Discord link token generated')
 

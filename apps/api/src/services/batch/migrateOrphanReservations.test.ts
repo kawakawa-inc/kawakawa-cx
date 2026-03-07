@@ -3,19 +3,26 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { mockDbSelect, mockDbInsert, mockSelectFrom, mockSelectInnerJoin, mockSelectWhere } =
-  vi.hoisted(() => ({
-    mockDbSelect: vi.fn(),
-    mockDbInsert: vi.fn(),
-    mockSelectFrom: vi.fn(),
-    mockSelectInnerJoin: vi.fn(),
-    mockSelectWhere: vi.fn(),
-  }))
+const {
+  mockDbSelect,
+  mockDbTransaction,
+  mockTxInsert,
+  mockSelectFrom,
+  mockSelectInnerJoin,
+  mockSelectWhere,
+} = vi.hoisted(() => ({
+  mockDbSelect: vi.fn(),
+  mockDbTransaction: vi.fn(),
+  mockTxInsert: vi.fn(),
+  mockSelectFrom: vi.fn(),
+  mockSelectInnerJoin: vi.fn(),
+  mockSelectWhere: vi.fn(),
+}))
 
 vi.mock('../../db/index.js', () => ({
   db: {
     select: mockDbSelect,
-    insert: mockDbInsert,
+    transaction: mockDbTransaction,
   },
   orderReservations: { id: 'orderReservations.id' },
   invoices: { id: 'invoices.id' },
@@ -71,11 +78,15 @@ describe('migrateOrphanReservations', () => {
     })
     mockDbSelect.mockReturnValue({ from: mockSelectFrom })
 
-    // Default chain: db.insert().values().returning()
-    mockDbInsert.mockReturnValue({
+    // Default transaction: executes the callback with a mock tx
+    mockTxInsert.mockReturnValue({
       values: () => ({
         returning: vi.fn().mockResolvedValue([{ id: 1 }]),
       }),
+    })
+    mockDbTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = { insert: mockTxInsert }
+      return fn(tx)
     })
   })
 
@@ -145,18 +156,13 @@ describe('migrateOrphanReservations', () => {
       }
     })
 
-    mockDbInsert.mockImplementation(() => ({
-      values: () => ({
-        returning: vi.fn().mockResolvedValue([{ id: 42 }]),
-      }),
-    }))
-
     const result = await migrateOrphanReservations.execute()
 
     expect(result.processed).toBe(2)
     expect(result.errors).toHaveLength(0)
-    // One invoice for the group, plus 2 line items = 3 insert calls
-    expect(mockDbInsert).toHaveBeenCalledTimes(3)
+    // One transaction for the group (1 invoice insert + 2 line item inserts = 3 tx.insert calls)
+    expect(mockDbTransaction).toHaveBeenCalledTimes(1)
+    expect(mockTxInsert).toHaveBeenCalledTimes(3)
   })
 
   it('execute handles errors per group without stopping', async () => {
@@ -192,21 +198,16 @@ describe('migrateOrphanReservations', () => {
       }
     })
 
-    // First insert (invoice for group 1) fails, second group succeeds
-    let insertCallCount = 0
-    mockDbInsert.mockImplementation(() => ({
-      values: () => {
-        insertCallCount++
-        if (insertCallCount === 1) {
-          return {
-            returning: vi.fn().mockRejectedValue(new Error('DB constraint error')),
-          }
-        }
-        return {
-          returning: vi.fn().mockResolvedValue([{ id: 99 }]),
-        }
-      },
-    }))
+    // First transaction fails, second succeeds
+    let txCallCount = 0
+    mockDbTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      txCallCount++
+      if (txCallCount === 1) {
+        throw new Error('DB constraint error')
+      }
+      const tx = { insert: mockTxInsert }
+      return fn(tx)
+    })
 
     const result = await migrateOrphanReservations.execute()
 
@@ -244,7 +245,7 @@ describe('migrateOrphanReservations', () => {
     })
 
     const invoiceValues: Record<string, unknown>[] = []
-    mockDbInsert.mockImplementation(() => ({
+    mockTxInsert.mockImplementation(() => ({
       values: (data: Record<string, unknown>) => {
         invoiceValues.push(data)
         return {
@@ -255,7 +256,7 @@ describe('migrateOrphanReservations', () => {
 
     await migrateOrphanReservations.execute()
 
-    // First insert call is for the invoice — check its status
+    // First tx.insert call is for the invoice — check its status
     expect(invoiceValues[0]).toEqual(expect.objectContaining({ status: 'fulfilled' }))
   })
 })

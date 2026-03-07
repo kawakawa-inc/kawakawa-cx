@@ -51,7 +51,7 @@ export const bulkbuy: Command = {
   helpInfo: {
     category: 'orders',
     details:
-      'Format: `TICKER LOCATION QUANTITY PRICE [CURRENCY]`\nExamples:\n`COF UV-351a 1000 150`\n`RAT BEN 500 125.50 ICA`',
+      'Format: `TICKER LOCATION QUANTITY [PRICE] [CURRENCY]`\nExamples:\n`COF UV-351a 1000`\n`RAT BEN 500 125.50 ICA`',
     examples: ['bulkbuy'],
   },
 

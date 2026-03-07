@@ -159,6 +159,7 @@ function getCommandsInCategory(client: BotClient, catKey: HelpCategory): Command
       commands.push(command)
     }
   }
+  commands.sort((a, b) => a.data.name.localeCompare(b.data.name))
   return commands
 }
 

@@ -53,7 +53,7 @@ export const bulksell: Command = {
   helpInfo: {
     category: 'orders',
     details:
-      'Format: `TICKER LOCATION [limit] PRICE [CURRENCY]`\nExamples:\n`COF UV-351a 150`\n`RAT BEN max:500 125.50 ICA`',
+      'Format: `TICKER LOCATION [max|r QTY] [PRICE] [CURRENCY]`\nExamples:\n`COF UV-351a`\n`RAT BEN max 500 125.50 ICA`',
     examples: ['bulksell'],
   },
 

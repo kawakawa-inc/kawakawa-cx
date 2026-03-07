@@ -121,6 +121,28 @@ function calculateInvoiceStatus(
   return 'pending'
 }
 
+/**
+ * Resolve the effective unit price for an order.
+ * Price list takes precedence over custom price when set (matches MarketController).
+ */
+async function resolveOrderPrice(
+  order: { price: string; priceListCode: string | null },
+  commodityTicker: string,
+  locationId: string,
+  currency: Currency
+): Promise<number> {
+  if (order.priceListCode) {
+    const effPrice = await calculateEffectivePriceWithFallback(
+      order.priceListCode,
+      commodityTicker,
+      locationId,
+      currency
+    )
+    if (effPrice?.finalPrice != null) return effPrice.finalPrice
+  }
+  return parseFloat(order.price)
+}
+
 @Route('invoices')
 @Tags('Invoices')
 @Security('jwt')
@@ -828,18 +850,8 @@ export class InvoicesController extends Controller {
         priceListCode = order.priceListCode
         sellOrderId = reservation.sellOrderId
 
-        // Get effective price
-        if (priceListCode && parseFloat(order.price) === 0) {
-          const effPrice = await calculateEffectivePriceWithFallback(
-            priceListCode,
-            commodityTicker,
-            locationId,
-            currency
-          )
-          unitPrice = effPrice?.finalPrice ?? 0
-        } else {
-          unitPrice = parseFloat(order.price)
-        }
+        // Get effective price — price list takes precedence over custom price
+        unitPrice = await resolveOrderPrice(order, commodityTicker, locationId, currency)
       } else if (reservation.buyOrderId) {
         const [order] = await db
           .select()
@@ -855,17 +867,7 @@ export class InvoicesController extends Controller {
         priceListCode = order.priceListCode
         buyOrderId = reservation.buyOrderId
 
-        if (priceListCode && parseFloat(order.price) === 0) {
-          const effPrice = await calculateEffectivePriceWithFallback(
-            priceListCode,
-            commodityTicker,
-            locationId,
-            currency
-          )
-          unitPrice = effPrice?.finalPrice ?? 0
-        } else {
-          unitPrice = parseFloat(order.price)
-        }
+        unitPrice = await resolveOrderPrice(order, commodityTicker, locationId, currency)
       } else {
         throw BadRequest('Reservation has no associated order')
       }
@@ -885,17 +887,7 @@ export class InvoicesController extends Controller {
       priceListCode = order.priceListCode
       sellOrderId = body.sellOrderId
 
-      if (priceListCode && parseFloat(order.price) === 0) {
-        const effPrice = await calculateEffectivePriceWithFallback(
-          priceListCode,
-          commodityTicker,
-          locationId,
-          currency
-        )
-        unitPrice = effPrice?.finalPrice ?? 0
-      } else {
-        unitPrice = parseFloat(order.price)
-      }
+      unitPrice = await resolveOrderPrice(order, commodityTicker, locationId, currency)
     } else {
       // Selling to a buy order
       const [order] = await db.select().from(buyOrders).where(eq(buyOrders.id, body.buyOrderId!))
@@ -910,17 +902,7 @@ export class InvoicesController extends Controller {
       priceListCode = order.priceListCode
       buyOrderId = body.buyOrderId!
 
-      if (priceListCode && parseFloat(order.price) === 0) {
-        const effPrice = await calculateEffectivePriceWithFallback(
-          priceListCode,
-          commodityTicker,
-          locationId,
-          currency
-        )
-        unitPrice = effPrice?.finalPrice ?? 0
-      } else {
-        unitPrice = parseFloat(order.price)
-      }
+      unitPrice = await resolveOrderPrice(order, commodityTicker, locationId, currency)
     }
 
     const [lineItem] = await db

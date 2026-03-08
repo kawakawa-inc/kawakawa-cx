@@ -1,5 +1,6 @@
 // Commodity service - fetches from backend API with localStorage persistence
 
+import { ref } from 'vue'
 import type { Commodity, CommodityDisplayMode } from '../types'
 import { localizeMaterial } from '../utils/materials'
 
@@ -14,6 +15,10 @@ interface CacheEntry {
 
 // In-memory cache for fast access during session
 let cachedCommodities: Commodity[] | null = null
+
+// Reactive version counter — Vue computed properties that read this will
+// re-evaluate when the cache is populated after an async fetch.
+const cacheVersion = ref(0)
 
 // Load from localStorage on module init
 const loadFromStorage = (): Commodity[] | null => {
@@ -63,6 +68,7 @@ const fetchCommodities = async (): Promise<Commodity[]> => {
     const data = await response.json()
     cachedCommodities = data
     saveToStorage(data)
+    cacheVersion.value++
     return data
   } catch (error) {
     console.error('Error fetching commodities:', error)
@@ -79,6 +85,7 @@ export const commodityService = {
 
   // Get all commodities from cache (synchronous, returns empty array if not loaded)
   getAllCommoditiesSync: (): Commodity[] => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedCommodities) return []
     return [...cachedCommodities].sort((a, b) => a.ticker.localeCompare(b.ticker))
   },
@@ -94,7 +101,7 @@ export const commodityService = {
   // name-only: "Basic Rations"
   // both: "RAT - Basic Rations"
   getCommodityDisplay: (ticker: string, mode: CommodityDisplayMode = 'both'): string => {
-    // Synchronous fallback for display - shows ticker until data loads
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedCommodities) {
       return ticker
     }
@@ -113,6 +120,7 @@ export const commodityService = {
 
   // Get commodity category by ticker (synchronous, uses cache)
   getCommodityCategory: (ticker: string): string | null => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedCommodities) {
       return null
     }

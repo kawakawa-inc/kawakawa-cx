@@ -230,7 +230,7 @@ describe('register command', () => {
       const insertedRoles: string[] = []
       mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
         const tx = {
-          insert: vi.fn().mockImplementation((table: unknown) => ({
+          insert: vi.fn().mockImplementation((_table: unknown) => ({
             values: vi.fn().mockImplementation((values: { roleId?: string }) => {
               if (values.roleId) {
                 insertedRoles.push(values.roleId)

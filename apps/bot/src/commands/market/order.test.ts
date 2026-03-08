@@ -227,7 +227,7 @@ describe('order command', () => {
     it('returns early when user is not linked', async () => {
       mockRequireLinkedUser.mockResolvedValueOnce(null)
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'sell',
         stringOptions: { input: 'COF BEN 500' },
       })
@@ -314,7 +314,7 @@ describe('order command', () => {
         errors: [],
       })
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'buy',
         stringOptions: { input: 'COF 500' },
       })
@@ -336,7 +336,7 @@ describe('order command', () => {
         errors: [],
       })
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'buy',
         stringOptions: { input: 'COF BEN' },
       })
@@ -410,7 +410,7 @@ describe('order command', () => {
       mockDbQuery.buyOrders.findMany.mockResolvedValueOnce([])
       mockResolveLocation.mockResolvedValueOnce({ naturalId: 'BEN', name: 'Benten' })
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'buy',
         stringOptions: { input: 'RAT BEN 1000' },
       })
@@ -438,7 +438,7 @@ describe('order command', () => {
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([])
       mockResolveLocation.mockResolvedValueOnce({ naturalId: 'BEN', name: 'Benten' })
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'sell',
         stringOptions: { input: 'COF BEN 500' },
         numberOptions: { price: 200 },
@@ -523,7 +523,7 @@ describe('order command', () => {
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([])
       mockResolveLocation.mockResolvedValueOnce({ naturalId: 'BEN', name: 'Benten' })
 
-      const { interaction, replyFn } = createOrderInteraction({
+      const { interaction } = createOrderInteraction({
         subcommand: 'sell',
         stringOptions: { input: 'COF BEN' },
       })

@@ -14,7 +14,8 @@ import type {
 const draftInvoices = ref<InvoiceSummary[]>([])
 const activeInvoiceId = ref<number | null>(null)
 const activeInvoice = ref<Invoice | null>(null)
-const isLoading = ref(false)
+const loadingCount = ref(0)
+const isLoading = computed(() => loadingCount.value > 0)
 const error = ref<string | null>(null)
 
 // Cache of loaded invoice details (keyed by invoice ID)
@@ -57,21 +58,28 @@ export const useInvoicesStore = () => {
 
   // Load all draft invoices for the current user
   const loadDraftInvoices = async (): Promise<void> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       draftInvoices.value = await api.invoices.list('draft')
+      // Prune cache: remove entries that are no longer drafts
+      const draftIds = new Set(draftInvoices.value.map(inv => inv.id))
+      for (const cachedId of loadedInvoiceDetails.value.keys()) {
+        if (!draftIds.has(cachedId)) {
+          loadedInvoiceDetails.value.delete(cachedId)
+        }
+      }
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load invoices'
       console.error('Failed to load draft invoices:', err)
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 
   // Get or create an invoice for a specific partner
   const getOrCreateForPartner = async (counterpartyUserId: number): Promise<Invoice | null> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const invoice = await api.invoices.getOrCreateForPartner(counterpartyUserId)
@@ -83,14 +91,14 @@ export const useInvoicesStore = () => {
       console.error('Failed to get or create invoice for partner:', err)
       return null
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 
   // Load a specific invoice by ID
   // If setActive is false, only caches the invoice for shopping list sync without setting it as active
   const loadInvoice = async (id: number, setActive = true): Promise<Invoice | null> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const invoice = await api.invoices.get(id)
@@ -106,7 +114,7 @@ export const useInvoicesStore = () => {
       console.error('Failed to load invoice:', err)
       return null
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 
@@ -138,7 +146,7 @@ export const useInvoicesStore = () => {
     activeInvoiceId.value = null
     activeInvoice.value = null
     loadedInvoiceDetails.value.clear()
-    isLoading.value = false
+    loadingCount.value = 0
     error.value = null
   }
 
@@ -231,7 +239,7 @@ export const useInvoicesStore = () => {
 
   // Submit an invoice
   const submitInvoice = async (id: number): Promise<SubmitInvoiceResponse | null> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const result = await api.invoices.submit(id)
@@ -249,13 +257,13 @@ export const useInvoicesStore = () => {
       console.error('Failed to submit invoice:', err)
       return null
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 
   // Cancel an invoice
   const cancelInvoice = async (id: number): Promise<Invoice | null> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const invoice = await api.invoices.cancel(id)
@@ -271,13 +279,13 @@ export const useInvoicesStore = () => {
       console.error('Failed to cancel invoice:', err)
       return null
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 
   // Delete a draft invoice
   const deleteInvoice = async (id: number): Promise<boolean> => {
-    isLoading.value = true
+    loadingCount.value++
     error.value = null
     try {
       await api.invoices.delete(id)
@@ -295,7 +303,7 @@ export const useInvoicesStore = () => {
       console.error('Failed to delete invoice:', err)
       return false
     } finally {
-      isLoading.value = false
+      loadingCount.value--
     }
   }
 

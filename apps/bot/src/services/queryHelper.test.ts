@@ -164,7 +164,7 @@ describe('queryHelper', () => {
 
       // Need at least one sell order to get past hasOrders check
       // Actually if sell returns empty, hasOrders is false
-      const result = await executeQuery({ ...baseOptions, orderType: 'sell' })
+      await executeQuery({ ...baseOptions, orderType: 'sell' })
 
       expect(mockDbQuery.buyOrders.findMany).not.toHaveBeenCalled()
     })

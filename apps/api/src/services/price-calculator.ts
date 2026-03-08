@@ -442,9 +442,6 @@ export async function calculateEffectivePriceBatch(
     locationId: r.locationId,
   }))
 
-  // Deduplicate request keys
-  const uniqueKeys = new Set(normalized.map(r => `${r.priceListCode}:${r.ticker}:${r.locationId}`))
-
   // Query 1: Fetch all needed price lists in one query
   const uniqueCodes = [...new Set(normalized.map(r => r.priceListCode))]
   const priceListRows = await db

@@ -56,10 +56,10 @@ db-init: ## Initialize database (migrate, seed, sync FIO) - idempotent, producti
 	pnpm --filter @kawakawa/api db:migrate
 	pnpm --filter @kawakawa/api db:init
 
-db-init-dev: ## Initialize database for development (push schema, sync FIO, seed)
+db-init-dev: ## Initialize database for development (push schema, seed, sync FIO)
 	pnpm --filter @kawakawa/api db:push
+	pnpm --filter @kawakawa/api db:init
 	pnpm --filter @kawakawa/api fio:sync
-	pnpm --filter @kawakawa/api db:seed
 
 db-reset: ## Reset database with seed data only (WARNING: deletes all data)
 	pnpm --filter @kawakawa/api db:drop

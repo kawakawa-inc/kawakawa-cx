@@ -1391,13 +1391,11 @@ const canFulfillAll = (inv: InvoiceSummary) => inv.status === 'confirmed'
 async function confirmAllReservations(inv: InvoiceSummary) {
   invoiceActionLoading.value = `confirm-${inv.id}`
   try {
-    // Load full invoice to get line items with reservation IDs
     const fullInvoice = await api.invoices.get(inv.id)
-    for (const item of fullInvoice.lineItems) {
-      if (item.reservationId && item.reservationStatus === 'pending') {
-        await api.reservations.confirm(item.reservationId)
-      }
-    }
+    const pending = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'pending'
+    )
+    await Promise.all(pending.map(item => api.reservations.confirm(item.reservationId!)))
     showSnackbar('All reservations confirmed')
     await loadInvoices()
   } catch (error) {
@@ -1412,11 +1410,10 @@ async function rejectAllReservations(inv: InvoiceSummary) {
   invoiceActionLoading.value = `reject-${inv.id}`
   try {
     const fullInvoice = await api.invoices.get(inv.id)
-    for (const item of fullInvoice.lineItems) {
-      if (item.reservationId && item.reservationStatus === 'pending') {
-        await api.reservations.reject(item.reservationId)
-      }
-    }
+    const pending = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'pending'
+    )
+    await Promise.all(pending.map(item => api.reservations.reject(item.reservationId!)))
     showSnackbar('All reservations rejected')
     await loadInvoices()
   } catch (error) {
@@ -1431,11 +1428,10 @@ async function fulfillAllReservations(inv: InvoiceSummary) {
   invoiceActionLoading.value = `fulfill-${inv.id}`
   try {
     const fullInvoice = await api.invoices.get(inv.id)
-    for (const item of fullInvoice.lineItems) {
-      if (item.reservationId && item.reservationStatus === 'confirmed') {
-        await api.reservations.fulfill(item.reservationId)
-      }
-    }
+    const confirmed = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'confirmed'
+    )
+    await Promise.all(confirmed.map(item => api.reservations.fulfill(item.reservationId!)))
     showSnackbar('All reservations fulfilled')
     await loadInvoices()
   } catch (error) {
@@ -1651,9 +1647,9 @@ const openEditSellDialog = (order: SellOrderResponse) => {
   editSellDialog.value = true
 }
 
-const onSellOrderSaved = () => {
+const onSellOrderSaved = async () => {
   showSnackbar('Sell order updated successfully')
-  loadSellOrders()
+  await loadSellOrders()
 }
 
 // Edit buy order functions
@@ -1662,9 +1658,9 @@ const openEditBuyDialog = (order: BuyOrderResponse) => {
   editBuyDialog.value = true
 }
 
-const onBuyOrderSaved = () => {
+const onBuyOrderSaved = async () => {
   showSnackbar('Buy order updated successfully')
-  loadBuyOrders()
+  await loadBuyOrders()
 }
 
 // Delete sell order functions

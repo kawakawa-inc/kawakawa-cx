@@ -317,18 +317,27 @@ export const fioUserStorage = pgTable(
 )
 
 // ==================== FIO INVENTORY (Items in storage from FIO API) ====================
-export const fioInventory = pgTable('fio_inventory', {
-  id: serial('id').primaryKey(),
-  userStorageId: integer('user_storage_id')
-    .notNull()
-    .references(() => fioUserStorage.id, { onDelete: 'cascade' }),
-  commodityTicker: varchar('commodity_ticker', { length: 10 })
-    .notNull()
-    .references(() => fioCommodities.ticker),
-  quantity: integer('quantity').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-})
+export const fioInventory = pgTable(
+  'fio_inventory',
+  {
+    id: serial('id').primaryKey(),
+    userStorageId: integer('user_storage_id')
+      .notNull()
+      .references(() => fioUserStorage.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 })
+      .notNull()
+      .references(() => fioCommodities.ticker),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    storageTickerIdx: index('fio_inventory_storage_ticker_idx').on(
+      table.userStorageId,
+      table.commodityTicker
+    ),
+  })
+)
 
 // ==================== SELL ORDERS ====================
 export const sellOrders = pgTable(
@@ -440,6 +449,10 @@ export const orderReservations = pgTable(
     sellOrderIdx: index('order_reservations_sell_order_idx').on(table.sellOrderId),
     buyOrderIdx: index('order_reservations_buy_order_idx').on(table.buyOrderId),
     counterpartyIdx: index('order_reservations_counterparty_idx').on(table.counterpartyUserId),
+    statusExpiresIdx: index('order_reservations_status_expires_idx').on(
+      table.status,
+      table.expiresAt
+    ),
   })
 )
 

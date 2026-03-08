@@ -1,0 +1,2 @@
+CREATE INDEX "fio_inventory_storage_ticker_idx" ON "fio_inventory" USING btree ("user_storage_id","commodity_ticker");--> statement-breakpoint
+CREATE INDEX "order_reservations_status_expires_idx" ON "order_reservations" USING btree ("status","expires_at");

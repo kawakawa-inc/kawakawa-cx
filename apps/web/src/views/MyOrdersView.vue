@@ -29,12 +29,12 @@
           class="ml-2"
         />
       </v-tab>
-      <v-tab value="reservations">
-        <v-icon start>mdi-clipboard-check</v-icon>
-        Reservations
+      <v-tab value="invoices">
+        <v-icon start>mdi-file-document-multiple</v-icon>
+        Invoices
         <v-badge
-          v-if="activeReservationsCount > 0"
-          :content="activeReservationsCount"
+          v-if="activeInvoicesCount > 0"
+          :content="activeInvoicesCount"
           color="warning"
           inline
           class="ml-2"
@@ -442,84 +442,92 @@
         </v-card>
       </v-tabs-window-item>
 
-      <!-- RESERVATIONS TAB -->
-      <v-tabs-window-item value="reservations">
+      <!-- INVOICES TAB -->
+      <v-tabs-window-item value="invoices">
         <v-card>
           <v-card-title>
             <v-row align="center">
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="reservationSearch"
-                  prepend-icon="mdi-magnify"
-                  label="Search reservations..."
-                  single-line
-                  hide-details
-                  clearable
-                  density="compact"
+              <v-col cols="12" md="5">
+                <TokenSearchInput
+                  placeholder="Search: user, commodity..."
+                  :available-user-names="availableInvoiceUserNames"
+                  :get-commodity-display="getCommodityDisplay"
+                  :get-location-display="getLocationDisplay"
+                  :get-commodity-name="getCommodityName"
+                  @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" md="2">
                 <v-select
-                  v-model="reservationRoleFilter"
-                  :items="reservationRoleOptions"
+                  v-model="invoiceDirectionFilter"
+                  :items="invoiceDirectionOptions"
                   item-title="title"
                   item-value="value"
-                  label="Role"
+                  label="Direction"
                   density="compact"
                   hide-details
+                  clearable
                 />
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" md="5">
                 <v-select
-                  v-model="reservationStatusFilter"
-                  :items="reservationStatusOptions"
+                  v-model="invoiceStatusFilter"
+                  :items="invoiceStatusOptions"
                   item-title="title"
                   item-value="value"
                   label="Status"
                   density="compact"
                   hide-details
-                  clearable
-                />
+                  multiple
+                  chips
+                  closable-chips
+                >
+                  <template #prepend-item>
+                    <v-list-item
+                      :title="isShowingAll ? 'Hide Completed' : 'Show All'"
+                      @click="toggleShowAllStatuses"
+                    >
+                      <template #prepend>
+                        <v-icon>{{ isShowingAll ? 'mdi-filter' : 'mdi-filter-off' }}</v-icon>
+                      </template>
+                    </v-list-item>
+                    <v-divider class="mt-2" />
+                  </template>
+                </v-select>
               </v-col>
             </v-row>
           </v-card-title>
 
-          <!-- Reservation Summary Card -->
-          <v-card-text v-if="activeReservations.length > 0" class="pt-0 pb-4">
+          <!-- Invoice Summary Card -->
+          <v-card-text v-if="invoiceSummary.totalItems > 0" class="pt-0 pb-4">
             <v-row dense>
               <!-- Counts -->
               <v-col cols="12" md="3">
-                <div class="text-caption text-medium-emphasis mb-1">Active Reservations</div>
+                <div class="text-caption text-medium-emphasis mb-1">Active Invoices</div>
                 <div class="d-flex align-center ga-4">
                   <div>
-                    <span class="text-h5 font-weight-bold">{{ activeReservations.length }}</span>
+                    <span class="text-h5 font-weight-bold">{{ activeInvoicesCount }}</span>
                     <span class="text-caption text-medium-emphasis ml-1">open</span>
                   </div>
                   <v-divider vertical class="mx-2" />
                   <div>
-                    <v-chip size="small" color="success" variant="tonal" class="mr-1">
-                      {{ fillReservations.length }}
-                    </v-chip>
-                    <span class="text-caption">fills</span>
-                  </div>
-                  <div>
-                    <v-chip size="small" color="warning" variant="tonal" class="mr-1">
-                      {{ reserveReservations.length }}
-                    </v-chip>
-                    <span class="text-caption">reserves</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      invoiceSummary.totalItems
+                    }}</span>
+                    <span class="text-caption text-medium-emphasis ml-1">items</span>
                   </div>
                 </div>
               </v-col>
 
-              <!-- Fills Total -->
+              <!-- Selling Total (money in = green) -->
               <v-col cols="12" md="3">
                 <div class="text-caption text-medium-emphasis mb-1">
-                  <v-icon size="small" class="mr-1">mdi-arrow-down</v-icon>
-                  Fills (Incoming)
+                  <v-icon size="small" color="success" class="mr-1">mdi-arrow-up</v-icon>
+                  Selling (you receive)
                 </div>
-                <div v-if="Object.keys(fillTotalsByCurrency).length > 0">
+                <div v-if="Object.keys(invoiceSummary.sellTotals).length > 0">
                   <div
-                    v-for="(amount, currency) in fillTotalsByCurrency"
+                    v-for="(amount, currency) in invoiceSummary.sellTotals"
                     :key="currency"
                     class="text-success"
                   >
@@ -530,15 +538,15 @@
                 <div v-else class="text-medium-emphasis">--</div>
               </v-col>
 
-              <!-- Reserves Total -->
+              <!-- Buying Total (money out = yellow) -->
               <v-col cols="12" md="3">
                 <div class="text-caption text-medium-emphasis mb-1">
-                  <v-icon size="small" class="mr-1">mdi-arrow-up</v-icon>
-                  Reserves (Outgoing)
+                  <v-icon size="small" color="warning" class="mr-1">mdi-arrow-down</v-icon>
+                  Buying (you pay)
                 </div>
-                <div v-if="Object.keys(reserveTotalsByCurrency).length > 0">
+                <div v-if="Object.keys(invoiceSummary.buyTotals).length > 0">
                   <div
-                    v-for="(amount, currency) in reserveTotalsByCurrency"
+                    v-for="(amount, currency) in invoiceSummary.buyTotals"
                     :key="currency"
                     class="text-warning"
                   >
@@ -555,11 +563,11 @@
                   <v-icon size="small" class="mr-1">mdi-scale-balance</v-icon>
                   Net Position
                 </div>
-                <div v-if="Object.keys(netTotalsByCurrency).length > 0">
+                <div v-if="Object.keys(invoiceSummary.netTotals).length > 0">
                   <div
-                    v-for="(amount, currency) in netTotalsByCurrency"
+                    v-for="(amount, currency) in invoiceSummary.netTotals"
                     :key="currency"
-                    :class="amount >= 0 ? 'text-success' : 'text-error'"
+                    :class="amount >= 0 ? 'text-success' : 'text-warning'"
                   >
                     <span class="font-weight-medium">
                       {{ amount >= 0 ? '+' : '' }}{{ formatPrice(amount) }}
@@ -572,237 +580,268 @@
             </v-row>
           </v-card-text>
 
-          <v-divider v-if="activeReservations.length > 0" />
+          <v-divider v-if="invoiceSummary.totalItems > 0" />
 
           <v-data-table
-            :headers="reservationHeaders"
-            :items="filteredReservations"
-            :loading="loadingReservations"
+            v-model:expanded="expandedInvoices"
+            :headers="invoiceHeaders"
+            :items="filteredInvoices"
+            :loading="loadingInvoices"
             :items-per-page="25"
-            :class="['elevation-0', { 'icon-rows': hasIcons }]"
+            :row-props="getInvoiceRowProps"
+            class="elevation-0 clickable-rows"
+            show-expand
+            item-value="id"
+            @click:row="toggleInvoiceExpand"
           >
-            <template #item.orderType="{ item }">
+            <!-- Custom expand toggle with right/down chevron -->
+            <template #item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+              <v-btn icon variant="text" size="small" @click.stop="toggleExpand(internalItem)">
+                <v-icon>{{
+                  isExpanded(internalItem) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+                }}</v-icon>
+              </v-btn>
+            </template>
+
+            <template #item.direction="{ item }">
               <v-chip
-                :color="item.sellOrderId ? 'warning' : 'info'"
-                size="x-small"
-                variant="outlined"
+                :color="item.direction === 'sent' ? 'primary' : 'info'"
+                size="small"
+                variant="tonal"
               >
-                {{ item.sellOrderId ? 'Sell' : 'Buy' }}
+                <v-icon start size="small">{{
+                  item.direction === 'sent' ? 'mdi-arrow-up' : 'mdi-arrow-down'
+                }}</v-icon>
+                {{ item.direction === 'sent' ? 'Sent' : 'Received' }}
               </v-chip>
             </template>
 
-            <template #item.commodityTicker="{ item }">
-              <CommodityDisplay :ticker="item.commodityTicker" class="font-weight-medium" />
-            </template>
-
-            <template #item.locationId="{ item }">
-              {{ getLocationDisplay(item.locationId) }}
-            </template>
-
-            <template #item.counterparty="{ item }">
-              {{ item.isOrderOwner ? item.counterpartyName : item.orderOwnerName }}
-            </template>
-
-            <template #item.price="{ item }">
-              <div class="text-right">
-                <template v-if="getReservationDisplayPrice(item) !== null">
-                  <span class="font-weight-medium">{{
-                    formatPrice(getReservationDisplayPrice(item)!)
-                  }}</span>
-                  <span class="text-medium-emphasis ml-1">{{ item.currency }}</span>
-                  <v-chip
-                    v-if="item.priceListCode"
-                    size="x-small"
-                    color="info"
-                    variant="tonal"
-                    class="ml-1"
-                  >
-                    {{ item.priceListCode }}
-                  </v-chip>
-                </template>
-                <span v-else class="text-medium-emphasis">--</span>
+            <template #item.counterpartyName="{ item }">
+              <span class="font-weight-medium">{{ item.counterpartyName }}</span>
+              <div class="text-caption text-medium-emphasis">
+                {{ item.direction === 'sent' ? 'To' : 'From' }}
               </div>
             </template>
 
-            <template #item.quantity="{ item }">
-              <span class="font-weight-medium">{{ item.quantity.toLocaleString() }}</span>
-            </template>
-
-            <template #item.total="{ item }">
-              <div class="text-right">
-                <template v-if="getReservationDisplayPrice(item) !== null">
-                  <span class="font-weight-medium">{{
-                    formatPrice(getReservationDisplayPrice(item)! * item.quantity)
-                  }}</span>
-                  <span class="text-medium-emphasis ml-1">{{ item.currency }}</span>
-                </template>
-                <span v-else class="text-medium-emphasis">--</span>
+            <template #item.commodities="{ item }">
+              <div class="commodity-grid">
+                <CommodityIcon
+                  v-for="ticker in item.commodityTickers.slice(0, 12)"
+                  :key="ticker"
+                  :commodity="getCommodityObj(ticker)"
+                  class="commodity-grid-icon"
+                />
+                <v-tooltip v-if="item.commodityTickers.length > 12" location="top">
+                  <template #activator="{ props: tooltipProps }">
+                    <span v-bind="tooltipProps" class="commodity-grid-more">
+                      +{{ item.commodityTickers.length - 12 }}
+                    </span>
+                  </template>
+                  {{ item.commodityTickers.join(', ') }}
+                </v-tooltip>
               </div>
             </template>
 
             <template #item.status="{ item }">
-              <ReservationStatusChip :status="item.status" size="small" />
+              <InvoiceStatusChip :status="item.status" size="small" />
             </template>
 
-            <template #item.expiresAt="{ item }">
-              <span v-if="item.expiresAt" class="text-caption">
-                {{ formatDate(item.expiresAt) }}
-              </span>
-              <span v-else class="text-medium-emphasis">-</span>
+            <template #item.buyItemCount="{ item }">
+              <span class="font-weight-medium">{{ getMyBuyItemCount(item) }}</span>
             </template>
 
-            <template #item.notes="{ item }">
-              <v-tooltip v-if="item.notes" location="top" max-width="300">
-                <template #activator="{ props }">
-                  <v-icon v-bind="props" size="small" color="info">mdi-note-text</v-icon>
+            <template #item.sellItemCount="{ item }">
+              <span class="font-weight-medium">{{ getMySellItemCount(item) }}</span>
+            </template>
+
+            <template #item.buyTotals="{ item }">
+              <div class="text-right">
+                <div
+                  v-for="total in getMyBuyTotals(item)"
+                  :key="total.currency"
+                  class="text-caption text-warning"
+                >
+                  <span class="font-weight-medium">{{ formatPrice(total.total) }}</span>
+                  <span class="ml-1">{{ total.currency }}</span>
+                </div>
+                <span v-if="getMyBuyTotals(item).length === 0" class="text-medium-emphasis"
+                  >--</span
+                >
+              </div>
+            </template>
+
+            <template #item.sellTotals="{ item }">
+              <div class="text-right">
+                <div
+                  v-for="total in getMySellTotals(item)"
+                  :key="total.currency"
+                  class="text-caption text-success"
+                >
+                  <span class="font-weight-medium">{{ formatPrice(total.total) }}</span>
+                  <span class="ml-1">{{ total.currency }}</span>
+                </div>
+                <span v-if="getMySellTotals(item).length === 0" class="text-medium-emphasis"
+                  >--</span
+                >
+              </div>
+            </template>
+
+            <template #item.createdAt="{ item }">
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <span v-bind="tooltipProps" class="text-caption text-medium-emphasis">
+                    {{ formatFuzzyTime(item.createdAt) }}
+                  </span>
                 </template>
-                {{ item.notes }}
+                {{ formatFullDate(item.createdAt) }}
+              </v-tooltip>
+            </template>
+
+            <template #item.updatedAt="{ item }">
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <span v-bind="tooltipProps" class="text-caption text-medium-emphasis">
+                    {{ formatFuzzyTime(item.updatedAt) }}
+                  </span>
+                </template>
+                {{ formatFullDate(item.updatedAt) }}
               </v-tooltip>
             </template>
 
             <template #item.actions="{ item }">
-              <div class="d-flex ga-1">
-                <!-- Order Owner Actions -->
-                <template v-if="item.isOrderOwner">
-                  <!-- Pending: Confirm / Reject -->
-                  <template v-if="item.status === 'pending'">
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="success"
-                          :loading="reservationActionLoading === `confirm-${item.id}`"
-                          @click="confirmReservation(item.id)"
-                        >
-                          <v-icon>mdi-check</v-icon>
-                        </v-btn>
-                      </template>
-                      Confirm
-                    </v-tooltip>
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="error"
-                          :loading="reservationActionLoading === `reject-${item.id}`"
-                          @click="rejectReservation(item.id)"
-                        >
-                          <v-icon>mdi-close</v-icon>
-                        </v-btn>
-                      </template>
-                      Reject
-                    </v-tooltip>
+              <div class="d-flex ga-1 align-center">
+                <v-tooltip location="top">
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      icon
+                      size="small"
+                      variant="text"
+                      @click="viewInvoice(item)"
+                    >
+                      <v-icon>mdi-eye</v-icon>
+                    </v-btn>
                   </template>
-                  <!-- Confirmed: Fulfill / Cancel -->
-                  <template v-if="item.status === 'confirmed'">
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="success"
-                          :loading="reservationActionLoading === `fulfill-${item.id}`"
-                          @click="fulfillReservation(item.id)"
-                        >
-                          <v-icon>mdi-check-all</v-icon>
-                        </v-btn>
-                      </template>
-                      Mark Fulfilled
-                    </v-tooltip>
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="warning"
-                          :loading="reservationActionLoading === `cancel-${item.id}`"
-                          @click="cancelReservation(item.id)"
-                        >
-                          <v-icon>mdi-cancel</v-icon>
-                        </v-btn>
-                      </template>
-                      Cancel
-                    </v-tooltip>
-                  </template>
+                  View invoice
+                </v-tooltip>
+
+                <!-- Bulk actions for received invoices -->
+                <template v-if="item.direction === 'received' && item.status !== 'draft'">
+                  <v-tooltip v-if="canConfirmAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="success"
+                        :loading="invoiceActionLoading === `confirm-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="confirmAllReservations(item)"
+                      >
+                        <v-icon>mdi-check-all</v-icon>
+                      </v-btn>
+                    </template>
+                    Confirm All
+                  </v-tooltip>
+
+                  <v-tooltip v-if="canRejectAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="error"
+                        :loading="invoiceActionLoading === `reject-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="rejectAllReservations(item)"
+                      >
+                        <v-icon>mdi-close-circle</v-icon>
+                      </v-btn>
+                    </template>
+                    Reject All
+                  </v-tooltip>
+
+                  <v-tooltip v-if="canFulfillAll(item)" location="top">
+                    <template #activator="{ props }">
+                      <v-btn
+                        v-bind="props"
+                        icon
+                        size="small"
+                        variant="text"
+                        color="primary"
+                        :loading="invoiceActionLoading === `fulfill-${item.id}`"
+                        :disabled="invoiceActionLoading !== null"
+                        @click.stop="fulfillAllReservations(item)"
+                      >
+                        <v-icon>mdi-package-variant-closed-check</v-icon>
+                      </v-btn>
+                    </template>
+                    Fulfill All
+                  </v-tooltip>
                 </template>
 
-                <!-- Counterparty Actions -->
-                <template v-if="item.isCounterparty">
-                  <!-- Pending/Confirmed: Fulfill / Cancel -->
-                  <template v-if="item.status === 'pending' || item.status === 'confirmed'">
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="success"
-                          :loading="reservationActionLoading === `fulfill-${item.id}`"
-                          @click="fulfillReservation(item.id)"
-                        >
-                          <v-icon>mdi-check-all</v-icon>
-                        </v-btn>
-                      </template>
-                      Mark Fulfilled
-                    </v-tooltip>
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="warning"
-                          :loading="reservationActionLoading === `cancel-${item.id}`"
-                          @click="cancelReservation(item.id)"
-                        >
-                          <v-icon>mdi-cancel</v-icon>
-                        </v-btn>
-                      </template>
-                      Cancel
-                    </v-tooltip>
+                <!-- Cancel for sent invoices -->
+                <v-tooltip
+                  v-if="item.direction === 'sent' && item.status === 'pending'"
+                  location="top"
+                >
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      icon
+                      size="small"
+                      variant="text"
+                      color="warning"
+                      :loading="invoiceActionLoading === `cancel-${item.id}`"
+                      :disabled="invoiceActionLoading !== null"
+                      @click.stop="cancelInvoice(item)"
+                    >
+                      <v-icon>mdi-cancel</v-icon>
+                    </v-btn>
                   </template>
-                  <!-- Cancelled: Reopen -->
-                  <template v-if="item.status === 'cancelled'">
-                    <v-tooltip location="top">
-                      <template #activator="{ props }">
-                        <v-btn
-                          v-bind="props"
-                          icon
-                          size="small"
-                          variant="text"
-                          color="primary"
-                          :loading="reservationActionLoading === `reopen-${item.id}`"
-                          @click="reopenReservation(item.id)"
-                        >
-                          <v-icon>mdi-refresh</v-icon>
-                        </v-btn>
-                      </template>
-                      Reopen
-                    </v-tooltip>
+                  Cancel Invoice
+                </v-tooltip>
+
+                <!-- Delete for drafts -->
+                <v-tooltip v-if="item.status === 'draft'" location="top">
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      icon
+                      size="small"
+                      variant="text"
+                      color="error"
+                      @click.stop="confirmDeleteInvoice(item)"
+                    >
+                      <v-icon>mdi-delete</v-icon>
+                    </v-btn>
                   </template>
-                </template>
+                  Delete draft
+                </v-tooltip>
               </div>
+            </template>
+
+            <!-- Expanded row content -->
+            <template #expanded-row="{ columns, item }">
+              <tr class="expanded-row">
+                <td :colspan="columns.length" class="pa-0">
+                  <InvoiceExpandedRow
+                    :key="invoiceRefreshKey"
+                    :invoice-id="item.id"
+                    :direction="item.direction"
+                    @updated="loadInvoices"
+                  />
+                </td>
+              </tr>
             </template>
 
             <template #no-data>
               <div class="text-center py-8">
-                <v-icon size="64" color="grey-lighten-1">mdi-clipboard-check</v-icon>
-                <p class="text-h6 mt-4">No reservations</p>
-                <p class="text-body-2 text-medium-emphasis">
-                  Reservations you've made or received will appear here
-                </p>
+                <v-icon size="64" color="grey-lighten-1">mdi-file-document-multiple</v-icon>
+                <p class="text-h6 mt-4">No invoices</p>
+                <p class="text-body-2 text-medium-emphasis">Your invoices will appear here</p>
               </div>
             </template>
           </v-data-table>
@@ -877,20 +916,55 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Delete Invoice Confirmation -->
+    <v-dialog v-model="deleteInvoiceDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete Draft Invoice</v-card-title>
+        <v-card-text>
+          Are you sure you want to delete this draft invoice with
+          <strong>{{ deletingInvoice?.counterpartyName }}</strong
+          >?
+          <span v-if="deletingInvoice && deletingInvoice.itemCount > 0">
+            This will remove {{ deletingInvoice.itemCount }} line item{{
+              deletingInvoice.itemCount > 1 ? 's' : ''
+            }}
+            and release any reservations.
+          </span>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="deleteInvoiceDialog = false">Cancel</v-btn>
+          <v-btn color="error" :loading="deletingInvoiceLoading" @click="deleteInvoice">
+            Delete
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Invoice Detail Dialog -->
+    <InvoiceDetailDialog
+      v-model="invoiceDetailDialog"
+      :invoice="selectedInvoice"
+      @updated="refreshInvoice"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useUrlTab, useOrderDeepLink } from '../composables'
-import { PERMISSIONS, type SellOrderLimitMode, type OrderType } from '@kawakawa/types'
 import {
-  api,
-  type SellOrderResponse,
-  type BuyOrderResponse,
-  type ReservationWithDetails,
-  type ReservationStatus,
-} from '../services/api'
+  PERMISSIONS,
+  type SellOrderLimitMode,
+  type OrderType,
+  type InvoiceStatus,
+  type InvoiceSummary,
+  type Invoice,
+  type Commodity,
+} from '@kawakawa/types'
+import { api, type SellOrderResponse, type BuyOrderResponse } from '../services/api'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
@@ -898,13 +972,19 @@ import OrderDialog from '../components/OrderDialog.vue'
 import OrderDetailDialog from '../components/OrderDetailDialog.vue'
 import SellOrderEditDialog from '../components/SellOrderEditDialog.vue'
 import BuyOrderEditDialog from '../components/BuyOrderEditDialog.vue'
-import ReservationStatusChip from '../components/ReservationStatusChip.vue'
 import OrderTypeChip from '../components/OrderTypeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
+import CommodityIcon from '../components/CommodityIcon.vue'
+import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
+import InvoiceStatusChip from '../components/invoices/InvoiceStatusChip.vue'
+import InvoiceExpandedRow from '../components/invoices/InvoiceExpandedRow.vue'
+import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
 import { useSettingsStore } from '../stores/settings'
 
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
+const route = useRoute()
+const router = useRouter()
 
 // Check if icons are enabled for dynamic row height
 const hasIcons = computed(() => settingsStore.commodityIconStyle.value !== 'none')
@@ -918,7 +998,16 @@ const getCommodityDisplay = (ticker: string): string => {
   return commodityService.getCommodityDisplay(ticker, userStore.getCommodityDisplayMode())
 }
 
-const ORDERS_TABS = ['buy', 'sell', 'reservations'] as const
+const getCommodityObj = (ticker: string): Commodity => {
+  const category = commodityService.getCommodityCategory(ticker)
+  return {
+    ticker,
+    name: commodityService.getCommodityDisplay(ticker, 'name-only'),
+    ...(category !== null && { category }),
+  }
+}
+
+const ORDERS_TABS = ['buy', 'sell', 'invoices'] as const
 const activeTab = useUrlTab({
   validTabs: ORDERS_TABS,
   defaultTab: 'buy',
@@ -954,35 +1043,44 @@ const buyHeaders = [
   { title: 'Actions', key: 'actions', sortable: false, width: 120 },
 ]
 
-const reservationHeaders = [
-  { title: 'Order', key: 'orderType', sortable: false, width: 60 },
-  { title: 'Commodity', key: 'commodityTicker', sortable: true },
-  { title: 'Location', key: 'locationId', sortable: true },
-  { title: 'With', key: 'counterparty', sortable: true },
-  { title: 'Unit Price', key: 'price', sortable: true, align: 'end' as const },
-  { title: 'Qty', key: 'quantity', sortable: true, align: 'end' as const },
-  { title: 'Total', key: 'total', sortable: true, align: 'end' as const },
+const invoiceHeaders = [
+  { title: '', key: 'data-table-expand', width: 40 },
+  { title: 'Direction', key: 'direction', sortable: true, width: 100 },
+  { title: 'User', key: 'counterpartyName', sortable: true },
+  { title: 'Commodities', key: 'commodities', sortable: false },
   { title: 'Status', key: 'status', sortable: true },
-  { title: 'Expires', key: 'expiresAt', sortable: true },
-  { title: '', key: 'notes', sortable: false, width: 40 },
-  { title: 'Actions', key: 'actions', sortable: false, width: 120 },
+  { title: 'Buy #', key: 'buyItemCount', sortable: true, align: 'center' as const, width: 80 },
+  { title: 'Sell #', key: 'sellItemCount', sortable: true, align: 'center' as const, width: 80 },
+  { title: 'Buying', key: 'buyTotals', sortable: false, align: 'end' as const },
+  { title: 'Selling', key: 'sellTotals', sortable: false, align: 'end' as const },
+  { title: 'Created', key: 'createdAt', sortable: true },
+  { title: 'Updated', key: 'updatedAt', sortable: true },
+  { title: 'Actions', key: 'actions', sortable: false, width: 200 },
 ]
 
-const reservationRoleOptions = [
-  { title: 'All', value: 'all' },
-  { title: 'My Orders', value: 'owner' },
-  { title: 'I Reserved', value: 'counterparty' },
+const invoiceDirectionOptions = [
+  { title: 'All', value: null },
+  { title: 'Sent', value: 'sent' },
+  { title: 'Received', value: 'received' },
 ]
 
-const reservationStatusOptions = [
-  { title: 'All Statuses', value: null },
+const invoiceStatusOptions = [
+  { title: 'Draft', value: 'draft' },
   { title: 'Pending', value: 'pending' },
   { title: 'Confirmed', value: 'confirmed' },
   { title: 'Fulfilled', value: 'fulfilled' },
-  { title: 'Rejected', value: 'rejected' },
+  { title: 'Partially Fulfilled', value: 'partially_fulfilled' },
   { title: 'Cancelled', value: 'cancelled' },
-  { title: 'Expired', value: 'expired' },
 ]
+
+const defaultStatusFilter: InvoiceStatus[] = [
+  'draft',
+  'pending',
+  'confirmed',
+  'partially_fulfilled',
+]
+
+const allStatuses: InvoiceStatus[] = invoiceStatusOptions.map(o => o.value) as InvoiceStatus[]
 
 // Sell orders state
 const sellOrders = ref<SellOrderResponse[]>([])
@@ -996,13 +1094,17 @@ const buySearch = ref('')
 const orderDialog = ref(false)
 const orderDialogTab = ref<'buy' | 'sell'>('buy')
 
-// Reservations state
-const reservations = ref<ReservationWithDetails[]>([])
-const loadingReservations = ref(false)
-const reservationSearch = ref('')
-const reservationRoleFilter = ref<'all' | 'owner' | 'counterparty'>('all')
-const reservationStatusFilter = ref<ReservationStatus | null>(null)
-const reservationActionLoading = ref<string | null>(null)
+// Invoices state
+const invoices = ref<InvoiceSummary[]>([])
+const loadingInvoices = ref(false)
+const invoiceSearchChips = ref<SearchChip[]>([])
+const invoiceStatusFilter = ref<InvoiceStatus[]>([...defaultStatusFilter])
+const invoiceDirectionFilter = ref<'sent' | 'received' | null>(null)
+const invoiceDetailDialog = ref(false)
+const selectedInvoice = ref<Invoice | null>(null)
+const expandedInvoices = ref<string[]>([])
+const invoiceActionLoading = ref<string | null>(null)
+const invoiceRefreshKey = ref(0)
 
 // Order detail dialog with deep linking
 const {
@@ -1028,6 +1130,11 @@ const deletingSell = ref(false)
 const deleteBuyDialog = ref(false)
 const deletingBuyOrder = ref<BuyOrderResponse | null>(null)
 const deletingBuy = ref(false)
+
+// Delete invoice state
+const deleteInvoiceDialog = ref(false)
+const deletingInvoice = ref<InvoiceSummary | null>(null)
+const deletingInvoiceLoading = ref(false)
 
 const snackbar = ref({
   show: false,
@@ -1081,98 +1188,288 @@ const filteredBuyOrders = computed(() => {
   )
 })
 
-const filteredReservations = computed(() => {
-  let result = reservations.value
+// Helper for TokenSearchInput - get localized commodity name for search matching
+const getCommodityName = (ticker: string): string => {
+  return commodityService.getCommodityDisplay(ticker, 'name-only')
+}
 
-  // Filter by role
-  if (reservationRoleFilter.value === 'owner') {
-    result = result.filter(r => r.isOrderOwner)
-  } else if (reservationRoleFilter.value === 'counterparty') {
-    result = result.filter(r => r.isCounterparty)
+// Available user names for TokenSearchInput autocomplete
+const availableInvoiceUserNames = computed(() => {
+  const names = new Set<string>()
+  for (const inv of invoices.value) {
+    names.add(inv.counterpartyName)
+  }
+  return Array.from(names).sort()
+})
+
+const filteredInvoices = computed(() => {
+  let result = invoices.value
+
+  // Filter by direction
+  if (invoiceDirectionFilter.value) {
+    result = result.filter(inv => inv.direction === invoiceDirectionFilter.value)
   }
 
-  // Filter by status
-  if (reservationStatusFilter.value) {
-    result = result.filter(r => r.status === reservationStatusFilter.value)
+  // Filter by status (multi-select: empty array = show all)
+  if (invoiceStatusFilter.value.length > 0) {
+    result = result.filter(inv => invoiceStatusFilter.value.includes(inv.status))
   }
 
-  // Filter by search
-  if (reservationSearch.value) {
-    const searchLower = reservationSearch.value.toLowerCase()
-    result = result.filter(
-      r =>
-        r.commodityTicker.toLowerCase().includes(searchLower) ||
-        r.locationId.toLowerCase().includes(searchLower) ||
-        r.counterpartyName.toLowerCase().includes(searchLower) ||
-        r.orderOwnerName.toLowerCase().includes(searchLower)
-    )
+  // Filter by search chips
+  if (invoiceSearchChips.value.length > 0) {
+    const userChips = invoiceSearchChips.value.filter(c => c.type === 'user')
+    const commodityChips = invoiceSearchChips.value.filter(c => c.type === 'commodity')
+
+    result = result.filter(inv => {
+      // All user chips must match (AND logic)
+      const matchesUsers = userChips.every(
+        chip => inv.counterpartyName.toLowerCase() === chip.value.toLowerCase()
+      )
+
+      // All commodity chips must be present in the invoice (AND logic)
+      const matchesCommodities = commodityChips.every(chip =>
+        inv.commodityTickers.some(ticker => ticker.toLowerCase() === chip.value.toLowerCase())
+      )
+
+      return matchesUsers && matchesCommodities
+    })
   }
 
   return result
 })
 
-const activeReservationsCount = computed(() => {
-  return reservations.value.filter(r => r.status === 'pending' || r.status === 'confirmed').length
+// Show all / hide completed toggle for status filter
+const isShowingAll = computed(
+  () =>
+    invoiceStatusFilter.value.length === 0 ||
+    invoiceStatusFilter.value.length === allStatuses.length
+)
+
+const toggleShowAllStatuses = () => {
+  if (isShowingAll.value) {
+    invoiceStatusFilter.value = [...defaultStatusFilter]
+  } else {
+    invoiceStatusFilter.value = []
+  }
+}
+
+// Helper to check if an invoice is still active (not completed)
+const isActiveStatus = (status: string) => status !== 'fulfilled' && status !== 'cancelled'
+
+const activeInvoicesCount = computed(() => {
+  return invoices.value.filter(inv => isActiveStatus(inv.status)).length
 })
 
-// Summary statistics for reservations - only count active (pending/confirmed) reservations
-const activeReservations = computed(() => {
-  return reservations.value.filter(r => r.status === 'pending' || r.status === 'confirmed')
-})
-
-// Fills: reservations where I'm filling someone else's buy order (I'm selling, money coming in)
-const fillReservations = computed(() => {
-  return activeReservations.value.filter(r => r.buyOrderId && r.isCounterparty)
-})
-
-// Reserves: reservations where I'm reserving from someone else's sell order (I'm buying, money going out)
-const reserveReservations = computed(() => {
-  return activeReservations.value.filter(r => r.sellOrderId && r.isCounterparty)
-})
-
-// Calculate totals by currency
+// Calculate invoice summary totals from API-provided buy/sell breakdowns
+// For received invoices, invert the buy/sell since they're from sender's perspective
 type CurrencyTotals = Record<string, number>
 
-const fillTotalsByCurrency = computed((): CurrencyTotals => {
-  const totals: CurrencyTotals = {}
-  for (const r of fillReservations.value) {
-    const price = getReservationDisplayPrice(r)
-    if (price !== null) {
-      const total = price * r.quantity
-      totals[r.currency] = (totals[r.currency] ?? 0) + total
-    }
-  }
-  return totals
-})
+const invoiceSummary = computed(() => {
+  const activeInvoices = invoices.value.filter(inv => isActiveStatus(inv.status))
 
-const reserveTotalsByCurrency = computed((): CurrencyTotals => {
-  const totals: CurrencyTotals = {}
-  for (const r of reserveReservations.value) {
-    const price = getReservationDisplayPrice(r)
-    if (price !== null) {
-      const total = price * r.quantity
-      totals[r.currency] = (totals[r.currency] ?? 0) + total
-    }
-  }
-  return totals
-})
+  let totalItems = 0
+  const buyTotals: CurrencyTotals = {}
+  const sellTotals: CurrencyTotals = {}
+  const netTotals: CurrencyTotals = {}
 
-const netTotalsByCurrency = computed((): CurrencyTotals => {
-  const fills = fillTotalsByCurrency.value
-  const reserves = reserveTotalsByCurrency.value
-  const currencies = new Set([...Object.keys(fills), ...Object.keys(reserves)])
-  const totals: CurrencyTotals = {}
-  for (const currency of currencies) {
-    const net = (fills[currency] ?? 0) - (reserves[currency] ?? 0)
-    if (net !== 0) {
-      totals[currency] = net
+  for (const inv of activeInvoices) {
+    totalItems += inv.itemCount
+
+    // Use helper functions to get the correct totals based on direction
+    const myBuyTotals =
+      inv.direction === 'sent' ? inv.buyTotalsByCurrency : inv.sellTotalsByCurrency
+    const mySellTotals =
+      inv.direction === 'sent' ? inv.sellTotalsByCurrency : inv.buyTotalsByCurrency
+
+    for (const total of myBuyTotals) {
+      buyTotals[total.currency] = (buyTotals[total.currency] ?? 0) + total.total
+    }
+
+    for (const total of mySellTotals) {
+      sellTotals[total.currency] = (sellTotals[total.currency] ?? 0) + total.total
     }
   }
-  return totals
+
+  // Calculate net totals (sell - buy = positive means receiving money)
+  const allCurrencies = new Set([...Object.keys(buyTotals), ...Object.keys(sellTotals)])
+  for (const currency of allCurrencies) {
+    const buyAmount = buyTotals[currency] ?? 0
+    const sellAmount = sellTotals[currency] ?? 0
+    netTotals[currency] = sellAmount - buyAmount
+  }
+
+  return {
+    totalItems,
+    buyTotals,
+    sellTotals,
+    netTotals,
+  }
 })
 
 const formatPrice = (price: number): string => {
   return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const formatFuzzyTime = (isoString: string): string => {
+  const date = new Date(isoString)
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHr = Math.floor(diffMin / 60)
+
+  if (diffMs < 0) return 'just now'
+  if (diffSec < 60) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  if (diffHr < 24) return `${diffHr}h ago`
+
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
+  })
+}
+
+const formatFullDate = (isoString: string): string => {
+  return new Date(isoString).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+// Get what the current user is buying from this invoice
+// For sent invoices: use buyTotalsByCurrency (items from sell orders = I'm buying)
+// For received invoices: use sellTotalsByCurrency (sender's sell = my buy)
+const getMyBuyTotals = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.buyTotalsByCurrency
+  }
+  // Received: sender's sell (from buy orders) = my buy
+  return inv.sellTotalsByCurrency
+}
+
+// Get what the current user is selling from this invoice
+// For sent invoices: use sellTotalsByCurrency (items from buy orders = I'm selling)
+// For received invoices: use buyTotalsByCurrency (sender's buy = my sell)
+const getMySellTotals = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.sellTotalsByCurrency
+  }
+  // Received: sender's buy (from sell orders) = my sell
+  return inv.buyTotalsByCurrency
+}
+
+// Get the buy item count for the current user
+// For sent invoices: buyItemCount (from sell orders = I'm buying)
+// For received invoices: sellItemCount (sender's sell = my buy)
+const getMyBuyItemCount = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.buyItemCount
+  }
+  return inv.sellItemCount
+}
+
+// Get the sell item count for the current user
+// For sent invoices: sellItemCount (from buy orders = I'm selling)
+// For received invoices: buyItemCount (sender's buy = my sell)
+const getMySellItemCount = (inv: InvoiceSummary) => {
+  if (inv.direction === 'sent') {
+    return inv.sellItemCount
+  }
+  return inv.buyItemCount
+}
+
+// Bulk action availability checks
+const canConfirmAll = (inv: InvoiceSummary) => inv.status === 'pending'
+const canRejectAll = (inv: InvoiceSummary) => inv.status === 'pending'
+const canFulfillAll = (inv: InvoiceSummary) => inv.status === 'confirmed'
+
+// Bulk action handlers
+async function confirmAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `confirm-${inv.id}`
+  try {
+    const fullInvoice = await api.invoices.get(inv.id)
+    const pending = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'pending'
+    )
+    await Promise.all(pending.map(item => api.reservations.confirm(item.reservationId!)))
+    showSnackbar('All reservations confirmed')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to confirm reservations', error)
+    showSnackbar('Failed to confirm reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function rejectAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `reject-${inv.id}`
+  try {
+    const fullInvoice = await api.invoices.get(inv.id)
+    const pending = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'pending'
+    )
+    await Promise.all(pending.map(item => api.reservations.reject(item.reservationId!)))
+    showSnackbar('All reservations rejected')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to reject reservations', error)
+    showSnackbar('Failed to reject reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function fulfillAllReservations(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `fulfill-${inv.id}`
+  try {
+    const fullInvoice = await api.invoices.get(inv.id)
+    const confirmed = fullInvoice.lineItems.filter(
+      item => item.reservationId && item.reservationStatus === 'confirmed'
+    )
+    await Promise.all(confirmed.map(item => api.reservations.fulfill(item.reservationId!)))
+    showSnackbar('All reservations fulfilled')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to fulfill reservations', error)
+    showSnackbar('Failed to fulfill reservations', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function cancelInvoice(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `cancel-${inv.id}`
+  try {
+    await api.invoices.cancel(inv.id)
+    showSnackbar('Invoice cancelled')
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to cancel invoice', error)
+    showSnackbar('Failed to cancel invoice', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+// Toggle invoice row expansion
+function toggleInvoiceExpand(_event: Event, { item }: { item: InvoiceSummary }) {
+  const id = String(item.id)
+  const index = expandedInvoices.value.indexOf(id)
+  if (index === -1) {
+    expandedInvoices.value.push(id)
+  } else {
+    expandedInvoices.value.splice(index, 1)
+  }
+}
+
+// Row props for alternating row colors
+const getInvoiceRowProps = ({ index }: { index: number }) => {
+  return { class: index % 2 === 1 ? 'alt-row' : '' }
 }
 
 // Get the display price for a sell order - uses effectivePrice for dynamic pricing
@@ -1189,24 +1486,6 @@ const getBuyOrderDisplayPrice = (item: BuyOrderResponse): number | null => {
     return item.effectivePrice
   }
   return item.price > 0 ? item.price : null
-}
-
-// Get the display price for a reservation - uses effectivePrice for dynamic pricing
-const getReservationDisplayPrice = (item: ReservationWithDetails): number | null => {
-  if (item.pricingMode === 'dynamic') {
-    return item.effectivePrice
-  }
-  return item.price > 0 ? item.price : null
-}
-
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 const getLimitModeLabel = (mode: SellOrderLimitMode): string => {
@@ -1245,87 +1524,74 @@ const loadBuyOrders = async () => {
   }
 }
 
-const loadReservations = async () => {
+const loadInvoices = async () => {
   try {
-    loadingReservations.value = true
-    // Load all reservations (both as owner and counterparty)
-    reservations.value = await api.reservations.list('all')
+    loadingInvoices.value = true
+    invoices.value = await api.invoices.list()
   } catch (error) {
-    console.error('Failed to load reservations', error)
-    showSnackbar('Failed to load reservations', 'error')
+    console.error('Failed to load invoices', error)
+    showSnackbar('Failed to load invoices', 'error')
   } finally {
-    loadingReservations.value = false
+    loadingInvoices.value = false
+    invoiceRefreshKey.value++
   }
 }
 
-// Reservation actions
-const confirmReservation = async (id: number) => {
+const viewInvoice = async (summary: InvoiceSummary) => {
+  await openInvoiceById(summary.id)
+}
+
+// Open invoice by ID (used for deep linking)
+const openInvoiceById = async (invoiceId: number) => {
   try {
-    reservationActionLoading.value = `confirm-${id}`
-    await api.reservations.confirm(id)
-    showSnackbar('Reservation confirmed')
-    await loadReservations()
+    selectedInvoice.value = await api.invoices.get(invoiceId)
+    invoiceDetailDialog.value = true
+    // Update URL with invoice param
+    const query = { ...route.query, invoice: String(invoiceId) }
+    router.replace({ query })
+    // Switch to invoices tab
+    activeTab.value = 'invoices'
   } catch (error) {
-    console.error('Failed to confirm reservation', error)
-    showSnackbar(error instanceof Error ? error.message : 'Failed to confirm reservation', 'error')
-  } finally {
-    reservationActionLoading.value = null
+    console.error('Failed to load invoice', error)
+    showSnackbar('Failed to load invoice details', 'error')
+    // Clear the invalid invoice param from URL
+    const query = { ...route.query }
+    delete query.invoice
+    router.replace({ query })
   }
 }
 
-const rejectReservation = async (id: number) => {
-  try {
-    reservationActionLoading.value = `reject-${id}`
-    await api.reservations.reject(id)
-    showSnackbar('Reservation rejected')
-    await loadReservations()
-  } catch (error) {
-    console.error('Failed to reject reservation', error)
-    showSnackbar(error instanceof Error ? error.message : 'Failed to reject reservation', 'error')
-  } finally {
-    reservationActionLoading.value = null
+// Clear invoice param from URL when dialog closes
+watch(invoiceDetailDialog, isOpen => {
+  if (!isOpen && route.query.invoice) {
+    const query = { ...route.query }
+    delete query.invoice
+    router.replace({ query })
   }
-}
+})
 
-const fulfillReservation = async (id: number) => {
-  try {
-    reservationActionLoading.value = `fulfill-${id}`
-    await api.reservations.fulfill(id)
-    showSnackbar('Reservation marked as fulfilled')
-    await loadReservations()
-  } catch (error) {
-    console.error('Failed to fulfill reservation', error)
-    showSnackbar(error instanceof Error ? error.message : 'Failed to fulfill reservation', 'error')
-  } finally {
-    reservationActionLoading.value = null
-  }
-}
+// Watch for invoice deep link in URL
+watch(
+  () => route.query.invoice,
+  async invoiceParam => {
+    if (invoiceParam && !invoiceDetailDialog.value) {
+      const invoiceId = parseInt(String(invoiceParam), 10)
+      if (!isNaN(invoiceId)) {
+        await openInvoiceById(invoiceId)
+      }
+    }
+  },
+  { immediate: true }
+)
 
-const cancelReservation = async (id: number) => {
+const refreshInvoice = async () => {
+  if (!selectedInvoice.value) return
   try {
-    reservationActionLoading.value = `cancel-${id}`
-    await api.reservations.cancel(id)
-    showSnackbar('Reservation cancelled')
-    await loadReservations()
+    selectedInvoice.value = await api.invoices.get(selectedInvoice.value.id)
+    // Also refresh the invoice list in case status changed
+    await loadInvoices()
   } catch (error) {
-    console.error('Failed to cancel reservation', error)
-    showSnackbar(error instanceof Error ? error.message : 'Failed to cancel reservation', 'error')
-  } finally {
-    reservationActionLoading.value = null
-  }
-}
-
-const reopenReservation = async (id: number) => {
-  try {
-    reservationActionLoading.value = `reopen-${id}`
-    await api.reservations.reopen(id)
-    showSnackbar('Reservation reopened')
-    await loadReservations()
-  } catch (error) {
-    console.error('Failed to reopen reservation', error)
-    showSnackbar(error instanceof Error ? error.message : 'Failed to reopen reservation', 'error')
-  } finally {
-    reservationActionLoading.value = null
+    console.error('Failed to refresh invoice', error)
   }
 }
 
@@ -1381,9 +1647,9 @@ const openEditSellDialog = (order: SellOrderResponse) => {
   editSellDialog.value = true
 }
 
-const onSellOrderSaved = () => {
+const onSellOrderSaved = async () => {
   showSnackbar('Sell order updated successfully')
-  loadSellOrders()
+  await loadSellOrders()
 }
 
 // Edit buy order functions
@@ -1392,9 +1658,9 @@ const openEditBuyDialog = (order: BuyOrderResponse) => {
   editBuyDialog.value = true
 }
 
-const onBuyOrderSaved = () => {
+const onBuyOrderSaved = async () => {
   showSnackbar('Buy order updated successfully')
-  loadBuyOrders()
+  await loadBuyOrders()
 }
 
 // Delete sell order functions
@@ -1445,10 +1711,34 @@ const deleteBuyOrder = async () => {
   }
 }
 
+// Delete invoice functions
+const confirmDeleteInvoice = (invoice: InvoiceSummary) => {
+  deletingInvoice.value = invoice
+  deleteInvoiceDialog.value = true
+}
+
+const deleteInvoice = async () => {
+  if (!deletingInvoice.value) return
+
+  try {
+    deletingInvoiceLoading.value = true
+    await api.invoices.delete(deletingInvoice.value.id)
+    showSnackbar('Draft invoice deleted successfully')
+    deleteInvoiceDialog.value = false
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to delete invoice', error)
+    const message = error instanceof Error ? error.message : 'Failed to delete invoice'
+    showSnackbar(message, 'error')
+  } finally {
+    deletingInvoiceLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadSellOrders()
   loadBuyOrders()
-  loadReservations()
+  loadInvoices()
 })
 </script>
 
@@ -1456,5 +1746,47 @@ onMounted(() => {
 /* Unscoped: taller rows when icons are enabled */
 .icon-rows tbody tr td {
   height: 64px !important;
+}
+
+/* Clickable rows for expanding */
+.clickable-rows tbody tr:not(.expanded-row) {
+  cursor: pointer;
+}
+
+.clickable-rows tbody tr:not(.expanded-row):hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+/* Alternating row colors */
+.alt-row {
+  background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
+}
+
+/* Commodity icon grid in invoice rows */
+.commodity-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 180px;
+}
+
+.commodity-grid-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  font-size: 7px;
+}
+
+.commodity-grid-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  background: rgba(var(--v-theme-on-surface), 0.1);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: default;
 }
 </style>

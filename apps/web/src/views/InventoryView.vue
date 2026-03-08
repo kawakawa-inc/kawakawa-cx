@@ -227,6 +227,7 @@
         :items="filteredInventory"
         :loading="loading"
         :items-per-page="25"
+        :row-props="getRowProps"
         item-value="id"
         show-expand
         :class="['elevation-0', { 'icon-rows': hasIcons }]"
@@ -909,6 +910,11 @@ const hasOrders = (item: FioInventoryItem): boolean => {
   return getSellOrdersForItem(item).length > 0 || getBuyOrdersForItem(item).length > 0
 }
 
+// Row props for alternating row colors
+const getRowProps = ({ index }: { index: number }) => {
+  return { class: index % 2 === 1 ? 'alt-row' : '' }
+}
+
 // Open edit dialog for a sell order
 const editSellOrder = (order: SellOrderResponse) => {
   editingSellOrder.value = order
@@ -1025,5 +1031,10 @@ onMounted(() => {
 /* Unscoped: taller rows when icons are enabled */
 .icon-rows tbody tr td {
   height: 64px !important;
+}
+
+/* Alternating row colors */
+.alt-row {
+  background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
 }
 </style>

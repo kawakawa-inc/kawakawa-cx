@@ -31,18 +31,16 @@ vi.mock('../db/index.js', () => {
             }
           }
           if (tableName === 'prices') {
-            // Make it thenable for direct await, also support where() chain
-            const resultPromise = Promise.resolve(mockPricesResult)
-            return Object.assign(resultPromise, {
+            return {
               where: vi.fn().mockImplementation(() => Promise.resolve(mockPricesResult)),
-            })
+              groupBy: vi.fn().mockImplementation(() => Promise.resolve(mockPricesResult)),
+            }
           }
           if (tableName === 'importConfigs') {
-            // Make it thenable for direct await, also support where() chain
-            const resultPromise = Promise.resolve(mockImportConfigsResult)
-            return Object.assign(resultPromise, {
+            return {
               where: vi.fn().mockImplementation(() => Promise.resolve(mockImportConfigsResult)),
-            })
+              groupBy: vi.fn().mockImplementation(() => Promise.resolve(mockImportConfigsResult)),
+            }
           }
           if (tableName === 'fioLocations') {
             return {

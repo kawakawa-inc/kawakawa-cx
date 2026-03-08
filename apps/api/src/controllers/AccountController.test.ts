@@ -212,6 +212,7 @@ describe('AccountController', () => {
       expect(passwordUtils.hashPassword).toHaveBeenCalledWith('newpass456')
       expect(mockUpdate.set).toHaveBeenCalledWith({
         passwordHash: 'new-hash',
+        tokenVersion: expect.anything(),
         updatedAt: expect.any(Date),
       })
     })

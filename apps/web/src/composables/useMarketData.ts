@@ -14,6 +14,7 @@ export type MarketItemType = 'sell' | 'buy'
 export interface MarketItem {
   id: number
   itemType: MarketItemType
+  userId: number // seller or buyer's user ID
   commodityTicker: string
   locationId: string
   userName: string // sellerName or buyerName
@@ -69,6 +70,7 @@ export function useMarketData(options?: { onError?: (error: unknown) => void }) 
       const sellItems: MarketItem[] = sellListings.map(listing => ({
         id: listing.id,
         itemType: 'sell' as MarketItemType,
+        userId: listing.userId,
         commodityTicker: listing.commodityTicker,
         locationId: listing.locationId,
         userName: listing.sellerName,
@@ -90,6 +92,7 @@ export function useMarketData(options?: { onError?: (error: unknown) => void }) 
       const buyItems: MarketItem[] = buyRequests.map(request => ({
         id: request.id,
         itemType: 'buy' as MarketItemType,
+        userId: request.userId,
         commodityTicker: request.commodityTicker,
         locationId: request.locationId,
         userName: request.buyerName,

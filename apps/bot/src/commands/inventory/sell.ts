@@ -1,80 +1,86 @@
 /**
- * /sell command - Create sell orders with flexible input
+ * /sell command - Browse buy orders (demand) or create invoices
  *
- * Supports:
- * - Comma-separated tickers: /sell COF,CAF,H2O Katoa
- * - Space-separated input: /sell H Stella 1500
- * - Limit modifiers: reserve:X, max:X
- * - Auto-pricing from user's default price list
+ * Query mode (no counterparty):
+ * - /sell RAT - Show all buy orders for RAT (people looking to buy)
+ * - /sell RAT BEN - Show buy orders for RAT at BEN
+ * - /sell 20 RAT BEN - Show with availability emojis
+ *
+ * Invoice mode (with counterparty):
+ * - /sell RAT BEN @alice - Prompt for quantity, then create invoice
+ * - /sell 20 RAT BEN @alice - Create invoice (check for duplicates)
+ *
+ * To create sell orders (your supply), use /order sell instead.
  */
-import { SlashCommandBuilder, MessageFlags } from 'discord.js'
+import {
+  SlashCommandBuilder,
+  MessageFlags,
+  EmbedBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+} from 'discord.js'
 import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
-import { db, sellOrders, priceLists } from '@kawakawa/db'
+import { db, userDiscordProfiles } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import { searchLocations } from '../../autocomplete/index.js'
-import { formatCommodity, formatLocation, resolveLocation } from '../../services/display.js'
-import { getMarketSettings, getDisplaySettings } from '../../services/userSettings.js'
+import { formatCommodity, formatLocation } from '../../services/display.js'
+import { getDisplaySettings } from '../../services/userSettings.js'
 import {
   getChannelConfig,
   resolveEffectiveValue,
-  wasOverriddenByChannel,
+  resolveMessageVisibility,
 } from '../../services/channelConfig.js'
 import { requireLinkedUser } from '../../utils/auth.js'
-import { isValidCurrency, VALID_CURRENCIES, type ValidCurrency } from '../../utils/validation.js'
-import {
-  parseSmartOrderInput,
-  formatLimitMode,
-  type LimitMode,
-} from '../../utils/orderInputParser.js'
-import { calculateEffectivePriceWithFallback } from '@kawakawa/services/market'
+import { parseTokens } from '@kawakawa/parser'
+import { botResolvers } from '../../utils/resolvers.js'
+import { handleInvoiceCommand } from '../../services/invoiceCommandHandler.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
+import { executeQuery, sendQueryResponse } from '../../services/queryHelper.js'
+import type { ExtraButton } from '../../components/pagination.js'
 import logger from '../../utils/logger.js'
 
 export const sell: Command = {
   data: new SlashCommandBuilder()
     .setName('sell')
-    .setDescription('Create sell order(s)')
+    .setDescription('Browse buy orders (demand) or create invoices')
     .addStringOption(option =>
       option
         .setName('input')
-        .setDescription('Ticker(s) and location (e.g., "COF,CAF Katoa reserve:1000")')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('location')
-        .setDescription('Override location')
-        .setRequired(false)
-        .setAutocomplete(true)
-    )
-    .addNumberOption(option =>
-      option
-        .setName('price')
-        .setDescription('Override price (uses auto-pricing if not set)')
-        .setRequired(false)
-    )
-    .addStringOption(option =>
-      option
-        .setName('currency')
-        .setDescription('Currency (default: your preferred currency)')
-        .setRequired(false)
-        .addChoices(
-          { name: 'CIS', value: 'CIS' },
-          { name: 'ICA', value: 'ICA' },
-          { name: 'AIC', value: 'AIC' },
-          { name: 'NCC', value: 'NCC' }
+        .setDescription(
+          'Commodity, location, quantity, and/or username (e.g., "RAT BEN" or "20 RAT BEN @alice")'
         )
+        .setRequired(false)
     )
     .addStringOption(option =>
       option
         .setName('visibility')
-        .setDescription('Order visibility (default: internal)')
+        .setDescription('Filter by visibility (default: internal)')
         .setRequired(false)
         .addChoices(
+          { name: 'All', value: 'all' },
           { name: 'Internal (members)', value: 'internal' },
           { name: 'Partner (trade partners)', value: 'partner' }
         )
+    )
+    .addStringOption(option =>
+      option
+        .setName('reply')
+        .setDescription('Reply visibility (default: your preference)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Private (only you)', value: 'ephemeral' },
+          { name: 'Public (everyone)', value: 'public' }
+        )
     ) as SlashCommandBuilder,
+
+  helpInfo: {
+    category: 'trading',
+    details:
+      'Without a counterparty: browse buy orders (demand).\nWith a counterparty: create an invoice to sell to them.',
+    examples: ['sell RAT', 'sell RAT BEN', 'sell 20 RAT BEN', 'sell 20 RAT BEN alice'],
+  },
 
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
@@ -92,13 +98,10 @@ export const sell: Command = {
   },
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // Require linked account
-    const result = await requireLinkedUser(interaction)
-    if (!result) return
-    const { userId } = result
+    // Get command prefix (/ or ! or custom)
+    const prefix = getCommandPrefix(interaction)
 
-    // Get user settings for defaults
-    const marketSettings = await getMarketSettings(userId)
+    // Get user's display preferences
     const displaySettings = await getDisplaySettings(interaction.user.id)
 
     // Get channel defaults (if configured)
@@ -106,92 +109,107 @@ export const sell: Command = {
     const channelSettings = await getChannelConfig(channelId)
 
     // Get options
-    const input = interaction.options.getString('input', true)
-    const locationOverride = interaction.options.getString('location')
-    const priceOverride = interaction.options.getNumber('price')
-    const currencyOption = interaction.options.getString('currency') as ValidCurrency | null
+    const input = interaction.options.getString('input')
     const visibilityOption = interaction.options.getString('visibility') as
+      | 'all'
       | 'internal'
       | 'partner'
       | null
+    const replyOption = interaction.options.getString('reply') as 'ephemeral' | 'public' | null
 
-    // Parse flexible input (supports both multi-format and single-format)
-    const parsed = await parseSmartOrderInput(input, { forSell: true })
-
-    // Extract tickers and check for errors based on format
-    const isMultiFormat = parsed.isMultiFormat
-    const unresolvedTokens = isMultiFormat
-      ? parsed.multi!.unresolvedTokens
-      : parsed.single!.unresolvedTokens
-    const tickers = isMultiFormat ? parsed.multi!.orders.map(o => o.ticker) : parsed.single!.tickers
-
-    // Validate we have at least one ticker
-    if (tickers.length === 0) {
-      const errorMsg =
-        unresolvedTokens.length > 0
-          ? `Could not find commodities: ${unresolvedTokens.map(t => `"${t}"`).join(', ')}`
-          : 'Please specify at least one commodity ticker.'
-
-      await interaction.reply({
-        content: `❌ ${errorMsg}\n\nExample: \`/sell COF,CAF Katoa reserve:1000\` or \`/sell DW 1000 RAT 500 BEN\``,
-        flags: MessageFlags.Ephemeral,
-      })
-      return
-    }
-
-    // Determine location (override takes precedence)
-    let locationId =
-      locationOverride || (isMultiFormat ? parsed.multi!.location : parsed.single!.location)
-
-    // If location override provided, validate it
-    if (locationOverride) {
-      const resolved = await resolveLocation(locationOverride)
-      if (!resolved) {
-        await interaction.reply({
-          content: `❌ Location "${locationOverride}" not found.`,
-          flags: MessageFlags.Ephemeral,
-        })
-        return
-      }
-      locationId = resolved.naturalId
-    }
-
-    if (!locationId) {
-      await interaction.reply({
-        content:
-          '❌ Please specify a location.\n\n' +
-          'Example: `/sell COF Katoa` or use the `location` option.',
-        flags: MessageFlags.Ephemeral,
-      })
-      return
-    }
-
-    // Determine currency using channel defaults resolution
-    const currency: ValidCurrency = resolveEffectiveValue(
-      currencyOption,
-      channelSettings?.currency,
-      channelSettings?.currencyEnforced ?? false,
-      marketSettings.preferredCurrency as ValidCurrency,
-      'CIS' as ValidCurrency
+    // Resolve message visibility
+    const { isEphemeral } = resolveMessageVisibility(
+      replyOption,
+      channelSettings,
+      displaySettings.messageVisibility
     )
 
-    if (!isValidCurrency(currency)) {
-      await interaction.reply({
-        content: `❌ Invalid currency. Valid options: ${VALID_CURRENCIES.join(', ')}`,
-        flags: MessageFlags.Ephemeral,
-      })
+    // Check for empty input - show informational message
+    if (!input || input.trim() === '') {
+      logger.debug({ cmd: 'sell', mode: 'help', input }, 'sell: empty input → help')
+      await showSellHelp(interaction, prefix, isEphemeral)
       return
     }
 
-    // Track if currency was overridden by channel
-    const currencyOverridden = wasOverriddenByChannel(
-      currencyOption,
-      channelSettings?.currency,
-      channelSettings?.currencyEnforced ?? false
+    // Parse input with unified parser
+    const parsed = await parseTokens(input, botResolvers)
+    logger.debug(
+      {
+        cmd: 'sell',
+        input,
+        user: parsed.user?.username ?? null,
+        userId: parsed.user?.userId ?? null,
+        items: parsed.items.map(i => ({ ticker: i.commodity.ticker, qty: i.quantity })),
+        location: parsed.location?.naturalId ?? null,
+        unresolved: parsed.unresolved,
+      },
+      'sell: parsed input'
     )
 
-    // Determine visibility using channel defaults resolution
-    const orderType: 'internal' | 'partner' = resolveEffectiveValue(
+    // Check for invoice mode (counterparty user in input)
+    if (parsed.user) {
+      logger.debug(
+        { cmd: 'sell', mode: 'invoice', counterparty: parsed.user.username },
+        'sell: invoice mode'
+      )
+      // INVOICE MODE: Sell to counterparty's buy orders
+      // Require linked account for invoice creation
+      const result = await requireLinkedUser(interaction)
+      if (!result) return
+      const { userId } = result
+      logger.debug(
+        { cmd: 'sell', currentUserId: userId, counterpartyUserId: parsed.user.userId },
+        'sell: user IDs'
+      )
+
+      const invoiceResult = await handleInvoiceCommand({
+        interaction,
+        userId,
+        input,
+        direction: 'sell',
+        locationDisplayMode: displaySettings.locationDisplayMode,
+        commodityDisplayMode: displaySettings.commodityDisplayMode,
+      })
+      logger.debug(
+        {
+          cmd: 'sell',
+          invoiceResult: { success: invoiceResult.success, hasErrors: !!invoiceResult.errors },
+        },
+        'sell: invoice result'
+      )
+      // handleInvoiceCommand handles all user-facing replies internally
+      return
+    }
+
+    // QUERY MODE: Show available buy orders (people's demand)
+    // Check if we have at least one commodity
+    if (parsed.items.length === 0 && !parsed.location) {
+      logger.debug(
+        { cmd: 'sell', mode: 'help', reason: 'no items or location' },
+        'sell: nothing to query → help'
+      )
+      // Nothing to query - show help
+      await showSellHelp(interaction, prefix, isEphemeral)
+      return
+    }
+    logger.debug(
+      {
+        cmd: 'sell',
+        mode: 'query',
+        commodities: parsed.items.map(i => i.commodity.ticker),
+        location: parsed.location?.naturalId,
+      },
+      'sell: query mode'
+    )
+
+    // Get current user's ID (if linked) for filtering own orders
+    const currentUserProfile = await db.query.userDiscordProfiles.findFirst({
+      where: eq(userDiscordProfiles.discordId, interaction.user.id),
+    })
+    const currentUserId = currentUserProfile?.userId ?? null
+
+    // Determine visibility using channel defaults
+    const visibility: 'all' | 'internal' | 'partner' = resolveEffectiveValue(
       visibilityOption,
       channelSettings?.visibility,
       channelSettings?.visibilityEnforced ?? false,
@@ -199,278 +217,115 @@ export const sell: Command = {
       'internal' as const
     )
 
-    // Track if visibility was overridden by channel
-    const visibilityOverridden = wasOverriddenByChannel(
-      visibilityOption,
-      channelSettings?.visibility,
-      channelSettings?.visibilityEnforced ?? false
-    )
+    // Build resolved commodities
+    const resolvedCommodities = parsed.items.map(item => item.commodity)
 
-    // Determine limit mode (for single-format, from parsed input; for multi-format, per-ticker)
-    const sharedLimitMode: LimitMode = isMultiFormat ? 'reserve' : parsed.single!.limitMode
-    const sharedLimitQuantity = isMultiFormat ? null : parsed.single!.limitQuantity
+    // Build resolved locations
+    const resolvedLocations = parsed.location
+      ? [
+          {
+            naturalId: parsed.location.naturalId,
+            name: parsed.location.name,
+            type: parsed.location.type,
+          },
+        ]
+      : []
 
-    // Determine price list using channel defaults resolution
-    const effectivePriceList: string | null = resolveEffectiveValue(
-      null, // No command-level price list option yet
-      channelSettings?.priceList,
-      channelSettings?.priceListEnforced ?? false,
-      marketSettings.defaultPriceList,
-      null
-    )
-
-    // Determine pricing approach
-    let useAutoPricing = false
-    let priceListCode: string | null = null
-
-    if (priceOverride !== null && priceOverride !== undefined) {
-      // User explicitly provided a price - use fixed pricing
-      useAutoPricing = false
-    } else if (effectivePriceList) {
-      // Have a price list (from channel or user settings)
-      useAutoPricing = true
-      priceListCode = effectivePriceList
-
-      // Verify the price list exists
-      const priceList = await db.query.priceLists.findFirst({
-        where: eq(priceLists.code, priceListCode),
-      })
-
-      if (!priceList) {
-        const source = channelSettings?.priceListEnforced
-          ? 'Channel default'
-          : channelSettings?.priceList === priceListCode
-            ? 'Channel default'
-            : 'Your default'
-        await interaction.reply({
-          content:
-            `❌ ${source} price list "${priceListCode}" was not found.\n\n` +
-            'Please contact an admin or provide a price explicitly.',
-          flags: MessageFlags.Ephemeral,
-        })
-        return
+    // Build requested quantities (for availability emojis)
+    const requestedQuantities: Record<string, number> = {}
+    let hasQuantities = false
+    for (const item of parsed.items) {
+      if (item.quantity !== null && item.quantity > 0) {
+        requestedQuantities[item.commodity.ticker] = item.quantity
+        hasQuantities = true
       }
-    } else {
-      // No price provided and no price list configured
+    }
+
+    // Execute query for BUY orders only (since user is looking to sell)
+    const queryResult = await executeQuery({
+      commodities: resolvedCommodities,
+      locations: resolvedLocations,
+      userIds: [],
+      displayNames: [],
+      orderType: 'buy', // Always buy orders for /sell
+      visibility,
+      channelSettings,
+      locationDisplayMode: displaySettings.locationDisplayMode,
+      commodityDisplayMode: displaySettings.commodityDisplayMode,
+      isEphemeral,
+      requestedQuantities: hasQuantities ? requestedQuantities : undefined,
+      currentUserId,
+    })
+
+    if (!queryResult.hasOrders) {
+      // Build helpful message for no results
+      const commodityList = resolvedCommodities.map(c => formatCommodity(c.ticker)).join(', ')
+      const locationList = await Promise.all(
+        resolvedLocations.map(l => formatLocation(l.naturalId, displaySettings.locationDisplayMode))
+      )
+
+      let noResultsMsg = `📭 No buy orders found`
+      if (commodityList) noResultsMsg += ` for **${commodityList}**`
+      if (locationList.length > 0) noResultsMsg += ` at **${locationList.join(', ')}**`
+      noResultsMsg += '.'
+
+      noResultsMsg += `\n\n💡 **Tips:**`
+      noResultsMsg += `\n• Use \`${prefix}query\` to search all orders`
+      noResultsMsg += `\n• Use \`${prefix}order sell\` to post your supply`
+
       await interaction.reply({
-        content:
-          '❌ Please provide a price or configure auto-pricing.\n\n' +
-          'You can:\n' +
-          '1. Add `price:` option to this command\n' +
-          '2. Configure a default price list in `/settings market`\n' +
-          '3. Enable automatic pricing in your settings',
-        flags: MessageFlags.Ephemeral,
+        content: noResultsMsg,
+        flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
       })
       return
     }
 
-    // Create orders for each ticker
-    const createdOrders: Array<{
-      ticker: string
-      price: number | null
-      currency: string
-      priceSource: 'fixed' | 'auto' | 'pending'
-      limitMode: LimitMode
-      limitQuantity: number | null
-    }> = []
-    const errors: string[] = []
+    // Build extra buttons (empty for now - invoice creation moved to explicit @user syntax)
+    const extraButtons: ExtraButton[] = []
 
-    // Build order items based on format
-    // For multi-format, each ticker has its own reserve quantity
-    // For single-format, all tickers share the same limit mode/quantity
-    const orderItems = isMultiFormat
-      ? parsed.multi!.orders.map(o => ({
-          ticker: o.ticker,
-          limitMode: 'reserve' as LimitMode,
-          limitQuantity: o.quantity,
-        }))
-      : tickers.map(ticker => ({
-          ticker,
-          limitMode: sharedLimitMode,
-          limitQuantity: sharedLimitQuantity,
-        }))
-
-    for (const item of orderItems) {
-      const { ticker, limitMode, limitQuantity } = item
-      try {
-        let price: number
-        let orderPriceListCode: string | null = null
-
-        if (priceOverride !== null && priceOverride !== undefined) {
-          // Fixed price from option
-          price = priceOverride
-        } else if (useAutoPricing && priceListCode) {
-          // Try to get price from price list
-          const effectivePrice = await calculateEffectivePriceWithFallback(
-            priceListCode,
-            ticker,
-            locationId,
-            currency
-          )
-
-          if (effectivePrice) {
-            // Found price in list
-            price = effectivePrice.finalPrice
-            orderPriceListCode = priceListCode
-          } else {
-            // No price in list - set price=0 and mark as dynamic (will show --)
-            price = 0
-            orderPriceListCode = priceListCode
-          }
-        } else {
-          // This shouldn't happen, but fallback to 0
-          price = 0
-        }
-
-        // Upsert the sell order
-        await db
-          .insert(sellOrders)
-          .values({
-            userId,
-            commodityTicker: ticker,
-            locationId,
-            price: price.toFixed(2),
-            currency,
-            priceListCode: orderPriceListCode,
-            orderType,
-            limitMode,
-            limitQuantity,
-            updatedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [
-              sellOrders.userId,
-              sellOrders.commodityTicker,
-              sellOrders.locationId,
-              sellOrders.orderType,
-              sellOrders.currency,
-            ],
-            set: {
-              price: price.toFixed(2),
-              priceListCode: orderPriceListCode,
-              limitMode,
-              limitQuantity,
-              updatedAt: new Date(),
-            },
-          })
-
-        createdOrders.push({
-          ticker,
-          price: price > 0 ? price : null,
-          currency,
-          priceSource:
-            priceOverride !== null && priceOverride !== undefined
-              ? 'fixed'
-              : price > 0
-                ? 'auto'
-                : 'pending',
-          limitMode,
-          limitQuantity,
-        })
-
-        logger.info(
-          {
-            userId,
-            commodityTicker: ticker,
-            locationId,
-            price,
-            currency,
-            orderType,
-            limitMode,
-            limitQuantity,
-            priceListCode: orderPriceListCode,
-          },
-          'Sell order created/updated'
-        )
-      } catch (error) {
-        logger.error({ error, userId, ticker, locationId }, 'Failed to create sell order')
-        errors.push(`${ticker}: failed to create`)
-      }
-    }
-
-    // Build response
-    const locationDisplay = await formatLocation(locationId, displaySettings.locationDisplayMode)
-
-    let response = ''
-
-    if (createdOrders.length === 1) {
-      // Single order response
-      const order = createdOrders[0]
-      const commodityDisplay = formatCommodity(order.ticker)
-      const priceDisplay =
-        order.price !== null
-          ? `${order.price.toFixed(2)} ${order.currency}`
-          : `-- ${order.currency}`
-      const limitDisplay = formatLimitMode(order.limitMode, order.limitQuantity)
-
-      response = `✅ Sell order created/updated!\n\n`
-      response += `**${commodityDisplay}** @ **${locationDisplay}**\n`
-      response += `Price: **${priceDisplay}**`
-
-      if (order.priceSource === 'pending') {
-        response += ` ⚠️ *no price in list*`
-      }
-
-      response += '\n'
-
-      if (limitDisplay) {
-        response += `Limit: **${limitDisplay}**\n`
-      }
-
-      response += `Visibility: **${orderType}**`
-    } else {
-      // Multiple orders response
-      response = `✅ Created ${createdOrders.length} sell order(s) at **${locationDisplay}**:\n\n`
-
-      for (const order of createdOrders) {
-        const commodityDisplay = formatCommodity(order.ticker)
-        const priceDisplay =
-          order.price !== null
-            ? `${order.price.toFixed(2)} ${order.currency}`
-            : `-- ${order.currency}`
-        const orderLimitDisplay = formatLimitMode(order.limitMode, order.limitQuantity)
-
-        response += `• ${commodityDisplay} - ${priceDisplay}`
-
-        if (orderLimitDisplay) {
-          response += ` (${orderLimitDisplay})`
-        }
-
-        if (order.priceSource === 'pending') {
-          response += ` ⚠️ *no price*`
-        }
-
-        response += '\n'
-      }
-
-      response += `\nVisibility: **${orderType}**`
-    }
-
-    // Add errors if any
-    if (errors.length > 0) {
-      response += `\n\n⚠️ Some orders failed:\n${errors.map(e => `• ${e}`).join('\n')}`
-    }
-
-    // Add warnings about unresolved tokens
-    if (unresolvedTokens.length > 0) {
-      response += `\n\n⚠️ Could not resolve: ${unresolvedTokens.map(t => `"${t}"`).join(', ')}`
-    }
-
-    // Add warnings about channel-enforced overrides
-    const overrideWarnings: string[] = []
-    if (currencyOverridden) {
-      overrideWarnings.push(`currency → ${currency}`)
-    }
-    if (visibilityOverridden) {
-      overrideWarnings.push(`visibility → ${orderType}`)
-    }
-    if (overrideWarnings.length > 0) {
-      response += `\n\n🔒 Channel enforced: ${overrideWarnings.join(', ')}`
-    }
-
-    await interaction.reply({
-      content: response,
-      flags: MessageFlags.Ephemeral,
+    // Send paginated response
+    await sendQueryResponse(interaction, queryResult, {
+      isEphemeral,
+      extraButtons,
     })
   },
+}
+
+/**
+ * Show help message for /sell command
+ */
+async function showSellHelp(
+  interaction: ChatInputCommandInteraction,
+  prefix: string,
+  isEphemeral: boolean
+): Promise<void> {
+  const embed = new EmbedBuilder()
+    .setTitle('💰 Sell Command')
+    .setColor(0xfee75c)
+    .setDescription(
+      `Use \`${prefix}sell\` to browse buy orders (demand) or create invoices.\n\n` +
+        `**Browse Demand (Query Mode)**\n` +
+        `• \`${prefix}sell RAT\` - Show all RAT buy orders\n` +
+        `• \`${prefix}sell RAT BEN\` - Show RAT demand at Benten\n` +
+        `• \`${prefix}sell 20 RAT BEN\` - Show with availability ✅⚠️❌\n\n` +
+        `**Create Invoice**\n` +
+        `• \`${prefix}sell RAT BEN @alice\` - Sell RAT to Alice at Benten\n` +
+        `• \`${prefix}sell 20 RAT BEN @alice\` - Sell 20 RAT to Alice\n\n` +
+        `**Post Your Supply**\n` +
+        `• \`${prefix}order sell COF Katoa 500\` - Create a sell order`
+    )
+    .setFooter({ text: 'Use /query for advanced searches across all order types' })
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('sell_help:dismiss')
+      .setLabel('Dismiss')
+      .setStyle(ButtonStyle.Secondary)
+  )
+
+  await interaction.reply({
+    embeds: [embed],
+    components: [row],
+    flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
+  })
 }

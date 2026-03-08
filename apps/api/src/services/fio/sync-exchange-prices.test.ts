@@ -42,6 +42,7 @@ vi.mock('../../db/index.js', () => ({
                 orderBy: () => ({
                   limit: () => Promise.resolve().then(() => mockPricesResult()),
                 }),
+                groupBy: () => Promise.resolve().then(() => mockPricesResult()),
               })
             },
           }
@@ -332,16 +333,19 @@ describe('getFioExchangeSyncStatus', () => {
       { code: 'NC1', defaultLocationId: 'MOR', currency: 'NCC' },
     ])
 
-    // Mock price count and sync time for each exchange - use mockReturnValueOnce
-    // because the promise is created in the mock, not the return value
-    mockPricesResult
-      .mockReturnValueOnce([{ id: 1, updatedAt: syncTime }])
-      .mockReturnValueOnce([{ id: 2, updatedAt: syncTime2 }])
+    // Mock aggregated stats query (single query returning all price lists)
+    mockPricesResult.mockReturnValue([
+      { priceListCode: 'CI1', lastSyncedAt: syncTime, priceCount: 5 },
+      { priceListCode: 'NC1', lastSyncedAt: syncTime2, priceCount: 3 },
+    ])
 
     const result = await getFioExchangeSyncStatus()
 
     expect(result.length).toBe(2)
     expect(result[0].exchangeCode).toBe('CI1')
     expect(result[0].lastSyncedAt).toEqual(syncTime)
+    expect(result[0].priceCount).toBe(5)
+    expect(result[1].exchangeCode).toBe('NC1')
+    expect(result[1].priceCount).toBe(3)
   })
 })

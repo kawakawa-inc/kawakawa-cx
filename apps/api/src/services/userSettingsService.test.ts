@@ -18,6 +18,20 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
+// Mock the logger
+const { mockWarnLog } = vi.hoisted(() => {
+  const mockWarnLog = vi.fn()
+  return { mockWarnLog }
+})
+vi.mock('../utils/logger.js', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: mockWarnLog,
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}))
+
 // Mock the settingsService for admin defaults
 vi.mock('./settingsService.js', () => ({
   settingsService: {
@@ -134,17 +148,12 @@ describe('userSettingsService', () => {
     })
 
     it('should use default for invalid JSON values', async () => {
-      // Spy on console.warn
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
       mockWhere.mockResolvedValueOnce([{ key: 'market.preferredCurrency', value: 'invalid-json' }])
 
       const result = await userSettingsService.getAllSettings(1)
 
       expect(result['market.preferredCurrency']).toBe('CIS') // default
-      expect(warnSpy).toHaveBeenCalled()
-
-      warnSpy.mockRestore()
+      expect(mockWarnLog).toHaveBeenCalled()
     })
   })
 

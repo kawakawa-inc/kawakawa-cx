@@ -47,6 +47,10 @@ vi.mock('../db/index.js', () => ({
     id: 'id',
     displayName: 'displayName',
   },
+  invoiceLineItems: {
+    invoiceId: 'invoiceId',
+    reservationId: 'reservationId',
+  },
 }))
 
 vi.mock('../services/notificationService.js', () => ({
@@ -79,6 +83,7 @@ describe('ReservationsController', () => {
     mockSelect.innerJoin = vi.fn().mockReturnValue(mockSelect)
     mockSelect.where = vi.fn().mockReturnValue(mockSelect)
     mockSelect.orderBy = vi.fn().mockReturnValue(mockSelect)
+    mockSelect.limit = vi.fn().mockResolvedValue([])
     mockInsert = {
       values: vi.fn().mockReturnThis(),
       returning: vi.fn().mockReturnThis(),

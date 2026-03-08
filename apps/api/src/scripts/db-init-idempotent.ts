@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // Idempotent database initialization script
 // Safe to run multiple times - only seeds/syncs if database is empty
-// Order: FIO sync first (locations needed for price_lists FK), then seed
+// Commodities only sync on empty DB; locations/stations always sync (needed for price_lists FK)
 
 import {
   db,
@@ -152,18 +152,18 @@ async function runSeed() {
     },
     {
       code: 'IC1',
-      name: 'Commodity Exchange - Antares',
-      description: 'FIO IC1 exchange at Antares station',
+      name: 'Commodity Exchange - Hortus',
+      description: 'FIO IC1 exchange at Hortus station',
       type: 'fio',
-      defaultLocationId: 'ANT',
+      defaultLocationId: 'HRT',
       currency: 'ICA',
     },
     {
       code: 'AI1',
-      name: 'Commodity Exchange - Hortus',
-      description: 'FIO AI1 exchange at Hortus station',
+      name: 'Commodity Exchange - Antares',
+      description: 'FIO AI1 exchange at Antares station',
       type: 'fio',
-      defaultLocationId: 'HRT',
+      defaultLocationId: 'ANT',
       currency: 'AIC',
     },
     {
@@ -171,7 +171,7 @@ async function runSeed() {
       name: 'KAWA Internal Exchange',
       description: 'Internal price list for KAWA members',
       type: 'custom',
-      defaultLocationId: null,
+      defaultLocationId: 'UV-796b',
       currency: 'CIS',
     },
   ]
@@ -292,6 +292,7 @@ async function runSeed() {
         description: sql`EXCLUDED.description`,
         type: sql`EXCLUDED.type`,
         currency: sql`EXCLUDED.currency`,
+        defaultLocationId: sql`EXCLUDED.default_location_id`,
       },
     })
 
@@ -305,20 +306,21 @@ async function main() {
     const needsInit = await checkIfDatabaseNeedsInit()
 
     if (needsInit) {
-      log.info('Database is empty - running FIO sync first')
+      log.info('Database is empty - running full FIO sync')
 
-      // FIO sync FIRST - seed needs locations for price_lists FK
       log.info('Syncing FIO commodities')
       await syncCommodities()
-
-      log.info('Syncing FIO locations')
-      await syncLocations()
-
-      log.info('Syncing FIO stations')
-      await syncStations()
     } else {
-      log.info('Database already has data - skipping FIO sync')
+      log.info('Database already has data - skipping FIO commodity sync')
     }
+
+    // Always sync locations and stations - seed needs locations for price_lists FK
+    // These use upserts so they're safe to run on existing data
+    log.info('Syncing FIO locations')
+    await syncLocations()
+
+    log.info('Syncing FIO stations')
+    await syncStations()
 
     // Always run seed - it uses upserts so it's safe to run on existing data
     // This ensures new roles, permissions, and role-permission mappings are added

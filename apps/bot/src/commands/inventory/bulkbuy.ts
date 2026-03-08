@@ -12,7 +12,7 @@ import { db, buyOrders } from '@kawakawa/db'
 import { resolveCommodity, resolveLocation, formatCommodity } from '../../services/display.js'
 import { getMarketSettings } from '../../services/userSettings.js'
 import { requireLinkedUser } from '../../utils/auth.js'
-import { awaitModal } from '../../utils/interactions.js'
+import { showModalWithPrefixSupport } from '../../utils/interactions.js'
 import { isValidCurrency, type ValidCurrency } from '../../utils/validation.js'
 
 type Currency = ValidCurrency
@@ -48,6 +48,13 @@ export const bulkbuy: Command = {
         )
     ) as SlashCommandBuilder,
 
+  helpInfo: {
+    category: 'orders',
+    details:
+      'Format: `TICKER LOCATION QUANTITY [PRICE] [CURRENCY]`\nExamples:\n`COF UV-351a 1000`\n`RAT BEN 500 125.50 ICA`',
+    examples: ['bulkbuy'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const visibilityOption = interaction.options.getString('visibility') as Visibility | null
 
@@ -78,9 +85,7 @@ export const bulkbuy: Command = {
 
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(ordersInput))
 
-    await interaction.showModal(modal)
-
-    const modalSubmit = await awaitModal(interaction, modalId)
+    const modalSubmit = await showModalWithPrefixSupport(interaction, modal, modalId)
     if (!modalSubmit) return
 
     await handleBulkBuySubmit(modalSubmit, userId, visibility, defaultCurrency, defaultPriceList)

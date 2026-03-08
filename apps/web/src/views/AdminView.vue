@@ -545,6 +545,31 @@
                   </v-chip>
                 </div>
 
+                <v-alert
+                  v-if="botNotInGuild && botInviteUrl"
+                  type="warning"
+                  variant="tonal"
+                  class="mb-4"
+                  closable
+                  @click:close="botNotInGuild = false"
+                >
+                  <template #title>Bot Not in Server</template>
+                  <p class="mb-2">
+                    The bot is not a member of the specified Discord server. You need to invite the
+                    bot to your server first.
+                  </p>
+                  <v-btn
+                    color="warning"
+                    variant="flat"
+                    size="small"
+                    :href="botInviteUrl"
+                    target="_blank"
+                    prepend-icon="mdi-open-in-new"
+                  >
+                    Invite Bot to Server
+                  </v-btn>
+                </v-alert>
+
                 <v-switch
                   v-model="discordForm.autoApprovalEnabled"
                   label="Enable Auto-Approval"
@@ -848,7 +873,7 @@
                             <span v-else class="text-medium-emphasis">—</span>
                           </v-col>
                           <v-col cols="6" md="3">
-                            <div class="text-caption text-medium-emphasis">Command Prefix</div>
+                            <div class="text-caption text-medium-emphasis">Prefix Characters</div>
                             <v-chip
                               v-if="defaultChannelConfig.commandPrefix"
                               size="small"
@@ -978,7 +1003,7 @@
                             <span v-else class="text-medium-emphasis">—</span>
                           </v-col>
                           <v-col cols="6" md="3">
-                            <div class="text-caption text-medium-emphasis">Command Prefix</div>
+                            <div class="text-caption text-medium-emphasis">Prefix Characters</div>
                             <v-chip v-if="config.commandPrefix" size="small" color="indigo">
                               {{ config.commandPrefix }}
                             </v-chip>
@@ -1186,10 +1211,10 @@
                 <v-col cols="12">
                   <v-text-field
                     v-model="channelConfigForm.commandPrefix"
-                    label="Command Prefix"
-                    placeholder="e.g., !, ?, ."
+                    label="Command Prefix Characters"
+                    placeholder="e.g., !? or !"
                     clearable
-                    hint="Prefix for text commands (e.g., !help, ?query). Leave empty to disable text commands."
+                    hint="Each character is a valid prefix. '!?' allows both !help and ?help. Leave empty to disable text commands."
                     persistent-hint
                     prepend-icon="mdi-pound"
                     maxlength="5"
@@ -2577,6 +2602,7 @@ const showClientSecret = ref(false)
 const showBotToken = ref(false)
 const savingDiscordSettings = ref(false)
 const testingConnection = ref(false)
+const botNotInGuild = ref(false)
 const loadingRoleMappings = ref(false)
 const discordRoleMappings = ref<DiscordRoleMapping[]>([])
 const discordGuildRoles = ref<DiscordRole[]>([])
@@ -2779,6 +2805,15 @@ const hasBotSettingsChanges = computed(() => {
       (discordSettings.value?.autoApprovalEnabled || false) ||
     discordForm.value.webUrl !== (discordSettings.value?.webUrl || '')
   )
+})
+
+// Bot invite URL - generated when bot is not in the guild
+const botInviteUrl = computed(() => {
+  const clientId = discordSettings.value?.clientId
+  if (!clientId) return null
+  // Permissions: View Channels, Send Messages, Embed Links, Read Message History, Manage Roles
+  const permissions = 268520448
+  return `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot%20applications.commands&permissions=${permissions}`
 })
 
 // Price settings computed properties
@@ -3347,6 +3382,7 @@ const saveBotSettings = async () => {
 const testDiscordConnection = async () => {
   try {
     testingConnection.value = true
+    botNotInGuild.value = false
     // First save the guild ID if changed
     if (discordForm.value.guildId !== (discordSettings.value?.guildId || '')) {
       await api.adminDiscord.updateSettings({
@@ -3360,6 +3396,10 @@ const testDiscordConnection = async () => {
       await loadDiscordGuildRoles()
       showSnackbar(`Connected to ${result.guild.name}`)
     } else {
+      // Check if bot is not in the guild - show invite option
+      if (result.errorCode === 'not_in_guild') {
+        botNotInGuild.value = true
+      }
       showSnackbar(result.error || 'Connection test failed', 'error')
     }
   } catch (error) {

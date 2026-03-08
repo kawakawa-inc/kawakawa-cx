@@ -20,7 +20,7 @@ import {
   importConfigs,
   fioLocations,
 } from '../db/index.js'
-import { eq, ilike } from 'drizzle-orm'
+import { eq, ilike, sql } from 'drizzle-orm'
 import { NotFound, BadRequest, Conflict } from '../utils/errors.js'
 
 export type PriceListType = 'fio' | 'custom'
@@ -83,22 +83,26 @@ export class PriceListsController extends Controller {
       .leftJoin(fioLocations, eq(priceLists.defaultLocationId, fioLocations.naturalId))
       .orderBy(priceLists.code)
 
-    // Get counts for each price list
-    const priceCountsResult = await db.select({ priceListCode: prices.priceListCode }).from(prices)
+    // Get counts for each price list using SQL aggregation
+    const [priceCountRows, configCountRows] = await Promise.all([
+      db
+        .select({
+          priceListCode: prices.priceListCode,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(prices)
+        .groupBy(prices.priceListCode),
+      db
+        .select({
+          priceListCode: importConfigs.priceListCode,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(importConfigs)
+        .groupBy(importConfigs.priceListCode),
+    ])
 
-    const priceCounts = new Map<string, number>()
-    for (const row of priceCountsResult) {
-      priceCounts.set(row.priceListCode, (priceCounts.get(row.priceListCode) || 0) + 1)
-    }
-
-    const configCountsResult = await db
-      .select({ priceListCode: importConfigs.priceListCode })
-      .from(importConfigs)
-
-    const configCounts = new Map<string, number>()
-    for (const row of configCountsResult) {
-      configCounts.set(row.priceListCode, (configCounts.get(row.priceListCode) || 0) + 1)
-    }
+    const priceCounts = new Map(priceCountRows.map(r => [r.priceListCode, r.count]))
+    const configCounts = new Map(configCountRows.map(r => [r.priceListCode, r.count]))
 
     return results.map(r => ({
       ...r,

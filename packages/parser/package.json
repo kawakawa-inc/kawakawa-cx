@@ -1,0 +1,38 @@
+{
+  "name": "@kawakawa/parser",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./xit": {
+      "types": "./dist/xit/index.d.ts",
+      "import": "./dist/xit/index.js"
+    },
+    "./list": {
+      "types": "./dist/list/index.d.ts",
+      "import": "./dist/list/index.js"
+    },
+    "./shopping-list": {
+      "types": "./dist/list/index.d.ts",
+      "import": "./dist/list/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.15",
+    "typescript": "~5.3.0",
+    "vitest": "^4.0.14"
+  }
+}

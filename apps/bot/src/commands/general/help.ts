@@ -1,158 +1,166 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
-import type { Command } from '../../client.js'
+import type { Command, BotClient, HelpCategory } from '../../client.js'
 import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
-interface HelpCommand {
-  /** Command name without prefix (e.g., 'register') */
-  name: string
-  description: string
-  details?: string
-}
-
-interface HelpSection {
+interface CategoryMeta {
   title: string
   emoji: string
-  commands: HelpCommand[]
 }
 
-/** Command sections with command names (without prefix) */
-const COMMANDS: Record<string, HelpSection> = {
-  getting_started: {
-    title: 'Getting Started',
-    emoji: '🚀',
-    commands: [
-      {
-        name: 'register',
-        description: 'Create a new Kawakawa account linked to your Discord',
-      },
-      {
-        name: 'link',
-        description: 'Link your Discord to an existing Kawakawa account',
-      },
-      {
-        name: 'whoami',
-        description: 'View your linked account info and FIO status',
-      },
-      {
-        name: 'unlink',
-        description: 'Unlink your Discord from your Kawakawa account',
-      },
-    ],
-  },
-  inventory: {
-    title: 'Inventory',
-    emoji: '📦',
-    commands: [
-      {
-        name: 'inventory',
-        description: 'View your synced FIO inventory with filtering options',
-        details: 'Filter by commodity or location. Use the Share button to post publicly.',
-      },
-      {
-        name: 'sync',
-        description: 'Sync your inventory from FIO (requires FIO credentials)',
-      },
-    ],
-  },
-  orders: {
-    title: 'Creating Orders',
-    emoji: '💰',
-    commands: [
-      {
-        name: 'sell',
-        description: 'Create a single sell order for a commodity at a location',
-      },
-      {
-        name: 'buy',
-        description: 'Create a single buy request for a commodity at a location',
-      },
-      {
-        name: 'bulksell',
-        description: 'Create multiple sell orders at once using multi-line input',
-        details:
-          'Format: `TICKER LOCATION [limit] PRICE [CURRENCY]`\n' +
-          'Examples:\n' +
-          '`COF UV-351a 150`\n' +
-          '`RAT BEN max:500 125.50 ICA`\n' +
-          '`DW MOR reserve:100 75`',
-      },
-      {
-        name: 'bulkbuy',
-        description: 'Create multiple buy requests at once using multi-line input',
-        details:
-          'Format: `TICKER LOCATION QUANTITY PRICE [CURRENCY]`\n' +
-          'Examples:\n' +
-          '`COF UV-351a 1000 150`\n' +
-          '`RAT BEN 500 125.50 ICA`',
-      },
-    ],
-  },
-  market: {
-    title: 'Market',
-    emoji: '📊',
-    commands: [
-      {
-        name: 'orders',
-        description: 'View and manage your orders (defaults to your own)',
-        details:
-          'Shows your orders by default. Add filters to search the market.\n' +
-          'Use the Manage button to edit or delete your orders.',
-      },
-      {
-        name: 'query',
-        description: 'Search the market for commodities or browse by location',
-        details: 'Find what others are selling or buying.',
-      },
-    ],
-  },
-  reservations: {
-    title: 'Reservations',
-    emoji: '📝',
-    commands: [
-      {
-        name: 'reserve',
-        description: 'Reserve items from a sell order',
-        details:
-          'Browse available sell orders for a commodity, then reserve a quantity.\n' +
-          'The seller will be notified and can confirm or reject.',
-      },
-      {
-        name: 'fill',
-        description: 'Offer to fill a buy order',
-        details:
-          'Browse open buy orders for a commodity, then offer to supply.\n' +
-          'The buyer will be notified and can confirm or reject.',
-      },
-      {
-        name: 'reservations',
-        description: 'View and manage your reservations',
-        details:
-          'See reservations where you are the order owner or counterparty.\n' +
-          'Confirm, reject, fulfill, or cancel reservations.',
-      },
-    ],
-  },
-  settings: {
-    title: 'Settings',
-    emoji: '⚙️',
-    commands: [
-      {
-        name: 'settings',
-        description: 'View and manage your personal settings',
-        details:
-          '- Location/commodity display modes\n' +
-          '- Preferred currency\n' +
-          '- Default price list for auto-pricing\n' +
-          '- Favorite locations and commodities',
-      },
-    ],
-  },
+/** Display metadata for each category */
+const CATEGORIES: Record<HelpCategory, CategoryMeta> = {
+  getting_started: { title: 'Getting Started', emoji: '🚀' },
+  inventory: { title: 'Inventory', emoji: '📦' },
+  trading: { title: 'Trading', emoji: '🔄' },
+  orders: { title: 'Managing Orders', emoji: '💰' },
+  invoices: { title: 'Invoices & Reservations', emoji: '📝' },
+  lists: { title: 'Shopping Lists', emoji: '📋' },
+  settings: { title: 'Settings', emoji: '⚙️' },
 }
+
+/** Category display order */
+const CATEGORY_ORDER: HelpCategory[] = [
+  'getting_started',
+  'inventory',
+  'trading',
+  'orders',
+  'invoices',
+  'lists',
+  'settings',
+]
 
 /** Format a command name with the appropriate prefix */
 function cmd(name: string, prefix: string): string {
   return `${prefix}${name}`
+}
+
+/**
+ * Resolve user input to a category key or command name.
+ * Returns { type: 'category', key } or { type: 'command', command } or null.
+ */
+function resolveInput(
+  input: string,
+  client: BotClient
+): { type: 'category'; key: HelpCategory } | { type: 'command'; command: Command } | null {
+  const normalized = input.toLowerCase().replace(/[^a-z_]/g, '')
+
+  // Try exact category key match
+  if (normalized in CATEGORIES) {
+    return { type: 'category', key: normalized as HelpCategory }
+  }
+
+  // Try category title match
+  for (const [key, meta] of Object.entries(CATEGORIES)) {
+    if (meta.title.toLowerCase().replace(/[^a-z]/g, '') === normalized.replace(/_/g, '')) {
+      return { type: 'category', key: key as HelpCategory }
+    }
+  }
+
+  // Try command name match
+  const command = client.commands.get(normalized)
+  if (command) {
+    return { type: 'command', command }
+  }
+
+  return null
+}
+
+/** Build the overview embed showing all categories */
+function buildOverviewEmbed(client: BotClient, prefix: string): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setTitle('Kawakawa Exchange Bot')
+    .setColor(0x5865f2)
+    .setDescription(
+      'Welcome to the Kawakawa internal commodity exchange!\n\n' +
+        'This bot helps you manage inventory, create buy/sell orders, and trade with other members.\n\n' +
+        `Use \`${cmd('help', prefix)} <topic>\` for a category, or \`${cmd('help', prefix)} <command>\` for details.`
+    )
+
+  // Group commands by category
+  for (const catKey of CATEGORY_ORDER) {
+    const meta = CATEGORIES[catKey]
+    const commands = getCommandsInCategory(client, catKey)
+    if (commands.length === 0) continue
+
+    const commandList = commands.map(c => `\`${cmd(c.data.name, prefix)}\``).join(', ')
+    embed.addFields({
+      name: `${meta.emoji} ${meta.title}`,
+      value: commandList,
+      inline: false,
+    })
+  }
+
+  // Quick start guide
+  embed.addFields({
+    name: '📋 Quick Start',
+    value:
+      `1. \`${cmd('register', prefix)}\` - Create your account\n` +
+      `2. \`${cmd('sync', prefix)}\` - Connect your FIO inventory\n` +
+      `3. \`${cmd('bulksell', prefix)}\` - Post your sell orders\n` +
+      `4. \`${cmd('buy', prefix)}\` - Browse what others are selling\n` +
+      `5. \`${cmd('settings', prefix)}\` - Customize display preferences`,
+    inline: false,
+  })
+
+  embed.setFooter({
+    text: 'Tip: Most commands are ephemeral (only you see them). Use Share buttons to post publicly.',
+  })
+
+  return embed
+}
+
+/** Build an embed for a specific category */
+function buildCategoryEmbed(client: BotClient, catKey: HelpCategory, prefix: string): EmbedBuilder {
+  const meta = CATEGORIES[catKey]
+  const commands = getCommandsInCategory(client, catKey)
+
+  const embed = new EmbedBuilder().setTitle(`${meta.emoji} ${meta.title}`).setColor(0x5865f2)
+
+  for (const command of commands) {
+    let value = command.data.description
+    if (command.helpInfo?.details) {
+      value += `\n\n${command.helpInfo.details}`
+    }
+    embed.addFields({ name: cmd(command.data.name, prefix), value, inline: false })
+  }
+
+  return embed
+}
+
+/** Build an embed for a specific command */
+function buildCommandEmbed(command: Command, prefix: string): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setTitle(`${cmd(command.data.name, prefix)}`)
+    .setColor(0x5865f2)
+    .setDescription(command.data.description)
+
+  if (command.helpInfo?.details) {
+    embed.addFields({ name: 'Details', value: command.helpInfo.details, inline: false })
+  }
+
+  if (command.helpInfo?.examples && command.helpInfo.examples.length > 0) {
+    const exampleLines = command.helpInfo.examples.map(ex => `\`${cmd(ex, prefix)}\``).join('\n')
+    embed.addFields({ name: 'Examples', value: exampleLines, inline: false })
+  }
+
+  if (command.prefixEnabled === false) {
+    embed.setFooter({ text: 'This command is slash-only (requires Discord UI).' })
+  }
+
+  return embed
+}
+
+/** Get all commands in a category, sorted by name */
+function getCommandsInCategory(client: BotClient, catKey: HelpCategory): Command[] {
+  const commands: Command[] = []
+  for (const command of client.commands.values()) {
+    if (command.helpInfo?.category === catKey) {
+      commands.push(command)
+    }
+  }
+  commands.sort((a, b) => a.data.name.localeCompare(b.data.name))
+  return commands
 }
 
 export const help: Command = {
@@ -162,83 +170,43 @@ export const help: Command = {
     .addStringOption(option =>
       option
         .setName('topic')
-        .setDescription('Get help on a specific topic')
+        .setDescription('A category or command name')
         .setRequired(false)
         .addChoices(
-          { name: 'Getting Started', value: 'getting_started' },
-          { name: 'Inventory', value: 'inventory' },
-          { name: 'Creating Orders', value: 'orders' },
-          { name: 'Market', value: 'market' },
-          { name: 'Reservations', value: 'reservations' },
-          { name: 'Settings', value: 'settings' }
+          ...CATEGORY_ORDER.map(key => ({
+            name: CATEGORIES[key].title,
+            value: key,
+          }))
         )
     ) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const topic = interaction.options.getString('topic')
+    const rawTopic = interaction.options.getString('topic')
     const prefix = getCommandPrefix(interaction)
+    const client = interaction.client as BotClient
 
-    if (topic && topic in COMMANDS) {
-      // Show specific topic
-      const section = COMMANDS[topic]
-      const embed = new EmbedBuilder()
-        .setTitle(`${section.emoji} ${section.title}`)
-        .setColor(0x5865f2)
+    if (!rawTopic) {
+      const embed = buildOverviewEmbed(client, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
+      return
+    }
 
-      for (const command of section.commands) {
-        let value = command.description
-        if (command.details) {
-          value += `\n\n${command.details}`
-        }
-        embed.addFields({ name: cmd(command.name, prefix), value, inline: false })
-      }
+    const resolved = resolveInput(rawTopic, client)
 
+    if (!resolved) {
       await interaction.reply({
-        embeds: [embed],
+        content: `Unknown topic or command: \`${rawTopic}\`\n\nUse \`${cmd('help', prefix)}\` to see available topics.`,
         flags: MessageFlags.Ephemeral,
       })
       return
     }
 
-    // Show overview
-    const embed = new EmbedBuilder()
-      .setTitle('Kawakawa Exchange Bot')
-      .setColor(0x5865f2)
-      .setDescription(
-        'Welcome to the Kawakawa internal commodity exchange!\n\n' +
-          'This bot helps you manage inventory, create buy/sell orders, and trade with other members.\n\n' +
-          `Use \`${cmd('help', prefix)} topic:\` to learn more about a specific area.`
-      )
-
-    // Add sections overview
-    for (const section of Object.values(COMMANDS)) {
-      const commandList = section.commands.map(c => `\`${cmd(c.name, prefix)}\``).join(', ')
-      embed.addFields({
-        name: `${section.emoji} ${section.title}`,
-        value: commandList,
-        inline: false,
-      })
+    if (resolved.type === 'category') {
+      const embed = buildCategoryEmbed(client, resolved.key, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
+    } else {
+      const embed = buildCommandEmbed(resolved.command, prefix)
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
     }
-
-    // Quick start guide
-    embed.addFields({
-      name: '📋 Quick Start',
-      value:
-        `1. \`${cmd('register', prefix)}\` - Create your account\n` +
-        `2. \`${cmd('settings', prefix)}\` - Set up your FIO credentials\n` +
-        `3. \`${cmd('sync', prefix)}\` - Import your inventory from FIO\n` +
-        `4. \`${cmd('bulksell', prefix)}\` - List items for sale\n` +
-        `5. \`${cmd('query', prefix)}\` - Browse the market`,
-      inline: false,
-    })
-
-    embed.setFooter({
-      text: 'Tip: Most commands are ephemeral (only you see them). Use Share buttons to post publicly.',
-    })
-
-    await interaction.reply({
-      embeds: [embed],
-      flags: MessageFlags.Ephemeral,
-    })
   },
 }

@@ -36,6 +36,48 @@
       "when": 1765740913646,
       "tag": "0004_curvy_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1766292290558,
+      "tag": "0005_living_sinister_six",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1766386236602,
+      "tag": "0006_ordinary_kulan_gath",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1766987836964,
+      "tag": "0007_moaning_old_lace",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1768486664719,
+      "tag": "0008_chilly_salo",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1772919019426,
+      "tag": "0009_stormy_scrambler",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1772940865637,
+      "tag": "0010_glorious_the_hood",
+      "breakpoints": true
     }
   ]
 }

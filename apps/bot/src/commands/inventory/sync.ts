@@ -18,13 +18,23 @@ import { requireLinkedUser } from '../../utils/auth.js'
 import { MODAL_TIMEOUT } from '../../utils/interactions.js'
 import { syncUserInventory } from '@kawakawa/services'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const sync: Command = {
   data: new SlashCommandBuilder()
     .setName('sync')
     .setDescription('Check your FIO sync status and configure credentials'),
 
+  helpInfo: {
+    category: 'inventory',
+    details:
+      'View your FIO sync status, set or clear API credentials, and manually trigger an inventory sync.',
+    examples: ['sync'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
     // Require linked account
     const result = await requireLinkedUser(interaction)
     if (!result) return
@@ -108,7 +118,7 @@ export const sync: Command = {
     if (hasFioCredentials) {
       embed.setDescription(
         'Your FIO credentials are configured.\n\n' +
-          '**Note:** Inventory sync runs automatically. Use `/inventory` to view your synced inventory.'
+          `**Note:** Inventory sync runs automatically. Use \`${prefix}inventory\` to view your synced inventory.`
       )
     } else {
       embed.setDescription(
@@ -225,7 +235,7 @@ export const sync: Command = {
             }
           }
 
-          resultMsg += '\n\nUse `/inventory` to view your synced inventory.'
+          resultMsg += `\n\nUse \`${prefix}inventory\` to view your synced inventory.`
 
           await interaction.editReply({
             content: resultMsg,
@@ -300,7 +310,7 @@ export const sync: Command = {
         logger.info({ userId }, 'FIO credentials cleared')
 
         await buttonInteraction.update({
-          content: '✅ FIO credentials have been cleared.\n\nRun `/sync` again to reconfigure.',
+          content: `✅ FIO credentials have been cleared.\n\nRun \`${prefix}sync\` again to reconfigure.`,
           embeds: [],
           components: [],
         })
@@ -332,6 +342,7 @@ async function handleCredentialSubmit(
   interaction: ModalSubmitInteraction,
   userId: number
 ): Promise<void> {
+  const prefix = getCommandPrefix(interaction)
   const fioUsername = interaction.fields.getTextInputValue('fio-username').trim()
   const fioApiKey = interaction.fields.getTextInputValue('fio-apikey').trim()
 
@@ -376,7 +387,7 @@ async function handleCredentialSubmit(
     await interaction.reply({
       content:
         `✅ FIO credentials saved for **${fioUsername}**!\n\n` +
-        'Your inventory will be synced automatically. Use `/inventory` to view your synced data.',
+        `Your inventory will be synced automatically. Use \`${prefix}inventory\` to view your synced data.`,
       flags: MessageFlags.Ephemeral,
     })
   } catch (error) {

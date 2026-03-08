@@ -9,10 +9,12 @@ import { unlink } from './auth/unlink.js'
 import { password } from './auth/password.js'
 // Market commands
 import { orders } from './market/orders.js'
+import { order } from './market/order.js'
 import { query } from './market/query.js'
-import { reserve } from './market/reserve.js'
-import { fill } from './market/fill.js'
 import { reservations } from './market/reservations.js'
+import { invoice } from './market/invoice.js'
+import { invoicesCommand } from './market/invoices.js'
+import { close } from './market/close.js'
 // Inventory commands
 import { inventory } from './inventory/inventory.js'
 import { sync } from './inventory/sync.js'
@@ -23,6 +25,9 @@ import { bulksell } from './inventory/bulksell.js'
 import { bulkbuy } from './inventory/bulkbuy.js'
 // Settings commands
 import { settings } from './settings/settings.js'
+// Lists commands
+import { list } from './lists/list.js'
+import { lists } from './lists/lists.js'
 
 /**
  * All registered slash commands.
@@ -38,10 +43,12 @@ export const commands: Command[] = [
   password,
   // Market
   orders,
+  order,
   query,
-  reserve,
-  fill,
   reservations,
+  invoice,
+  invoicesCommand,
+  close,
   // Inventory
   inventory,
   sync,
@@ -52,4 +59,7 @@ export const commands: Command[] = [
   bulkbuy,
   // Settings
   settings,
+  // Lists
+  list,
+  lists,
 ]

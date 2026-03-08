@@ -22,6 +22,42 @@
       >?
     </ConfirmationDialog>
 
+    <!-- Shopping List Preference Dialog -->
+    <ShoppingListPreferenceDialog v-model="showPreferenceDialog" @choice="onPreferenceChoice" />
+
+    <!-- New Invoice Dialog - Select counterparty -->
+    <v-dialog v-model="newInvoiceDialog" max-width="400">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon start color="primary">mdi-file-document-plus-outline</v-icon>
+          New Invoice
+        </v-card-title>
+        <v-card-text>
+          <p class="text-body-2 text-medium-emphasis mb-4">
+            Search for a member to create an invoice with:
+          </p>
+          <KeyValueAutocomplete
+            v-model="selectedCounterpartyId"
+            :items="counterpartyOptions"
+            label="Select member"
+            hide-favorite-stars
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeNewInvoiceDialog">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="elevated"
+            :disabled="!selectedCounterpartyId"
+            @click="confirmCreateInvoice"
+          >
+            Create Invoice
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Filters Card -->
     <v-card class="mb-4">
       <v-card-text class="py-2">
@@ -72,16 +108,6 @@
               {{ getLocationDisplay(locId) }}
             </v-chip>
           </template>
-          <!-- User chip (only show if not from search input) -->
-          <v-chip
-            v-if="filters.userName && !hasSearchChips"
-            closable
-            size="small"
-            color="default"
-            @click:close="filters.userName = null"
-          >
-            User: {{ filters.userName }}
-          </v-chip>
           <v-chip
             v-if="filters.orderType"
             closable
@@ -99,6 +125,17 @@
             @click:close="filters.pricing = null"
           >
             {{ filters.pricing === 'custom' ? 'Custom Pricing' : filters.pricing }}
+          </v-chip>
+          <!-- User chips (always show when filtered) -->
+          <v-chip
+            v-for="name in filters.userName"
+            :key="`user-${name}`"
+            closable
+            size="small"
+            color="secondary"
+            @click:close="filters.userName = filters.userName.filter(n => n !== name)"
+          >
+            User: {{ name }}
           </v-chip>
         </div>
 
@@ -158,16 +195,6 @@
             </v-col>
             <v-col cols="6" sm="4" lg="2">
               <v-select
-                v-model="filters.userName"
-                :items="userOptions"
-                label="User"
-                density="compact"
-                clearable
-                hide-details
-              />
-            </v-col>
-            <v-col cols="6" sm="4" lg="2">
-              <v-select
                 v-model="filters.pricing"
                 :items="pricingOptions"
                 item-title="title"
@@ -190,6 +217,20 @@
                 hide-details
               />
             </v-col>
+            <v-col cols="6" sm="4" lg="2">
+              <v-select
+                v-model="filters.userName"
+                :items="userNameOptions"
+                item-title="title"
+                item-value="value"
+                label="User"
+                density="compact"
+                clearable
+                hide-details
+                multiple
+                chips
+              />
+            </v-col>
           </v-row>
         </v-expand-transition>
 
@@ -209,7 +250,7 @@
               variant="text"
               color="primary"
               size="small"
-              @click="clearFiltersWithXit"
+              @click="clearFiltersWithList"
             >
               Clear Filters
             </v-btn>
@@ -245,7 +286,6 @@
         <kbd class="search-shortcut mr-2" title="Press / to focus search">/</kbd>
         <TokenSearchInput
           ref="tokenSearchRef"
-          :available-user-names="userOptions"
           :get-commodity-display="getCommodityDisplay"
           :get-location-display="getLocationDisplay"
           :get-commodity-name="getCommodityName"
@@ -309,6 +349,20 @@
             </v-card-text>
           </v-card>
         </v-menu>
+        <!-- Side Panel Toggle Button -->
+        <v-btn
+          icon
+          variant="text"
+          size="small"
+          :color="sidePanelOpen ? 'primary' : 'grey'"
+          class="ml-1"
+          @click="toggleSidePanel"
+        >
+          <v-icon>{{ sidePanelOpen ? 'mdi-dock-right' : 'mdi-clipboard-list-outline' }}</v-icon>
+          <v-tooltip activator="parent" location="bottom">
+            {{ sidePanelOpen ? 'Hide side panel' : 'Show side panel' }}
+          </v-tooltip>
+        </v-btn>
       </v-card-title>
 
       <!-- Not Found Banner -->
@@ -324,6 +378,7 @@
       </v-alert>
 
       <v-data-table
+        :key="shoppingListKey"
         :headers="headers"
         :items="filteredItems"
         :loading="loading"
@@ -381,14 +436,9 @@
         </template>
 
         <template #item.userName="{ item }">
-          <a
-            href="#"
-            class="filter-link"
-            :class="{ 'font-weight-medium': item.isOwn }"
-            @click.stop.prevent="setFilter('userName', item.userName)"
-          >
+          <span :class="{ 'font-weight-medium': item.isOwn }">
             {{ item.userName }}
-          </a>
+          </span>
         </template>
 
         <template #item.fioUploadedAt="{ item }">
@@ -457,14 +507,42 @@
         </template>
 
         <template #item.reserve="{ item }">
-          <v-btn
-            v-if="!item.isOwn && canReserveOrder(item)"
+          <!-- Own order that matches shopping list -->
+          <v-chip
+            v-if="item.isOwn && isOnShoppingList(item)"
             size="small"
+            color="info"
             variant="tonal"
-            :color="item.itemType === 'sell' ? 'warning' : 'success'"
-            @click.stop="openReserveDialog(item)"
+            class="own-order-chip"
           >
-            {{ item.itemType === 'sell' ? 'Reserve' : 'Fill' }}
+            <v-icon start size="small">mdi-account-check</v-icon>
+            Your Order
+          </v-chip>
+          <!-- Other user's order - show invoice button -->
+          <v-btn
+            v-else-if="!item.isOwn && canReserveOrder(item)"
+            size="small"
+            variant="elevated"
+            :color="isItemInInvoice(item) ? 'primary' : isListSatisfied(item) ? 'grey' : 'primary'"
+            :disabled="isListSatisfied(item) && !isItemInInvoice(item)"
+            @click.stop="openAddToInvoiceDialog(item)"
+          >
+            <template v-if="isItemInInvoice(item)">
+              <v-icon start size="small">mdi-pencil</v-icon>
+              Update
+            </template>
+            <template v-else-if="isListSatisfied(item)">
+              <v-icon start size="small">mdi-check</v-icon>
+              Done
+            </template>
+            <template v-else-if="getListQuantity(item) !== null">
+              <v-icon start size="small">mdi-plus</v-icon>
+              Invoice {{ getListQuantity(item) }}
+            </template>
+            <template v-else>
+              <v-icon start size="small">mdi-plus</v-icon>
+              Invoice
+            </template>
           </v-btn>
         </template>
 
@@ -476,19 +554,35 @@
               </v-btn>
             </template>
             <v-list density="compact">
-              <!-- Reserve/Fill option for small screens -->
+              <!-- Add to Invoice option for small screens -->
               <v-list-item
                 v-if="!item.isOwn && canReserveOrder(item)"
                 class="d-lg-none"
-                @click="openReserveDialog(item)"
+                :disabled="isListSatisfied(item) && !isItemInInvoice(item)"
+                @click="openAddToInvoiceDialog(item)"
               >
                 <template #prepend>
-                  <v-icon :color="item.itemType === 'sell' ? 'warning' : 'success'">
-                    {{ item.itemType === 'sell' ? 'mdi-cart-arrow-down' : 'mdi-package-variant' }}
+                  <v-icon
+                    :color="
+                      isItemInInvoice(item) ? 'primary' : isListSatisfied(item) ? 'grey' : 'primary'
+                    "
+                  >
+                    {{
+                      isItemInInvoice(item)
+                        ? 'mdi-pencil'
+                        : isListSatisfied(item)
+                          ? 'mdi-check'
+                          : 'mdi-plus'
+                    }}
                   </v-icon>
                 </template>
                 <v-list-item-title>
-                  {{ item.itemType === 'sell' ? 'Reserve' : 'Fill' }}
+                  <template v-if="isItemInInvoice(item)">Update</template>
+                  <template v-else-if="isListSatisfied(item)">Done</template>
+                  <template v-else-if="getListQuantity(item) !== null">
+                    + Invoice {{ getListQuantity(item) }}
+                  </template>
+                  <template v-else>+ Invoice</template>
                 </v-list-item-title>
               </v-list-item>
               <v-list-item @click="viewOrder(item)">
@@ -520,7 +614,7 @@
             <p class="text-body-2 text-medium-emphasis">
               <template v-if="hasActiveFilters || hasSearchChips">
                 No orders match your filters.
-                <a href="#" @click.prevent="clearFiltersWithXit">Clear filters</a>
+                <a href="#" @click.prevent="clearFiltersWithList">Clear filters</a>
               </template>
               <template v-else> No orders yet. Check back later! </template>
             </p>
@@ -666,12 +760,97 @@
       </v-card>
     </v-dialog>
 
-    <!-- Reservation Dialog -->
-    <ReservationDialog
-      v-model="reserveDialog"
-      :order="reservingItem"
-      @reserved="onReservationCreated"
-    />
+    <!-- Add to Invoice Dialog -->
+    <v-dialog v-model="addToInvoiceDialog" max-width="400">
+      <v-card v-if="addingToInvoiceItem">
+        <v-card-title class="d-flex align-center">
+          <v-icon start :color="addingToInvoiceItem.itemType === 'sell' ? 'warning' : 'success'">
+            {{
+              addingToInvoiceItem.itemType === 'sell'
+                ? 'mdi-cart-arrow-down'
+                : 'mdi-package-variant'
+            }}
+          </v-icon>
+          {{
+            isUpdatingExisting
+              ? 'Update'
+              : addingToInvoiceItem.itemType === 'sell'
+                ? 'Buy from'
+                : 'Sell to'
+          }}
+          {{ addingToInvoiceItem.userName }}
+        </v-card-title>
+
+        <v-card-text>
+          <v-alert
+            v-if="isUpdatingExisting"
+            type="warning"
+            variant="tonal"
+            class="mb-4"
+            density="compact"
+          >
+            This item is already in your invoice. Updating the quantity.
+          </v-alert>
+
+          <v-alert type="info" variant="tonal" class="mb-4" density="compact">
+            <div>
+              <strong>{{ getCommodityDisplay(addingToInvoiceItem.commodityTicker) }}</strong>
+            </div>
+            <div class="text-caption">
+              {{ getLocationDisplay(addingToInvoiceItem.locationId) }}
+            </div>
+            <div class="text-caption mt-1">
+              Price:
+              {{
+                getDisplayPrice(addingToInvoiceItem)?.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                }) ?? '--'
+              }}
+              {{ addingToInvoiceItem.currency }}/unit
+            </div>
+          </v-alert>
+
+          <v-text-field
+            ref="invoiceQuantityInputRef"
+            v-model.number="addToInvoiceQuantity"
+            label="Quantity"
+            type="number"
+            min="1"
+            :rules="[v => v > 0 || 'Quantity must be positive']"
+            required
+          />
+
+          <div class="text-body-2 text-medium-emphasis">
+            Listed: {{ addingToInvoiceItem.remainingQuantity.toLocaleString() }}
+            <span
+              v-if="
+                addToInvoiceQuantity && addToInvoiceQuantity > addingToInvoiceItem.remainingQuantity
+              "
+              class="text-warning"
+            >
+              (requesting
+              {{ (addToInvoiceQuantity - addingToInvoiceItem.remainingQuantity).toLocaleString() }}
+              over listed amount)
+            </span>
+          </div>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="addToInvoiceDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="elevated"
+            :loading="addingToInvoice"
+            :disabled="!addToInvoiceQuantity || addToInvoiceQuantity <= 0"
+            @click="confirmAddToInvoice"
+          >
+            {{ isUpdatingExisting ? 'Update Quantity' : 'Add to Invoice' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Order Detail Dialog -->
     <OrderDetailDialog
@@ -682,11 +861,51 @@
       @updated="loadMarketItems"
       @edit="onEditFromDetail"
     />
+
+    <!-- Side Panel with Invoice and Shopping List (slides in from right) -->
+    <v-navigation-drawer
+      v-model="sidePanelOpen"
+      location="right"
+      width="370"
+      class="side-panel-drawer"
+    >
+      <!-- Panel Header with close button (visible on smaller screens) -->
+      <div class="side-panel-header d-lg-none">
+        <span class="text-subtitle-2">Invoice & Shopping List</span>
+        <v-btn icon size="small" variant="text" @click="sidePanelOpen = false">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </div>
+      <div class="side-panel-content">
+        <ResizableSplitPanel
+          :top-min-height="150"
+          :bottom-min-height="150"
+          storage-key="market-panel-ratio"
+          :initial-ratio="0.6"
+        >
+          <template #top>
+            <InvoiceSummaryPanel
+              @invoice-submitted="onInvoiceSubmitted"
+              @filter-add="onFilterAdd"
+              @add-invoice="onAddInvoice"
+            />
+          </template>
+          <template #bottom>
+            <ShoppingListPanel
+              :list-status="shoppingListPanelStatus"
+              :get-commodity-display="getCommodityDisplay"
+              @clear="onShoppingListClear"
+              @filter-by-list="onFilterByList"
+            />
+          </template>
+        </ResizableSplitPanel>
+      </div>
+    </v-navigation-drawer>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { PERMISSIONS, type Currency, type OrderType } from '@kawakawa/types'
 import type { XitMaterials } from '@kawakawa/types/xit'
 import { api, type EffectivePrice } from '../services/api'
@@ -706,7 +925,6 @@ import {
 } from '../composables'
 import OrderDialog from '../components/OrderDialog.vue'
 import OrderDetailDialog from '../components/OrderDetailDialog.vue'
-import ReservationDialog from '../components/ReservationDialog.vue'
 import PriceListDisplay from '../components/PriceListDisplay.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
@@ -715,12 +933,22 @@ import OrderTypeChip from '../components/OrderTypeChip.vue'
 import PricingModeChip from '../components/PricingModeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
+import InvoiceSummaryPanel from '../components/invoices/InvoiceSummaryPanel.vue'
+import ResizableSplitPanel from '../components/ResizableSplitPanel.vue'
+import ShoppingListPanel, {
+  type ListItemStatus as ShoppingListStatus,
+} from '../components/ShoppingListPanel.vue'
+import ShoppingListPreferenceDialog from '../components/ShoppingListPreferenceDialog.vue'
 import { localizeMaterialCategory } from '../utils/materials'
+import { useShoppingListStore } from '../stores/shoppingList'
 import { locationService } from '../services/locationService'
 import type { CommodityCategory } from '@kawakawa/types'
+import { useInvoicesStore } from '../stores/invoices'
 
 const userStore = useUserStore()
+const invoicesStore = useInvoicesStore()
 const settingsStore = useSettingsStore()
+const shoppingListStore = useShoppingListStore()
 const { snackbar, showSnackbar } = useSnackbar()
 const { getLocationDisplay, getCommodityDisplay, getCommodityCategory, getCommodityName } =
   useDisplayHelpers()
@@ -841,10 +1069,16 @@ const canReservePartner = computed(() =>
 
 const canReserveOrder = (item: MarketItem): boolean => {
   if (item.isOwn) return false
-  if (item.remainingQuantity <= 0) return false
+  // Note: we allow invoicing even when remainingQuantity is 0 for made-to-order items
   if (item.orderType === 'internal') return canReserveInternal.value
   if (item.orderType === 'partner') return canReservePartner.value
   return false
+}
+
+// Check if an order is already in any draft invoice
+// Uses the store's isOrderInAnyDraftInvoice which checks all loaded invoices
+const isItemInInvoice = (item: MarketItem): boolean => {
+  return invoicesStore.isOrderInAnyDraftInvoice(item.id, item.itemType)
 }
 
 const orderTypes = computed(() => {
@@ -884,9 +1118,82 @@ const deleteDialog = ref(false)
 const deletingItem = ref<MarketItem | null>(null)
 const deleting = ref(false)
 
-// Reserve dialog
-const reserveDialog = ref(false)
-const reservingItem = ref<MarketItem | null>(null)
+// Add to Invoice dialog (replaces Reserve dialog)
+const addToInvoiceDialog = ref(false)
+const addingToInvoiceItem = ref<MarketItem | null>(null)
+const addToInvoiceQuantity = ref<number | null>(null)
+const addingToInvoice = ref(false)
+const invoiceQuantityInputRef = ref<{ focus: () => void } | null>(null)
+
+// Check if current item already exists in active invoice
+const existingLineItem = computed(() => {
+  if (!addingToInvoiceItem.value || !invoicesStore.activeInvoice.value) return null
+  const item = addingToInvoiceItem.value
+  return (
+    invoicesStore.activeInvoice.value.lineItems.find(
+      li =>
+        (item.itemType === 'sell' && li.sellOrderId === item.id) ||
+        (item.itemType === 'buy' && li.buyOrderId === item.id)
+    ) ?? null
+  )
+})
+
+const isUpdatingExisting = computed(() => existingLineItem.value !== null)
+
+// New Invoice dialog state
+const newInvoiceDialog = ref(false)
+const selectedCounterpartyId = ref<string | null>(null)
+
+// Available counterparties (all users with orders we can reserve - both buyers and sellers)
+const counterpartyOptions = computed((): KeyValueItem[] => {
+  const counterpartyMap = new Map<
+    number,
+    { userId: number; userName: string; orderCount: number }
+  >()
+
+  for (const item of marketItems.value) {
+    // Include all orders we can reserve (not our own, with permission)
+    if (!item.isOwn && canReserveOrder(item)) {
+      const existing = counterpartyMap.get(item.userId)
+      if (existing) {
+        existing.orderCount++
+      } else {
+        counterpartyMap.set(item.userId, {
+          userId: item.userId,
+          userName: item.userName,
+          orderCount: 1,
+        })
+      }
+    }
+  }
+
+  // Convert to KeyValueItem format, sorted by name
+  return Array.from(counterpartyMap.values())
+    .sort((a, b) => a.userName.localeCompare(b.userName))
+    .map(cp => ({
+      key: String(cp.userId),
+      display: `${cp.userName} (${cp.orderCount} order${cp.orderCount === 1 ? '' : 's'})`,
+      name: cp.userName,
+    }))
+})
+
+// Close new invoice dialog and reset state
+const closeNewInvoiceDialog = () => {
+  newInvoiceDialog.value = false
+  selectedCounterpartyId.value = null
+}
+
+// Create invoice for selected counterparty
+const confirmCreateInvoice = async () => {
+  if (!selectedCounterpartyId.value) return
+  const counterpartyUserId = parseInt(selectedCounterpartyId.value, 10)
+  closeNewInvoiceDialog()
+  const invoice = await invoicesStore.getOrCreateForPartner(counterpartyUserId)
+  if (invoice) {
+    await invoicesStore.setActiveInvoice(invoice.id)
+    sidePanelOpen.value = true
+  }
+}
 
 // Filters with URL deep linking
 const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
@@ -895,7 +1202,7 @@ const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
     commodity: { type: 'array' },
     category: { type: 'string' },
     location: { type: 'array' },
-    userName: { type: 'string' },
+    userName: { type: 'array' },
     orderType: { type: 'string' },
     pricing: { type: 'string' },
   },
@@ -919,13 +1226,14 @@ const getRowProps = ({ item, index }: { item: MarketItem; index: number }) => {
   classes.push(getFioBorderClass(item.fioUploadedAt))
 
   // XIT quantity highlighting (only for sell orders in XIT mode)
-  if (isXitActive.value && item.itemType === 'sell' && xitQuantities.value) {
-    const required = xitQuantities.value[item.commodityTicker]
-    if (required !== undefined) {
-      if (item.remainingQuantity >= required) {
-        classes.push('xit-row-success')
+  // Use remainingListNeeds to account for quantities already claimed in invoices
+  if (isListActive.value && item.itemType === 'sell') {
+    const remaining = remainingListNeeds.value[item.commodityTicker]
+    if (remaining !== undefined && remaining > 0) {
+      if (item.remainingQuantity >= remaining) {
+        classes.push('list-row-success')
       } else {
-        classes.push('xit-row-warning')
+        classes.push('list-row-warning')
       }
     }
   }
@@ -972,15 +1280,312 @@ const locationOptions = computed((): KeyValueItem[] => {
   }))
 })
 
-const userOptions = computed(() => {
-  const users = new Set(marketItems.value.map(l => l.userName))
-  return Array.from(users).sort()
+const userNameOptions = computed(() => {
+  const userNames = new Set(marketItems.value.map(l => l.userName))
+  return Array.from(userNames)
+    .sort()
+    .map(name => ({
+      title: name,
+      value: name,
+    }))
 })
 
-// XIT state for quantity requirements highlighting
-const xitQuantities = ref<XitMaterials | null>(null)
-const xitName = ref<string | undefined>(undefined)
-const isXitActive = computed(() => xitQuantities.value !== null)
+// Side panel visibility - manually controlled, no auto-open/close
+const sidePanelOpen = ref(false)
+
+// Toggle side panel
+const toggleSidePanel = () => {
+  sidePanelOpen.value = !sidePanelOpen.value
+}
+
+// Shopping list preference dialog state
+const showPreferenceDialog = ref(false)
+const pendingInvoicedQuantities = ref<Record<string, number> | null>(null)
+
+// Apply invoice quantities to shopping list (reduce or remove items)
+const applyInvoiceToShoppingList = (invoicedQuantities: Record<string, number>) => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials || Object.keys(invoicedQuantities).length === 0) return
+
+  const updatedMaterials: Record<string, number> = { ...materials }
+  let hasChanges = false
+
+  for (const [ticker, invoicedQty] of Object.entries(invoicedQuantities)) {
+    if (ticker in updatedMaterials) {
+      const newQty = updatedMaterials[ticker] - invoicedQty
+      if (newQty <= 0) {
+        // Fulfilled - remove from list
+        delete updatedMaterials[ticker]
+      } else {
+        // Partial - reduce quantity
+        updatedMaterials[ticker] = newQty
+      }
+      hasChanges = true
+    }
+  }
+
+  if (hasChanges) {
+    if (Object.keys(updatedMaterials).length === 0) {
+      // All items fulfilled - clear the list
+      shoppingListStore.clearList()
+    } else {
+      shoppingListStore.setMaterials(updatedMaterials)
+    }
+  }
+}
+
+// Handle preference dialog choice
+const onPreferenceChoice = (autoUpdate: boolean) => {
+  // Save the preference
+  settingsStore.updateSetting('market.updateShoppingList', autoUpdate)
+
+  // If auto-update enabled and we have pending quantities, apply them
+  if (autoUpdate && pendingInvoicedQuantities.value) {
+    applyInvoiceToShoppingList(pendingInvoicedQuantities.value)
+  }
+  pendingInvoicedQuantities.value = null
+}
+
+const onInvoiceSubmitted = (_invoiceId: number, invoicedQuantities: Record<string, number>) => {
+  showSnackbar('Invoice submitted successfully!', 'success')
+  loadMarketItems()
+
+  // Check if we should update the shopping list
+  const updateSetting = settingsStore.getSetting<boolean | null>('market.updateShoppingList')
+
+  // Only update if there's an active shopping list and invoiced quantities
+  const hasShoppingList = shoppingListStore.hasWorkingList.value
+  const hasInvoicedItems = Object.keys(invoicedQuantities).length > 0
+
+  if (hasShoppingList && hasInvoicedItems) {
+    if (updateSetting === null) {
+      // First time - show preference dialog
+      pendingInvoicedQuantities.value = invoicedQuantities
+      showPreferenceDialog.value = true
+    } else if (updateSetting === true) {
+      // Auto-update enabled - apply changes
+      applyInvoiceToShoppingList(invoicedQuantities)
+    }
+    // If updateSetting === false, do nothing (keep list unchanged)
+  }
+}
+
+// Handle filter add from invoice panel (adds userName to filter)
+const onFilterAdd = (userName: string) => {
+  const current = filters.value.userName
+  if (!current.includes(userName)) {
+    setFilter('userName', [...current, userName])
+  }
+}
+
+// Handle add-invoice from empty state - open counterparty selection dialog
+const onAddInvoice = () => {
+  newInvoiceDialog.value = true
+}
+
+// Handle filter-by-list from shopping list panel
+const onFilterByList = () => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (materials && Object.keys(materials).length > 0) {
+    // Filter by commodities in the shopping list
+    filters.value.commodity = Object.keys(materials)
+    // Force sell-only when filtering by shopping list
+    filters.value.itemType = 'sell'
+  }
+}
+
+// Shopping list state for quantity requirements highlighting
+// Note: listQuantities is kept for backwards compatibility with search chip sync
+const listQuantities = ref<XitMaterials | null>(null)
+const listName = ref<string | undefined>(undefined)
+// Use store materials for isListActive check (combines search chips + manual adds)
+const isListActive = computed(() => shoppingListStore.hasWorkingList.value)
+
+// Key for data table to force re-render when shopping list changes
+// This ensures row highlighting updates when shopping list is modified
+const shoppingListKey = computed(() => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials) return 'list-empty'
+  return `list-${Object.keys(materials).length}-${JSON.stringify(materials)}`
+})
+
+// Calculate remaining list need per commodity (requested - claimed)
+// Uses store materials and claimed quantities from all loaded invoices
+const remainingListNeeds = computed((): Record<string, number> => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials) return {}
+  const claimed = invoicesStore.allClaimedQuantities.value
+  const remaining: Record<string, number> = {}
+  for (const [ticker, requested] of Object.entries(materials)) {
+    const claimedQty = claimed[ticker] ?? 0
+    remaining[ticker] = Math.max(0, requested - claimedQty)
+  }
+  return remaining
+})
+
+// Get shopping list quantity for a market item (remaining need, capped to available)
+const getListQuantity = (item: MarketItem): number | null => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials || item.itemType !== 'sell') return null
+  const remaining = remainingListNeeds.value[item.commodityTicker]
+  if (remaining === undefined) return null
+  // Cap to the available remaining quantity on this order
+  return Math.min(remaining, item.remainingQuantity)
+}
+
+// Check if shopping list need for this item is fully satisfied
+const isListSatisfied = (item: MarketItem): boolean => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials || item.itemType !== 'sell') return false
+  const remaining = remainingListNeeds.value[item.commodityTicker]
+  return remaining !== undefined && remaining === 0
+}
+
+// Check if item's commodity is on the shopping list (for showing "Your Order" indicator)
+const isOnShoppingList = (item: MarketItem): boolean => {
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials || item.itemType !== 'sell') return false
+  return item.commodityTicker in materials
+}
+
+// Shopping list availability status for each commodity
+interface ListItemStatus {
+  ticker: string
+  requested: number
+  claimed: number
+  remaining: number
+  availableInMarket: number
+  orderCount: number
+  ownOrderQuantity: number // Quantity available from user's own sell orders
+  ordersNeeded: number // Minimum orders needed to fill (or all if can't fill)
+  canFillCompletely: boolean // Whether orders can fully satisfy the remaining need
+  status: 'fulfilled' | 'available' | 'partial' | 'unavailable'
+}
+
+// Calculate minimum orders needed to fill a quantity (greedy: pick largest first)
+const calculateMinOrdersNeeded = (
+  orderQuantities: number[],
+  needed: number
+): { ordersNeeded: number; canFill: boolean } => {
+  if (needed <= 0) return { ordersNeeded: 0, canFill: true }
+  if (orderQuantities.length === 0) return { ordersNeeded: 0, canFill: false }
+
+  // Sort descending (largest first)
+  const sorted = [...orderQuantities].sort((a, b) => b - a)
+
+  let remaining = needed
+  let count = 0
+  for (const qty of sorted) {
+    if (remaining <= 0) break
+    remaining -= qty
+    count++
+  }
+
+  return { ordersNeeded: count, canFill: remaining <= 0 }
+}
+
+const listAvailabilityStatus = computed((): ListItemStatus[] => {
+  // Use store materials (includes both search chip additions and manual panel additions)
+  const materials = shoppingListStore.workingMaterials.value
+  if (!materials || Object.keys(materials).length === 0) return []
+
+  const allClaimed = invoicesStore.allClaimedQuantities.value
+  const statuses: ListItemStatus[] = []
+
+  for (const [ticker, requested] of Object.entries(materials)) {
+    const claimed = allClaimed[ticker] ?? 0
+    const remaining = Math.max(0, requested - claimed)
+
+    // Collect all order quantities for this commodity
+    const orderQuantities: number[] = []
+    let availableInMarket = 0
+    let orderCount = 0
+    let ownOrderQuantity = 0
+    for (const item of marketItems.value) {
+      if (item.itemType === 'sell' && item.commodityTicker === ticker) {
+        if (item.isOwn) {
+          ownOrderQuantity += item.remainingQuantity
+        } else if (canReserveOrder(item)) {
+          // Only count orders the user has permission to reserve
+          availableInMarket += item.remainingQuantity
+          orderQuantities.push(item.remainingQuantity)
+          orderCount++
+        }
+      }
+    }
+
+    // Calculate minimum orders needed
+    const { ordersNeeded, canFill } = calculateMinOrdersNeeded(orderQuantities, remaining)
+
+    // Effective available = market total minus what's already claimed in invoices
+    // (since claimed quantities come from those same orders)
+    const effectiveAvailable = Math.max(0, availableInMarket - claimed)
+
+    // Determine status
+    let status: ListItemStatus['status']
+    if (remaining === 0) {
+      status = 'fulfilled' // Already have enough in invoice
+    } else if (effectiveAvailable >= remaining) {
+      status = 'available' // Can fully satisfy with remaining available orders
+    } else if (effectiveAvailable > 0 || orderCount > 0) {
+      status = 'partial' // Can partially satisfy OR orders exist but have 0 remaining
+    } else {
+      status = 'unavailable' // No orders available at all
+    }
+
+    statuses.push({
+      ticker,
+      requested,
+      claimed,
+      remaining,
+      availableInMarket,
+      orderCount,
+      ownOrderQuantity,
+      ordersNeeded,
+      canFillCompletely: canFill,
+      status,
+    })
+  }
+
+  // Sort: unfulfilled first (unavailable, partial, available), then fulfilled
+  // Items satisfied by own orders sort with fulfilled items
+  const statusOrder: Record<ListItemStatus['status'], number> = {
+    unavailable: 0,
+    partial: 1,
+    available: 2,
+    fulfilled: 3,
+  }
+  const getEffectiveSortOrder = (item: ListItemStatus): number => {
+    // If own order can satisfy the remaining need, sort with fulfilled
+    if (item.ownOrderQuantity >= item.remaining) return statusOrder.fulfilled
+    return statusOrder[item.status]
+  }
+  statuses.sort((a, b) => getEffectiveSortOrder(a) - getEffectiveSortOrder(b))
+
+  return statuses
+})
+
+// Convert listAvailabilityStatus to ShoppingListPanel's expected format
+const shoppingListPanelStatus = computed((): ShoppingListStatus[] => {
+  return listAvailabilityStatus.value.map(item => ({
+    ticker: item.ticker,
+    needed: item.requested,
+    available: item.availableInMarket,
+    ownOrderQuantity: item.ownOrderQuantity,
+    ordersNeeded: item.ordersNeeded,
+    canFillCompletely: item.canFillCompletely,
+    status: item.status,
+  }))
+})
+
+// Handle shopping list clear
+const onShoppingListClear = () => {
+  listQuantities.value = null
+  listName.value = undefined
+  // Clear the shopping list chip from search
+  tokenSearchRef.value?.clear()
+  clearFilters()
+}
 
 // Whether the TokenSearchInput has any chips
 const hasSearchChips = computed(() => searchChips.value.length > 0)
@@ -992,9 +1597,8 @@ const onChipsUpdate = (chips: SearchChip[]) => {
   // Extract filter values from chips
   const commodities: string[] = []
   const locations: string[] = []
-  let userName: string | null = null
   let itemType: MarketItemType | null = null
-  let xitData: { materials: Record<string, number>; name?: string } | null = null
+  let listData: { materials: Record<string, number>; name?: string } | null = null
 
   for (const chip of chips) {
     switch (chip.type) {
@@ -1004,18 +1608,15 @@ const onChipsUpdate = (chips: SearchChip[]) => {
       case 'location':
         locations.push(chip.value)
         break
-      case 'user':
-        userName = chip.value
-        break
       case 'itemType':
         itemType = chip.value as MarketItemType
         break
-      case 'xit':
-        if (chip.xitData) {
-          xitData = chip.xitData
-          // Add XIT commodities to filter
-          commodities.push(...Object.keys(chip.xitData.materials))
-          // XIT always forces sell-only
+      case 'shoppingList':
+        if (chip.shoppingListData) {
+          listData = chip.shoppingListData
+          // Add shopping list commodities to filter
+          commodities.push(...Object.keys(chip.shoppingListData.materials))
+          // Shopping list always forces sell-only
           itemType = 'sell'
         }
         break
@@ -1025,20 +1626,25 @@ const onChipsUpdate = (chips: SearchChip[]) => {
   // Update filters
   filters.value.commodity = commodities
   filters.value.location = locations
-  filters.value.userName = userName
   filters.value.itemType = itemType
 
-  // Update XIT state
-  xitQuantities.value = xitData?.materials ?? null
-  xitName.value = xitData?.name
+  // Update shopping list state - sync to store
+  listQuantities.value = listData?.materials ?? null
+  listName.value = listData?.name
+  if (listData?.materials) {
+    shoppingListStore.setMaterials(listData.materials, listData.name)
+  } else {
+    shoppingListStore.clearList()
+  }
 }
 
-// Clear XIT state when filters are cleared
-const clearFiltersWithXit = () => {
+// Clear shopping list state when filters are cleared
+const clearFiltersWithList = () => {
   clearFilters()
   tokenSearchRef.value?.clear()
-  xitQuantities.value = null
-  xitName.value = undefined
+  listQuantities.value = null
+  listName.value = undefined
+  shoppingListStore.clearList()
 }
 
 const visibilityOptions = [
@@ -1069,9 +1675,6 @@ const filteredItems = computed(() => {
   if (filters.value.category) {
     result = result.filter(l => getCommodityCategory(l.commodityTicker) === filters.value.category)
   }
-  if (filters.value.userName) {
-    result = result.filter(l => l.userName === filters.value.userName)
-  }
   if (filters.value.orderType) {
     result = result.filter(l => l.orderType === filters.value.orderType)
   }
@@ -1089,6 +1692,9 @@ const filteredItems = computed(() => {
   }
   if (filters.value.location.length > 0) {
     result = result.filter(l => filters.value.location.includes(l.locationId))
+  }
+  if (filters.value.userName.length > 0) {
+    result = result.filter(l => filters.value.userName.includes(l.userName))
   }
 
   // Note: Free text filtering removed - autocomplete shows suggestions,
@@ -1130,14 +1736,64 @@ const onEditFromDetail = (orderType: 'sell' | 'buy', orderId: number) => {
   }
 }
 
-const openReserveDialog = (item: MarketItem) => {
-  reservingItem.value = item
-  reserveDialog.value = true
+const openAddToInvoiceDialog = (item: MarketItem) => {
+  addingToInvoiceItem.value = item
+  // Priority: existing invoice quantity > XIT quantity (capped) > empty
+  const existing = invoicesStore.activeInvoice.value?.lineItems.find(
+    li =>
+      (item.itemType === 'sell' && li.sellOrderId === item.id) ||
+      (item.itemType === 'buy' && li.buyOrderId === item.id)
+  )
+  const listQty = getListQuantity(item)
+  addToInvoiceQuantity.value = existing?.quantity ?? listQty ?? null
+  addToInvoiceDialog.value = true
 }
 
-const onReservationCreated = async () => {
-  showSnackbar('Reservation created successfully')
-  await loadMarketItems()
+// Watch for add-to-invoice dialog open to focus the quantity input
+// nextTick isn't enough for v-dialog - we need a short delay for the dialog to render
+watch(addToInvoiceDialog, isOpen => {
+  if (isOpen) {
+    nextTick(() => {
+      // Use a small timeout to ensure the dialog has fully rendered
+      setTimeout(() => {
+        invoiceQuantityInputRef.value?.focus()
+      }, 50)
+    })
+  }
+})
+
+const confirmAddToInvoice = async () => {
+  if (!addingToInvoiceItem.value || !addToInvoiceQuantity.value || addToInvoiceQuantity.value <= 0)
+    return
+
+  addingToInvoice.value = true
+  const wasUpdating = isUpdatingExisting.value
+  try {
+    const item = addingToInvoiceItem.value
+    const request = {
+      sellOrderId: item.itemType === 'sell' ? item.id : undefined,
+      buyOrderId: item.itemType === 'buy' ? item.id : undefined,
+      quantity: addToInvoiceQuantity.value,
+    }
+
+    const result = await invoicesStore.addToActiveOrCreate(item.userId, request)
+    if (result) {
+      const actionText = wasUpdating ? 'Updated' : 'Added'
+      const directionText = item.itemType === 'sell' ? 'buy from' : 'sell to'
+      showSnackbar(
+        `${actionText} ${addToInvoiceQuantity.value}x ${item.commodityTicker} in invoice (${directionText} ${item.userName})`
+      )
+      addToInvoiceDialog.value = false
+      await loadMarketItems()
+    } else {
+      showSnackbar('Failed to update invoice', 'error')
+    }
+  } catch (error) {
+    console.error('Failed to update invoice:', error)
+    showSnackbar('Failed to update invoice', 'error')
+  } finally {
+    addingToInvoice.value = false
+  }
 }
 
 const onOrderCreated = async (type: 'buy' | 'sell') => {
@@ -1296,6 +1952,30 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Side panel styles */
+.side-panel-drawer :deep(.v-navigation-drawer__content) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  flex-shrink: 0;
+}
+
+.side-panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
 .search-shortcut {
   display: inline-flex;
   align-items: center;
@@ -1376,22 +2056,22 @@ onUnmounted(() => {
 }
 
 /* XIT quantity highlighting */
-.xit-row-success {
+.list-row-success {
   background-color: rgba(var(--v-theme-success), 0.15) !important;
 }
 
-.xit-row-warning {
+.list-row-warning {
   background-color: rgba(var(--v-theme-warning), 0.15) !important;
 }
 
 /* Ensure XIT highlighting takes precedence */
-.xit-row-success.alt-row,
-.xit-row-success.own-listing-row {
+.list-row-success.alt-row,
+.list-row-success.own-listing-row {
   background-color: rgba(var(--v-theme-success), 0.15) !important;
 }
 
-.xit-row-warning.alt-row,
-.xit-row-warning.own-listing-row {
+.list-row-warning.alt-row,
+.list-row-warning.own-listing-row {
   background-color: rgba(var(--v-theme-warning), 0.15) !important;
 }
 

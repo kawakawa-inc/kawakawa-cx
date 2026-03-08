@@ -18,7 +18,10 @@ import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { hasPermission } from '../utils/permissionService.js'
-import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
+import {
+  calculateEffectivePriceWithFallback,
+  calculateEffectivePriceBatch,
+} from '../services/price-calculator.js'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
 
 // Sell order with calculated availability
@@ -112,62 +115,66 @@ export class SellOrdersController extends Controller {
       }))
     )
 
-    return Promise.all(
-      orders.map(async order => {
-        const quantityInfo = quantityMap.get(order.id) ?? {
-          fioQuantity: 0,
-          availableQuantity: 0,
-          reservedQuantity: 0,
-          fulfilledQuantity: 0,
-          remainingQuantity: 0,
-          activeReservationCount: 0,
-          fioUploadedAt: null,
-        }
+    // Batch fetch all dynamic prices in 3 queries instead of 3-5 per order
+    const priceRequests = orders
+      .filter(o => o.priceListCode)
+      .map(o => ({
+        priceListCode: o.priceListCode!,
+        ticker: o.commodityTicker,
+        locationId: o.locationId,
+        currency: o.currency,
+      }))
+    const priceMap = await calculateEffectivePriceBatch(priceRequests)
 
-        // Calculate effective price for dynamic pricing orders
-        const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
-        let effectivePrice: number | null = null
-        let isFallback = false
-        let priceLocationId: string | null = null
+    return orders.map(order => {
+      const quantityInfo = quantityMap.get(order.id) ?? {
+        fioQuantity: 0,
+        availableQuantity: 0,
+        reservedQuantity: 0,
+        fulfilledQuantity: 0,
+        remainingQuantity: 0,
+        activeReservationCount: 0,
+        fioUploadedAt: null,
+      }
 
-        if (order.priceListCode) {
-          const priceResult = await calculateEffectivePriceWithFallback(
-            order.priceListCode,
-            order.commodityTicker,
-            order.locationId,
-            order.currency
-          )
-          if (priceResult) {
-            effectivePrice = priceResult.finalPrice
-            isFallback = priceResult.isFallback ?? false
-            priceLocationId = priceResult.isFallback ? priceResult.locationId : null
-          }
-        }
+      const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
+      let effectivePrice: number | null = null
+      let isFallback = false
+      let priceLocationId: string | null = null
 
-        return {
-          id: order.id,
-          commodityTicker: order.commodityTicker,
-          locationId: order.locationId,
-          price: parseFloat(order.price),
-          currency: order.currency,
-          priceListCode: order.priceListCode,
-          orderType: order.orderType,
-          limitMode: order.limitMode,
-          limitQuantity: order.limitQuantity,
-          fioQuantity: quantityInfo.fioQuantity,
-          availableQuantity: quantityInfo.availableQuantity,
-          activeReservationCount: quantityInfo.activeReservationCount,
-          reservedQuantity: quantityInfo.reservedQuantity,
-          fulfilledQuantity: quantityInfo.fulfilledQuantity,
-          remainingQuantity: quantityInfo.remainingQuantity,
-          fioUploadedAt: quantityInfo.fioUploadedAt?.toISOString() ?? null,
-          pricingMode,
-          effectivePrice,
-          isFallback,
-          priceLocationId,
+      if (order.priceListCode) {
+        const key = `${order.priceListCode.toUpperCase()}:${order.commodityTicker.toUpperCase()}:${order.locationId}`
+        const priceResult = priceMap.get(key) ?? null
+        if (priceResult) {
+          effectivePrice = priceResult.finalPrice
+          isFallback = priceResult.isFallback ?? false
+          priceLocationId = priceResult.isFallback ? priceResult.locationId : null
         }
-      })
-    )
+      }
+
+      return {
+        id: order.id,
+        commodityTicker: order.commodityTicker,
+        locationId: order.locationId,
+        price: parseFloat(order.price),
+        currency: order.currency,
+        priceListCode: order.priceListCode,
+        orderType: order.orderType,
+        limitMode: order.limitMode,
+        limitQuantity: order.limitQuantity,
+        fioQuantity: quantityInfo.fioQuantity,
+        availableQuantity: quantityInfo.availableQuantity,
+        activeReservationCount: quantityInfo.activeReservationCount,
+        reservedQuantity: quantityInfo.reservedQuantity,
+        fulfilledQuantity: quantityInfo.fulfilledQuantity,
+        remainingQuantity: quantityInfo.remainingQuantity,
+        fioUploadedAt: quantityInfo.fioUploadedAt?.toISOString() ?? null,
+        pricingMode,
+        effectivePrice,
+        isFallback,
+        priceLocationId,
+      }
+    })
   }
 
   /**

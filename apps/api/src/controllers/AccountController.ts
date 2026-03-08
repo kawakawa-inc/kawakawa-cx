@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Put, Route, Security, Tags, Request } from 'tsoa'
 import type { Role } from '@kawakawa/types'
 import { db, users, userRoles, roles } from '../db/index.js'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
@@ -141,12 +141,13 @@ export class AccountController extends Controller {
       throw BadRequest('Current password is incorrect')
     }
 
-    // Hash new password and update
+    // Hash new password, update, and bump tokenVersion to invalidate existing sessions
     const newPasswordHash = await hashPassword(body.newPassword)
     await db
       .update(users)
       .set({
         passwordHash: newPasswordHash,
+        tokenVersion: sql<number>`${users.tokenVersion} + 1`,
         updatedAt: new Date(),
       })
       .where(eq(users.id, userId))

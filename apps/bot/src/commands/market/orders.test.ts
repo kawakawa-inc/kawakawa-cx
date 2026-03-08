@@ -151,8 +151,8 @@ describe('orders command (strict)', () => {
     mockFormatGroupedOrdersMulti.mockResolvedValue({ items: [] })
     // Default mock for buildFilterDescription - returns a simple description
     mockBuildFilterDescription.mockReturnValue('📤Sell | 👤 Internal')
-    // Default mock for userDiscordProfiles - not linked
-    mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValue(null)
+    // Default mock for userDiscordProfiles - linked user with ID 10
+    mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValue({ userId: 10, discordId: '123' })
   })
 
   it('has correct command metadata', () => {
@@ -160,6 +160,22 @@ describe('orders command (strict)', () => {
   })
 
   describe('execute', () => {
+    it('returns error when user is not linked', async () => {
+      mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValueOnce(null)
+
+      const { interaction, replyFn } = createMockInteraction({
+        stringOptions: {},
+      })
+
+      await orders.execute(interaction as never)
+
+      expect(replyFn).toHaveBeenCalledWith({
+        content: expect.stringContaining('link your account first'),
+        flags: 64,
+      })
+      expect(mockDbQuery.sellOrders.findMany).not.toHaveBeenCalled()
+    })
+
     it('returns no orders message when no filters provided and no orders exist', async () => {
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([])
       mockDbQuery.buyOrders.findMany.mockResolvedValueOnce([])
@@ -270,52 +286,6 @@ describe('orders command (strict)', () => {
       })
     })
 
-    it('queries orders with user filter', async () => {
-      mockSearchUsers.mockResolvedValueOnce([{ username: 'testuser', displayName: 'Test User' }])
-      mockDbQuery.users.findFirst.mockResolvedValueOnce({ id: 1, username: 'testuser' })
-      mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([
-        {
-          id: 1,
-          commodityTicker: 'COF',
-          price: 100,
-          currency: 'CIS',
-          orderType: 'internal',
-          user: { displayName: 'TestUser' },
-          commodity: { ticker: 'COF', name: 'Caffeinated Beans' },
-          location: { naturalId: 'BEN', name: 'Benten' },
-        },
-      ])
-      mockDbQuery.buyOrders.findMany.mockResolvedValueOnce([])
-
-      const { interaction, replyFn } = createMockInteraction({
-        stringOptions: { user: 'testuser' },
-      })
-
-      await orders.execute(interaction as never)
-
-      expect(mockSearchUsers).toHaveBeenCalledWith('testuser', 1)
-      expect(replyFn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          embeds: expect.any(Array),
-        })
-      )
-    })
-
-    it('returns error for invalid user', async () => {
-      mockSearchUsers.mockResolvedValueOnce([])
-
-      const { interaction, replyFn } = createMockInteraction({
-        stringOptions: { user: 'unknownuser' },
-      })
-
-      await orders.execute(interaction as never)
-
-      expect(replyFn).toHaveBeenCalledWith({
-        content: expect.stringContaining('User "unknownuser" not found'),
-        flags: 64,
-      })
-    })
-
     it('combines commodity and location filters', async () => {
       mockResolveCommodity.mockResolvedValueOnce({ ticker: 'COF', name: 'Caffeinated Beans' })
       mockResolveLocation.mockResolvedValueOnce({
@@ -383,16 +353,11 @@ describe('orders command (strict)', () => {
       expect(mockDbQuery.buyOrders.findMany).toHaveBeenCalled()
     })
 
-    it('defaults to current user orders when linked and no filters provided', async () => {
+    it('always shows current user orders (self-only command)', async () => {
       // User is linked
       mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValueOnce({
         discordId: '123456789',
         userId: 42,
-      })
-      // Fetch current user info
-      mockDbQuery.users.findFirst.mockResolvedValueOnce({
-        id: 42,
-        displayName: 'LinkedUser',
       })
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([
         {
@@ -415,7 +380,7 @@ describe('orders command (strict)', () => {
 
       await orders.execute(interaction as never)
 
-      // Should show "Your Orders" and filter by current user
+      // Should show "Your Orders" with no user filter in description (always self)
       expect(replyFn).toHaveBeenCalledWith(
         expect.objectContaining({
           embeds: expect.any(Array),
@@ -424,7 +389,7 @@ describe('orders command (strict)', () => {
       expect(mockBuildFilterDescription).toHaveBeenCalledWith(
         [],
         [],
-        ['LinkedUser'],
+        [], // No user filter - always showing own orders
         'all',
         'all',
         { visibilityEnforced: false }
@@ -575,8 +540,6 @@ describe('orders command (strict)', () => {
         name: 'Benten',
         type: 'STATION',
       })
-      mockSearchUsers.mockResolvedValueOnce([{ username: 'testuser', displayName: 'Test User' }])
-      mockDbQuery.users.findFirst.mockResolvedValueOnce({ id: 1, username: 'testuser' })
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([
         {
           id: 1,
@@ -584,7 +547,7 @@ describe('orders command (strict)', () => {
           price: 100,
           currency: 'CIS',
           orderType: 'internal',
-          user: { displayName: 'Test User' },
+          user: { displayName: 'Current User' },
           commodity: { ticker: 'COF', name: 'Caffeinated Beans' },
           location: { naturalId: 'BEN', name: 'Benten' },
         },
@@ -595,7 +558,6 @@ describe('orders command (strict)', () => {
         stringOptions: {
           commodity: 'COF',
           location: 'BEN',
-          user: 'testuser',
           type: 'sell',
           visibility: 'internal',
         },
@@ -606,7 +568,7 @@ describe('orders command (strict)', () => {
       expect(mockBuildFilterDescription).toHaveBeenCalledWith(
         ['COF'],
         ['Benten (BEN)'],
-        ['Test User'],
+        [], // No user filter - always own orders
         'sell',
         'internal',
         { visibilityEnforced: false }
@@ -618,13 +580,13 @@ describe('orders command (strict)', () => {
       )
     })
 
-    it('shows market orders title when user specifies filters while linked', async () => {
+    it('shows your orders even when filters are specified', async () => {
       // User is linked
       mockDbQuery.userDiscordProfiles.findFirst.mockResolvedValueOnce({
         discordId: '123456789',
         userId: 42,
       })
-      // But specifies a commodity filter, so should show "Market Orders" not "Your Orders"
+      // Specifies a commodity filter - still shows "Your Orders" (self-only command)
       mockResolveCommodity.mockResolvedValueOnce({ ticker: 'COF', name: 'Caffeinated Beans' })
       mockDbQuery.sellOrders.findMany.mockResolvedValueOnce([
         {
@@ -646,7 +608,7 @@ describe('orders command (strict)', () => {
 
       await orders.execute(interaction as never)
 
-      // Should NOT default to user's orders because a filter was specified
+      // Should filter by commodity but still show user's own orders
       expect(mockBuildFilterDescription).toHaveBeenCalledWith(['COF'], [], [], 'all', 'all', {
         visibilityEnforced: false,
       })
@@ -746,26 +708,6 @@ describe('orders command (strict)', () => {
       expect(mockSearchLocations).toHaveBeenCalledWith('BE', 25, '123456789')
       expect(mockRespond).toHaveBeenCalledWith([
         expect.objectContaining({ name: 'BEN - Benten', value: 'BEN' }),
-      ])
-    })
-
-    it('returns user results for user field', async () => {
-      mockSearchUsers.mockResolvedValueOnce([{ username: 'testuser', displayName: 'Test User' }])
-
-      const mockRespond = vi.fn()
-      const interaction = {
-        user: { id: '123456789' },
-        options: {
-          getFocused: vi.fn().mockReturnValue({ name: 'user', value: 'test' }),
-        },
-        respond: mockRespond,
-      }
-
-      await orders.autocomplete?.(interaction as never)
-
-      expect(mockSearchUsers).toHaveBeenCalledWith('test', 25)
-      expect(mockRespond).toHaveBeenCalledWith([
-        expect.objectContaining({ name: 'Test User (testuser)', value: 'testuser' }),
       ])
     })
 

@@ -91,6 +91,27 @@ jobs:
     run_command: node apps/api/dist/scripts/sync-fio.js all
     schedule:
       cron: 42 * * * *
+  - envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${kawa-db.DATABASE_URL}
+    image:
+      registry: ghcr.io
+      registry_type: GHCR
+      repository: keenan-v1/kawakawa-api
+      tag: dev
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    kind: POST_DEPLOY
+    log_destinations:
+      - name: dev-kawakawa-cx
+        open_search:
+          basic_auth:
+            user: doadmin
+          cluster_name: db-opensearch-kawakawa-cx
+          index_name: logs-dev-kawakawa-cx
+    name: run-batch
+    run_command: node apps/api/dist/scripts/run-batch.js
 name: dev-kawakawa-cx
 region: nyc
 services:

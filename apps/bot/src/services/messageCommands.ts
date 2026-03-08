@@ -47,8 +47,9 @@ export async function getAllPrefixes(): Promise<string[]> {
     .from(channelConfig)
     .where(eq(channelConfig.key, 'commandPrefix'))
 
-  // Extract unique non-empty prefixes
-  const prefixes = [...new Set(rows.map(r => r.value).filter(Boolean))]
+  // Each commandPrefix value is a string of allowed prefix characters (e.g., "!?" means both ! and ?)
+  const rawPrefixes = rows.map(r => r.value).filter(Boolean)
+  const prefixes = expandPrefixes(rawPrefixes)
 
   // Update cache
   cachedPrefixes = prefixes
@@ -68,17 +69,30 @@ export function clearPrefixCache(): void {
 }
 
 /**
- * Find a matching prefix from a list of prefixes.
+ * Expand prefix strings into individual prefix characters.
+ * Each character in a prefix string is treated as a separate valid prefix.
+ * e.g., "!?" becomes ["!", "?"], "!" stays ["!"]
+ */
+export function expandPrefixes(prefixStrings: string[]): string[] {
+  const chars = new Set<string>()
+  for (const str of prefixStrings) {
+    for (const ch of str) {
+      chars.add(ch)
+    }
+  }
+  return [...chars]
+}
+
+/**
+ * Find a matching prefix character from message content.
  * Returns the matching prefix or null if none match.
- * Checks longer prefixes first to handle overlapping prefixes correctly.
  */
 export function findMatchingPrefix(content: string, prefixes: string[]): string | null {
-  // Sort by length descending to match longer prefixes first
-  // e.g., '!!' should match before '!' for a message starting with '!!'
-  const sorted = [...prefixes].sort((a, b) => b.length - a.length)
+  if (content.length === 0) return null
 
-  for (const prefix of sorted) {
-    if (content.startsWith(prefix)) {
+  const firstChar = content[0]
+  for (const prefix of prefixes) {
+    if (prefix === firstChar) {
       return prefix
     }
   }
@@ -139,13 +153,21 @@ function parseCommandArgs(content: string): {
   const commandName = parts[0].toLowerCase()
   const options = new Map<string, string | number | boolean | null>()
 
-  // Everything after the command name is the 'input' (for flexible commands)
+  // Everything after the command name is the primary text argument.
+  // Set it under multiple option names so commands with different
+  // primary option names all receive the value via prefix commands.
   if (parts.length > 1) {
     const inputValue = parts.slice(1).join(' ')
     options.set('input', inputValue)
+    options.set('query', inputValue) // /query
+    options.set('target', inputValue) // /close
+    options.set('topic', inputValue) // /help
 
-    // Also set 'query' for the /query command
-    options.set('query', inputValue)
+    // For commands that take a numeric ID as primary argument (e.g., /invoice <id>)
+    const numericValue = parseInt(inputValue, 10)
+    if (!isNaN(numericValue) && numericValue.toString() === inputValue.trim()) {
+      options.set('id', numericValue)
+    }
   }
 
   return { commandName, options }
@@ -186,7 +208,14 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     }
   } else {
     // For guild channels, use channel-specific prefix
-    prefix = await getEffectivePrefix(message.channelId, isDM)
+    const channelPrefixStr = await getEffectivePrefix(message.channelId, isDM)
+    if (channelPrefixStr) {
+      // Each character in the prefix string is a valid prefix
+      const validPrefixes = expandPrefixes([channelPrefixStr])
+      prefix = findMatchingPrefix(message.content, validPrefixes)
+    } else {
+      prefix = null
+    }
   }
 
   // No prefix matched - ignore message
@@ -204,13 +233,43 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     return
   }
 
-  // Look up command
-  const command = client.commands.get(commandName)
+  // Look up command - try exact match first
+  let command = client.commands.get(commandName)
 
   if (!command) {
-    // Unknown command - ignore silently
-    // (Could optionally send an error message here)
-    return
+    // Try partial match - find all commands that start with the input
+    const partialMatches: Command[] = []
+    for (const [name, cmd] of client.commands) {
+      if (name.startsWith(commandName) && cmd.prefixEnabled !== false) {
+        partialMatches.push(cmd)
+      }
+    }
+
+    if (partialMatches.length === 1) {
+      // Exactly one match - use it
+      command = partialMatches[0]
+    } else if (partialMatches.length > 1) {
+      // Multiple matches - show disambiguation message
+      const matchList = partialMatches
+        .map(cmd => `• **${prefix}${cmd.data.name}** - ${cmd.data.description}`)
+        .join('\n')
+      await message.reply({
+        content: `Did you mean one of these commands?\n${matchList}`,
+        allowedMentions: { repliedUser: false },
+      })
+      return
+    } else {
+      // No partial matches - try fuzzy matching for typos
+      const fuzzyMatches = findFuzzyMatches(commandName, client.commands)
+      if (fuzzyMatches.length > 0) {
+        const suggestions = fuzzyMatches.map(cmd => `\`${prefix}${cmd.data.name}\``).join(' or ')
+        await message.reply({
+          content: `Did you mean ${suggestions}?`,
+          allowedMentions: { repliedUser: false },
+        })
+      }
+      return
+    }
   }
 
   // Check if command allows prefix invocation
@@ -220,13 +279,66 @@ export async function handleMessageCommand(message: Message, client: BotClient):
     return
   }
 
+  // Use the actual command name (may differ from input if partial match was used)
+  const actualCommandName = command.data.name
+
+  // Extract subcommand from input if the command has subcommands
+  // e.g., "!order buy COF Katoa 500" → subcommand="buy", input="COF Katoa 500"
+  let subcommandName: string | null = null
+  const commandJson = command.data.toJSON() as { options?: { type: number; name: string }[] }
+  const subcommandNames = (commandJson.options ?? [])
+    .filter(opt => opt.type === 1) // ApplicationCommandOptionType.Subcommand = 1
+    .map(opt => opt.name)
+
+  if (subcommandNames.length > 0) {
+    const inputValue = options.get('input')
+    if (typeof inputValue === 'string') {
+      const firstWord = inputValue.split(/\s+/)[0]?.toLowerCase()
+      if (firstWord && subcommandNames.includes(firstWord)) {
+        subcommandName = firstWord
+        // Remove subcommand from input, leaving just the arguments
+        const remaining = inputValue.slice(firstWord.length).trim()
+        if (remaining) {
+          options.set('input', remaining)
+          options.set('query', remaining)
+          options.set('target', remaining)
+          options.set('topic', remaining)
+        } else {
+          options.set('input', null)
+          options.set('query', null)
+          options.set('target', null)
+          options.set('topic', null)
+        }
+      }
+    }
+
+    // If no valid subcommand found, show usage help
+    if (!subcommandName) {
+      const subcommandList = subcommandNames
+        .map(name => `\`${prefix}${actualCommandName} ${name}\``)
+        .join(', ')
+      await message.reply({
+        content: `Please specify a subcommand: ${subcommandList}`,
+        allowedMentions: { repliedUser: false },
+      })
+      return
+    }
+  }
+
   // Create adapter to make message look like an interaction
-  const adapter = new MessageInteractionAdapter(message, commandName, options, prefix)
+  const adapter = new MessageInteractionAdapter(
+    message,
+    actualCommandName,
+    options,
+    prefix,
+    subcommandName
+  )
 
   // Log command invocation
   const startTime = Date.now()
   const logContext = {
-    command: commandName,
+    command: actualCommandName,
+    input: commandName !== actualCommandName ? commandName : undefined, // Log partial input if different
     userId: message.author.id,
     username: message.author.username,
     guildId: message.guildId,
@@ -260,4 +372,62 @@ export async function handleMessageCommand(message: Message, client: BotClient):
       // Ignore follow-up errors
     }
   }
+}
+
+const MAX_FUZZY_DISTANCE = 2
+
+/**
+ * Damerau-Levenshtein distance between two strings.
+ * Handles insertions, deletions, substitutions, and transpositions.
+ */
+function damerauLevenshtein(a: string, b: string): number {
+  const lenA = a.length
+  const lenB = b.length
+
+  // Quick exits
+  if (lenA === 0) return lenB
+  if (lenB === 0) return lenA
+  if (Math.abs(lenA - lenB) > MAX_FUZZY_DISTANCE) return MAX_FUZZY_DISTANCE + 1
+
+  const d: number[][] = Array.from({ length: lenA + 1 }, () => new Array(lenB + 1).fill(0))
+
+  for (let i = 0; i <= lenA; i++) d[i][0] = i
+  for (let j = 0; j <= lenB; j++) d[0][j] = j
+
+  for (let i = 1; i <= lenA; i++) {
+    for (let j = 1; j <= lenB; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1, // deletion
+        d[i][j - 1] + 1, // insertion
+        d[i - 1][j - 1] + cost // substitution
+      )
+      // transposition
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost)
+      }
+    }
+  }
+
+  return d[lenA][lenB]
+}
+
+/**
+ * Find commands that are within edit distance 2 of the input.
+ * Only considers prefix-enabled commands.
+ */
+function findFuzzyMatches(input: string, commands: Map<string, Command>): Command[] {
+  const matches: { cmd: Command; distance: number }[] = []
+
+  for (const [name, cmd] of commands) {
+    if (cmd.prefixEnabled === false) continue
+    const dist = damerauLevenshtein(input, name)
+    if (dist <= MAX_FUZZY_DISTANCE) {
+      matches.push({ cmd, distance: dist })
+    }
+  }
+
+  // Sort by distance (closest first), then alphabetically
+  matches.sort((a, b) => a.distance - b.distance || a.cmd.data.name.localeCompare(b.cmd.data.name))
+  return matches.map(m => m.cmd)
 }

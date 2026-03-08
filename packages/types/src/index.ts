@@ -340,6 +340,13 @@ export interface DiscordCallbackRequest {
   state: string
 }
 
+// Discord test connection error codes
+export type DiscordConnectionErrorCode =
+  | 'no_bot_token'
+  | 'no_guild_id'
+  | 'not_in_guild'
+  | 'unknown_error'
+
 // Discord test connection response
 export interface DiscordTestConnectionResponse {
   success: boolean
@@ -350,6 +357,7 @@ export interface DiscordTestConnectionResponse {
     memberCount?: number
   }
   error?: string
+  errorCode?: DiscordConnectionErrorCode
 }
 
 // Settings history entry (for audit trail)
@@ -419,6 +427,8 @@ export type NotificationType =
   | 'reservation_fulfilled'
   | 'reservation_cancelled'
   | 'reservation_expired'
+  | 'invoice_submitted'
+  | 'invoice_cancelled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
@@ -431,6 +441,8 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'reservation_fulfilled',
   'reservation_cancelled',
   'reservation_expired',
+  'invoice_submitted',
+  'invoice_cancelled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',
@@ -549,6 +561,115 @@ export interface UpdateReservationStatusRequest {
   notes?: string
 }
 
+// ==================== INVOICES ====================
+
+// Invoice status is calculated from reservation states:
+// - draft: Open invoice being accumulated
+// - pending: Submitted but reservations not yet all confirmed
+// - confirmed: All reservations have been confirmed
+// - fulfilled: All reservations have been fulfilled
+// - partially_fulfilled: Some reservations fulfilled, some in other states
+// - cancelled: All reservations are cancelled
+export type InvoiceStatus =
+  | 'draft'
+  | 'pending'
+  | 'confirmed'
+  | 'fulfilled'
+  | 'partially_fulfilled'
+  | 'cancelled'
+
+export const INVOICE_STATUSES: InvoiceStatus[] = [
+  'draft',
+  'pending',
+  'confirmed',
+  'fulfilled',
+  'partially_fulfilled',
+  'cancelled',
+]
+
+// Direction indicates whether user sent or received the invoice
+export type InvoiceDirection = 'sent' | 'received'
+
+// Summary of an invoice for listing
+export interface InvoiceSummary {
+  id: number
+  counterpartyUserId: number
+  counterpartyName: string
+  status: InvoiceStatus
+  direction: InvoiceDirection // 'sent' = user created it, 'received' = sent to user
+  name: string | null
+  itemCount: number
+  // Buy item count = items from SELL orders (user is buying)
+  buyItemCount: number
+  // Sell item count = items from BUY orders (user is selling)
+  sellItemCount: number
+  totalsByCurrency: { currency: Currency; total: number }[]
+  // Buy totals = items from SELL orders (user is buying, money out)
+  buyTotalsByCurrency: { currency: Currency; total: number }[]
+  // Sell totals = items from BUY orders (user is selling, money in)
+  sellTotalsByCurrency: { currency: Currency; total: number }[]
+  // Unique commodity tickers in this invoice for search
+  commodityTickers: string[]
+  createdAt: string // ISO date string
+  updatedAt: string // ISO date string
+}
+
+// Full invoice with line items
+export interface Invoice extends InvoiceSummary {
+  notes: string | null
+  submittedAt: string | null // ISO date string
+  lineItems: InvoiceLineItem[]
+}
+
+// Individual line item within an invoice
+export interface InvoiceLineItem {
+  id: number
+  invoiceId: number
+  sellOrderId: number | null
+  buyOrderId: number | null
+  reservationId: number | null // Set after invoice is submitted
+  reservationStatus: ReservationStatus | null // Status of the associated reservation
+  commodityTicker: string
+  locationId: string
+  quantity: number
+  unitPrice: number
+  currency: Currency
+  priceListCode: string | null
+  notes: string | null
+  // Computed fields
+  orderType: 'sell' | 'buy' // Derived from which order ID is set
+  totalValue: number // quantity * unitPrice
+}
+
+// Request to create a new invoice
+export interface CreateInvoiceRequest {
+  counterpartyUserId: number
+  name?: string
+  notes?: string
+}
+
+// Request to add a line item to an invoice
+export interface AddLineItemRequest {
+  sellOrderId?: number // Set if buying from a sell order
+  buyOrderId?: number // Set if selling to a buy order
+  reservationId?: number // For adding existing reservations
+  quantity: number
+  notes?: string
+}
+
+// Request to update a line item
+export interface UpdateLineItemRequest {
+  quantity?: number
+  notes?: string
+}
+
+// Response after submitting an invoice
+export interface SubmitInvoiceResponse {
+  invoice: Invoice
+  reservationsCreated: number
+  errors: string[] // Any items that failed to convert to reservations
+}
+
 // ==================== USER SETTINGS ====================
 
 // Setting value types
@@ -596,3 +717,7 @@ export interface UpdateGlobalDefaultsRequest {
 // ==================== XIT ACT JSON ====================
 
 export * from './xit.js'
+
+// ==================== SHOPPING LISTS ====================
+
+export * from './shopping-list.js'

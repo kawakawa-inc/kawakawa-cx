@@ -1,7 +1,7 @@
 // Sync exchange prices from FIO API to prices table
 // Fetches market prices for all commodities across all FIO exchanges (CI1, NC1, IC1, AI1)
 
-import { eq } from 'drizzle-orm'
+import { eq, sql, inArray } from 'drizzle-orm'
 import { db, prices, priceLists, fioCommodities } from '../../db/index.js'
 import { fioClient } from './client.js'
 import { parseCsvTyped } from './csv-parser.js'
@@ -90,29 +90,26 @@ async function getValidTickers(): Promise<Set<string>> {
  * Get price from FIO price data for a specific exchange using the configured price field
  * The FIO API uses pivot format with columns like: CI1-Average, CI1-AskPrice, CI1-BidPrice
  */
+/** Column suffix map for exchange-specific price fields */
+const exchangeFieldSuffix: Record<string, string> = {
+  PriceAverage: 'Average',
+  Ask: 'AskPrice',
+  Bid: 'BidPrice',
+}
+
 function getPriceValue(
   priceData: FioCsvPriceRow,
   exchangeCode: string,
   priceField: FioPriceField
 ): number | null {
-  // Map price fields to FIO column suffixes
-  const fieldToColumn: Record<FioPriceField, string> = {
-    MMBuy: 'MMBuy', // Global column, not exchange-specific
-    MMSell: 'MMSell', // Global column, not exchange-specific
-    PriceAverage: `${exchangeCode}-Average`,
-    Ask: `${exchangeCode}-AskPrice`,
-    Bid: `${exchangeCode}-BidPrice`,
-  }
-
-  const columnName = fieldToColumn[priceField]
-
-  // For MMBuy/MMSell, use global columns
+  // For MMBuy/MMSell, use global columns directly
   if (priceField === 'MMBuy' || priceField === 'MMSell') {
-    const value = priceData[columnName]
+    const value = priceData[priceField]
     return typeof value === 'number' ? value : null
   }
 
-  // For exchange-specific fields, use the prefixed column
+  // For exchange-specific fields, build the column name
+  const columnName = `${exchangeCode}-${exchangeFieldSuffix[priceField]}`
   const value = priceData[columnName]
   return typeof value === 'number' ? value : null
 }
@@ -275,7 +272,7 @@ export async function getLastSyncTime(priceListCode: string): Promise<Date | nul
     .select({ updatedAt: prices.updatedAt })
     .from(prices)
     .where(eq(prices.priceListCode, priceListCode))
-    .orderBy(prices.updatedAt)
+    .orderBy(sql`${prices.updatedAt} DESC`)
     .limit(1)
 
   return result.length > 0 ? result[0].updatedAt : null
@@ -295,30 +292,33 @@ export async function getFioExchangeSyncStatus(): Promise<
   }[]
 > {
   const fioPriceLists = await getFioPriceLists()
-  const status = []
 
-  for (const priceList of fioPriceLists) {
-    const priceRecords = await db
-      .select({ id: prices.id, updatedAt: prices.updatedAt })
-      .from(prices)
-      .where(eq(prices.priceListCode, priceList.code))
-
-    // Get the most recent update time
-    let lastSyncedAt: Date | null = null
-    for (const p of priceRecords) {
-      if (p.updatedAt && (!lastSyncedAt || p.updatedAt > lastSyncedAt)) {
-        lastSyncedAt = p.updatedAt
-      }
-    }
-
-    status.push({
-      priceListCode: priceList.code,
-      locationId: priceList.defaultLocationId,
-      lastSyncedAt,
-      priceCount: priceRecords.length,
-      exchangeCode: priceList.code,
-    })
+  if (fioPriceLists.length === 0) {
+    return []
   }
 
-  return status
+  // Single aggregation query instead of N per-list queries
+  const codes = fioPriceLists.map(p => p.code)
+  const statsRows = await db
+    .select({
+      priceListCode: prices.priceListCode,
+      lastSyncedAt: sql<Date | null>`max(${prices.updatedAt})`,
+      priceCount: sql<number>`count(*)::int`,
+    })
+    .from(prices)
+    .where(inArray(prices.priceListCode, codes))
+    .groupBy(prices.priceListCode)
+
+  const statsMap = new Map(statsRows.map(r => [r.priceListCode, r]))
+
+  return fioPriceLists.map(priceList => {
+    const stats = statsMap.get(priceList.code)
+    return {
+      priceListCode: priceList.code,
+      locationId: priceList.defaultLocationId,
+      lastSyncedAt: stats?.lastSyncedAt ?? null,
+      priceCount: stats?.priceCount ?? 0,
+      exchangeCode: priceList.code,
+    }
+  })
 }

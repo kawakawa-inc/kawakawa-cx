@@ -384,6 +384,7 @@ export class DiscordAuthController extends Controller {
     username: string
     displayName: string
     email: string | null
+    tokenVersion: number
   }): Promise<{
     token: string
     user: {
@@ -424,6 +425,7 @@ export class DiscordAuthController extends Controller {
       userId: user.id,
       username: user.username,
       roles: roleIds,
+      tokenVersion: user.tokenVersion,
     })
 
     return {

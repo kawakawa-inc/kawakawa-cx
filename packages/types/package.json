@@ -21,6 +21,14 @@
     "./xit": {
       "types": "./dist/xit.d.ts",
       "import": "./dist/xit.js"
+    },
+    "./shopping-list": {
+      "types": "./dist/shopping-list.d.ts",
+      "import": "./dist/shopping-list.js"
+    },
+    "./list": {
+      "types": "./dist/shopping-list.d.ts",
+      "import": "./dist/shopping-list.js"
     }
   },
   "scripts": {
@@ -28,6 +36,9 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@kawakawa/parser": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.3.0",

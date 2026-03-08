@@ -17,10 +17,11 @@ import type {
   StringSelectMenuInteraction,
 } from 'discord.js'
 import type { Command } from '../../client.js'
-import type { MessageVisibility } from '@kawakawa/types'
-import { db, sellOrders, buyOrders, users, userDiscordProfiles } from '@kawakawa/db'
+import { parseTokens } from '@kawakawa/parser'
+import { db, sellOrders, buyOrders, userDiscordProfiles, priceLists } from '@kawakawa/db'
 import { eq, and, desc, or, isNull } from 'drizzle-orm'
-import { searchCommodities, searchLocations, searchUsers } from '../../autocomplete/index.js'
+import { searchCommodities, searchLocations } from '../../autocomplete/index.js'
+import { botResolvers } from '../../utils/resolvers.js'
 import {
   resolveCommodity,
   resolveLocation,
@@ -28,20 +29,17 @@ import {
   formatLocation,
 } from '../../services/display.js'
 import { getDisplaySettings, getFioUsernames } from '../../services/userSettings.js'
-import {
-  getChannelConfig,
-  resolveEffectiveValue,
-  resolveMessageVisibility,
-} from '../../services/channelConfig.js'
+import { getChannelConfig, resolveEffectiveValue } from '../../services/channelConfig.js'
 import { enrichSellOrdersWithQuantities, getOrderDisplayPrice } from '@kawakawa/services/market'
 import {
   formatGroupedOrdersMulti,
   buildFilterDescription,
   type MultiResolvedFilters,
 } from '../../services/orderFormatter.js'
-import { isValidCurrency, VALID_CURRENCIES, type ValidCurrency } from '../../utils/validation.js'
+import { isValidCurrency, type ValidCurrency } from '../../utils/validation.js'
 import { replyError } from '../../utils/replies.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 const ORDERS_PER_PAGE = 10
 const COMPONENT_TIMEOUT = 5 * 60 * 1000 // 5 minutes
@@ -49,7 +47,7 @@ const COMPONENT_TIMEOUT = 5 * 60 * 1000 // 5 minutes
 export const orders: Command = {
   data: new SlashCommandBuilder()
     .setName('orders')
-    .setDescription('View market orders with filters')
+    .setDescription('View your own orders with optional filters')
     .addStringOption(option =>
       option.setName('commodity').setDescription('Filter by commodity ticker').setAutocomplete(true)
     )
@@ -57,12 +55,9 @@ export const orders: Command = {
       option.setName('location').setDescription('Filter by location').setAutocomplete(true)
     )
     .addStringOption(option =>
-      option.setName('user').setDescription('Filter by user').setAutocomplete(true)
-    )
-    .addStringOption(option =>
       option
         .setName('type')
-        .setDescription('Filter by order type (default sell)')
+        .setDescription('Filter by order type (default all)')
         .addChoices(
           { name: 'All Orders', value: 'all' },
           { name: 'Sell Orders', value: 'sell' },
@@ -72,22 +67,20 @@ export const orders: Command = {
     .addStringOption(option =>
       option
         .setName('visibility')
-        .setDescription('Filter by visibility (default internal)')
+        .setDescription('Filter by visibility (default all)')
         .addChoices(
           { name: 'All', value: 'all' },
           { name: 'Internal (members)', value: 'internal' },
           { name: 'Partner (trade partners)', value: 'partner' }
         )
-    )
-    .addStringOption(option =>
-      option
-        .setName('reply')
-        .setDescription('Reply visibility (default: your preference)')
-        .addChoices(
-          { name: 'Private (only you)', value: 'ephemeral' },
-          { name: 'Public (everyone)', value: 'public' }
-        )
     ) as SlashCommandBuilder,
+
+  helpInfo: {
+    category: 'orders',
+    details:
+      'Shows your orders by default. Add filters to search the market.\nUse the Manage button to edit or delete your orders.',
+    examples: ['orders', 'orders COF'],
+  },
 
   async autocomplete(interaction: AutocompleteInteraction): Promise<void> {
     const focusedOption = interaction.options.getFocused(true)
@@ -113,29 +106,43 @@ export const orders: Command = {
         name: `${l.naturalId} - ${l.name}`,
         value: l.naturalId,
       }))
-    } else if (focusedOption.name === 'user') {
-      const users = await searchUsers(query, 25)
-      choices = users.map(u => ({
-        name: u.displayName !== u.username ? `${u.displayName} (${u.username})` : u.username,
-        value: u.username,
-      }))
     }
 
     await interaction.respond(choices.slice(0, 25))
   },
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
+
+    // Check if user has a linked account (required for this command)
+    const discordProfile = await db.query.userDiscordProfiles.findFirst({
+      where: eq(userDiscordProfiles.discordId, interaction.user.id),
+    })
+
+    if (!discordProfile) {
+      await interaction.reply({
+        content: `❌ You need to link your account first. Use \`${prefix}register\` to create an account or \`${prefix}link\` to connect an existing one.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      return
+    }
+
+    const currentUserId = discordProfile.userId
+
+    // Get named options (from slash commands)
     const commodityInput = interaction.options.getString('commodity')
     const locationInput = interaction.options.getString('location')
-    const userInput = interaction.options.getString('user')
-    const orderType =
+    let orderType: 'all' | 'sell' | 'buy' =
       (interaction.options.getString('type') as 'all' | 'sell' | 'buy' | null) || 'all'
     const visibilityOption = interaction.options.getString('visibility') as
       | 'all'
       | 'internal'
       | 'partner'
       | null
-    const replyOption = interaction.options.getString('reply') as MessageVisibility | null
+
+    // Check for prefix command input (e.g., "!orders COF BEN" or "!orders buy COF")
+    // The message command handler sets 'input' with the full text after the command
+    const prefixInput = interaction.options.getString('input')
 
     // Get user's display preferences
     const displaySettings = await getDisplaySettings(interaction.user.id)
@@ -144,15 +151,8 @@ export const orders: Command = {
     const channelId = interaction.channelId
     const channelSettings = await getChannelConfig(channelId)
 
-    // Resolve message visibility (command > channel > user > system default)
-    const { isEphemeral } = resolveMessageVisibility(
-      replyOption,
-      channelSettings,
-      displaySettings.messageVisibility
-    )
-
     // Determine visibility using channel defaults
-    // For view commands, 'all' means no filter, so we use it as the system default
+    // For viewing your own orders, 'all' means no filter
     const visibility: 'all' | 'internal' | 'partner' = resolveEffectiveValue(
       visibilityOption,
       channelSettings?.visibility,
@@ -167,65 +167,68 @@ export const orders: Command = {
     const channelPriceList = channelSettings?.priceList
     const priceListEnforced = channelSettings?.priceListEnforced ?? false
 
-    // Check if user has a linked account (for default behavior and manage button)
-    const discordProfile = await db.query.userDiscordProfiles.findFirst({
-      where: eq(userDiscordProfiles.discordId, interaction.user.id),
-    })
-    const currentUserId = discordProfile?.userId ?? null
-
-    // Resolve inputs
+    // Resolve filter inputs
     let resolvedCommodity: { ticker: string; name: string } | null = null
     let resolvedLocation: { naturalId: string; name: string; type: string } | null = null
-    let resolvedUserId: number | null = null
-    let resolvedDisplayName: string | null = null
-    let isDefaultingToSelf = false
 
-    if (commodityInput) {
-      resolvedCommodity = await resolveCommodity(commodityInput)
-      if (!resolvedCommodity) {
+    // If prefix input is provided, parse it with the unified parser
+    if (prefixInput && !commodityInput && !locationInput) {
+      const parsed = await parseTokens(prefixInput, botResolvers)
+
+      // Extract order type from action keywords
+      if (parsed.actions.has('buy')) {
+        orderType = 'buy'
+      } else if (parsed.actions.has('sell')) {
+        orderType = 'sell'
+      }
+
+      // Extract the first resolved commodity
+      if (parsed.items.length > 0) {
+        resolvedCommodity = parsed.items[0].commodity
+      }
+
+      // Extract location
+      if (parsed.location) {
+        resolvedLocation = {
+          naturalId: parsed.location.naturalId,
+          name: parsed.location.name,
+          type: parsed.location.type,
+        }
+      }
+
+      // If nothing was resolved and there were unresolved tokens, show error
+      if (parsed.unresolved.length > 0 && !resolvedCommodity && !resolvedLocation) {
         await interaction.reply({
-          content: `❌ Commodity "${commodityInput}" not found.`,
-          flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
+          content:
+            `❌ Could not resolve: ${parsed.unresolved.map(t => `"${t}"`).join(', ')}\n\n` +
+            `Use \`${prefix}orders\` with autocomplete for commodities or locations.`,
+          flags: MessageFlags.Ephemeral,
         })
         return
       }
-    }
+    } else {
+      // Standard slash command flow with named options
+      if (commodityInput) {
+        resolvedCommodity = await resolveCommodity(commodityInput)
+        if (!resolvedCommodity) {
+          await interaction.reply({
+            content: `❌ Commodity "${commodityInput}" not found.`,
+            flags: MessageFlags.Ephemeral,
+          })
+          return
+        }
+      }
 
-    if (locationInput) {
-      resolvedLocation = await resolveLocation(locationInput)
-      if (!resolvedLocation) {
-        await interaction.reply({
-          content: `❌ Location "${locationInput}" not found.`,
-          flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
-        })
-        return
+      if (locationInput) {
+        resolvedLocation = await resolveLocation(locationInput)
+        if (!resolvedLocation) {
+          await interaction.reply({
+            content: `❌ Location "${locationInput}" not found.`,
+            flags: MessageFlags.Ephemeral,
+          })
+          return
+        }
       }
-    }
-
-    if (userInput) {
-      const userResults = await searchUsers(userInput, 1)
-      if (userResults.length === 0) {
-        await interaction.reply({
-          content: `❌ User "${userInput}" not found.`,
-          flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
-        })
-        return
-      }
-      const foundUser = await db.query.users.findFirst({
-        where: eq(users.username, userResults[0].username),
-      })
-      if (foundUser) {
-        resolvedUserId = foundUser.id
-        resolvedDisplayName = userResults[0].displayName
-      }
-    } else if (!commodityInput && !locationInput && currentUserId) {
-      // Default to showing current user's orders when no filters are provided
-      resolvedUserId = currentUserId
-      const currentUser = await db.query.users.findFirst({
-        where: eq(users.id, currentUserId),
-      })
-      resolvedDisplayName = currentUser?.displayName ?? 'You'
-      isDefaultingToSelf = true
     }
 
     // Build filter description for embed
@@ -234,7 +237,7 @@ export const orders: Command = {
       resolvedLocation
         ? [await formatLocation(resolvedLocation.naturalId, displaySettings.locationDisplayMode)]
         : [],
-      resolvedDisplayName ? [resolvedDisplayName] : [],
+      [], // No user filter - always showing own orders
       orderType,
       visibility,
       { visibilityEnforced: channelSettings?.visibilityEnforced ?? false }
@@ -247,17 +250,17 @@ export const orders: Command = {
         : or(eq(sellOrders.priceListCode, channelPriceList), isNull(sellOrders.priceListCode))
       : undefined
 
-    // Fetch sell orders
+    // Fetch sell orders (only for current user)
     const sellOrdersData =
       orderType === 'buy'
         ? []
         : await db.query.sellOrders.findMany({
             where: and(
+              eq(sellOrders.userId, currentUserId), // Always filter by current user
               resolvedCommodity
                 ? eq(sellOrders.commodityTicker, resolvedCommodity.ticker)
                 : undefined,
               resolvedLocation ? eq(sellOrders.locationId, resolvedLocation.naturalId) : undefined,
-              resolvedUserId ? eq(sellOrders.userId, resolvedUserId) : undefined,
               visibility && visibility !== 'all' ? eq(sellOrders.orderType, visibility) : undefined,
               sellPriceListFilter
             ),
@@ -276,17 +279,17 @@ export const orders: Command = {
         : or(eq(buyOrders.priceListCode, channelPriceList), isNull(buyOrders.priceListCode))
       : undefined
 
-    // Fetch buy orders
+    // Fetch buy orders (only for current user)
     const buyOrdersData =
       orderType === 'sell'
         ? []
         : await db.query.buyOrders.findMany({
             where: and(
+              eq(buyOrders.userId, currentUserId), // Always filter by current user
               resolvedCommodity
                 ? eq(buyOrders.commodityTicker, resolvedCommodity.ticker)
                 : undefined,
               resolvedLocation ? eq(buyOrders.locationId, resolvedLocation.naturalId) : undefined,
-              resolvedUserId ? eq(buyOrders.userId, resolvedUserId) : undefined,
               visibility && visibility !== 'all' ? eq(buyOrders.orderType, visibility) : undefined,
               buyPriceListFilter
             ),
@@ -304,7 +307,7 @@ export const orders: Command = {
     if (!hasOrders) {
       await interaction.reply({
         content: `📭 No orders found matching your filters.\n\n*${filterDesc}*`,
-        flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
+        flags: MessageFlags.Ephemeral,
       })
       return
     }
@@ -345,8 +348,8 @@ export const orders: Command = {
     const resolvedFilters: MultiResolvedFilters = {
       commodities: resolvedCommodity ? [resolvedCommodity] : [],
       locations: resolvedLocation ? [resolvedLocation] : [],
-      userIds: resolvedUserId ? [resolvedUserId] : [],
-      displayNames: resolvedDisplayName ? [resolvedDisplayName] : [],
+      userIds: [], // No user filter - always showing own orders
+      displayNames: [], // No user filter - always showing own orders
     }
 
     // Format orders as grouped paginated items
@@ -360,28 +363,27 @@ export const orders: Command = {
       visibility
     )
 
-    // Build base embed with dynamic title
-    const embedTitle = isDefaultingToSelf ? '📦 Your Orders' : '📦 Market Orders'
+    // Build base embed (always "Your Orders" since this is a self-only command)
     const baseEmbed = new EmbedBuilder()
-      .setTitle(embedTitle)
+      .setTitle('📦 Your Orders')
       .setColor(0x5865f2)
       .setDescription(filterDesc)
       .setTimestamp()
 
-    // Custom pagination with Manage button
-    await sendOrdersWithManage(interaction, baseEmbed, allItems, currentUserId, isEphemeral)
+    // Custom pagination with Manage button (always ephemeral)
+    await sendOrdersWithManage(interaction, baseEmbed, allItems, currentUserId)
   },
 }
 
 /**
  * Send orders with pagination and manage functionality.
+ * Always ephemeral with share button (shared messages don't have Manage button).
  */
 async function sendOrdersWithManage(
   interaction: ChatInputCommandInteraction,
   baseEmbed: EmbedBuilder,
   allItems: { name: string; value: string; inline?: boolean }[],
-  currentUserId: number | null,
-  isEphemeral: boolean
+  currentUserId: number | null
 ): Promise<void> {
   const idPrefix = `orders:${Date.now()}`
 
@@ -390,17 +392,17 @@ async function sendOrdersWithManage(
   const totalPages = pages.length
   let currentPage = 0
 
-  const buildEmbed = (page: number): EmbedBuilder => {
+  const buildEmbed = (page: number, includeFooterHints = true): EmbedBuilder => {
     const embed = EmbedBuilder.from(baseEmbed)
     const pageItems = pages[page] || []
     embed.setFields(...pageItems.map(item => ({ ...item, inline: item.inline ?? true })))
 
     const footerLines: string[] = []
-    if (isEphemeral) {
+    if (includeFooterHints) {
       footerLines.push('📢 Share to post publicly')
-    }
-    if (currentUserId) {
-      footerLines.push('🗑️ Manage to edit or delete your orders')
+      if (currentUserId) {
+        footerLines.push('🗑️ Manage to edit or delete your orders')
+      }
     }
     footerLines.push(`Page ${page + 1}/${totalPages}`)
     embed.setFooter({ text: footerLines.join('\n') })
@@ -426,28 +428,16 @@ async function sendOrdersWithManage(
         .setCustomId(`${idPrefix}:next`)
         .setLabel('▶')
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(page >= totalPages - 1)
+        .setDisabled(page >= totalPages - 1),
+      new ButtonBuilder()
+        .setCustomId(`${idPrefix}:share`)
+        .setLabel('📢 Share')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`${idPrefix}:manage`)
+        .setLabel('🗑️ Manage')
+        .setStyle(ButtonStyle.Danger)
     )
-
-    // Add share button only if ephemeral
-    if (isEphemeral) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`${idPrefix}:share`)
-          .setLabel('📢 Share')
-          .setStyle(ButtonStyle.Primary)
-      )
-    }
-
-    // Add manage button if user is linked
-    if (currentUserId) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`${idPrefix}:manage`)
-          .setLabel('🗑️ Manage')
-          .setStyle(ButtonStyle.Danger)
-      )
-    }
 
     return row
   }
@@ -455,7 +445,7 @@ async function sendOrdersWithManage(
   const response = await interaction.reply({
     embeds: [buildEmbed(0)],
     components: [buildButtons(0)],
-    flags: isEphemeral ? MessageFlags.Ephemeral : undefined,
+    flags: MessageFlags.Ephemeral,
   })
 
   const collector = response.createMessageComponentCollector({
@@ -490,8 +480,10 @@ async function sendOrdersWithManage(
             const member = interaction.member
             const sharedByName =
               member && 'displayName' in member ? member.displayName : interaction.user.displayName
-            const shareEmbed = buildEmbed(currentPage)
-            shareEmbed.setFooter({ text: `Shared by ${sharedByName}` })
+            const shareEmbed = buildEmbed(currentPage, false) // Don't include footer hints
+            shareEmbed.setFooter({
+              text: `Shared by ${sharedByName}\nPage ${currentPage + 1}/${totalPages}`,
+            })
             await btnInteraction.reply({ embeds: [shareEmbed] })
             break
           }
@@ -604,6 +596,14 @@ async function sendOrdersWithManage(
               if (selectInteraction?.isStringSelectMenu()) {
                 const selected = selectInteraction.values[0]
                 const [selectedOrderType, selectedOrderId] = selected.split(':')
+                const selectedId = parseInt(selectedOrderId, 10)
+
+                // Build order summary for the selected message
+                const summary = await buildOrderSummary(
+                  selectedOrderType,
+                  selectedId,
+                  selectedOrderType === 'sell' ? userSellOrders : userBuyOrders
+                )
 
                 // Show edit/delete buttons for the selected order
                 const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -618,7 +618,7 @@ async function sendOrdersWithManage(
                 )
 
                 const actionReply = await selectInteraction.update({
-                  content: `**Selected:** ${selectedOrderType === 'sell' ? '📤 Sell' : '📥 Buy'} order #${selectedOrderId}\n\nWhat would you like to do?`,
+                  content: `**Selected:** ${selectedOrderType === 'sell' ? '📤 Sell' : '📥 Buy'} order #${selectedOrderId}\n${summary}\n\nWhat would you like to do?`,
                   components: [buttonRow],
                 })
 
@@ -739,23 +739,38 @@ async function handleOrderAction(
       .setCustomId(modalId)
       .setTitle(`Edit Sell Order: ${order.commodityTicker}`)
 
-    const priceInput = new TextInputBuilder()
-      .setCustomId('price')
-      .setLabel('Price')
+    // Mode: All (sell everything), Max (sell up to N), Reserve (keep N, sell rest)
+    const modeDefault =
+      order.limitMode === 'none' ? 'All' : order.limitMode === 'max_sell' ? 'Max' : 'Reserve'
+
+    const modeInput = new TextInputBuilder()
+      .setCustomId('mode')
+      .setLabel('Mode (All, Max, or Reserve)')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.price.toString())
+      .setValue(modeDefault)
       .setRequired(true)
 
-    const currencyInput = new TextInputBuilder()
-      .setCustomId('currency')
-      .setLabel('Currency (CIS, AIC, ICA, NCC)')
+    const quantityInput = new TextInputBuilder()
+      .setCustomId('quantity')
+      .setLabel('Quantity (ignored for All mode)')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.currency)
+      .setValue(order.limitQuantity?.toString() ?? '0')
+      .setRequired(true)
+
+    // Price: "100 CIS" for custom or "KAWA" for price list
+    const priceDefault = order.priceListCode ?? `${order.price} ${order.currency}`
+
+    const priceInput = new TextInputBuilder()
+      .setCustomId('price')
+      .setLabel('Price (e.g. "100 CIS" or "KAWA")')
+      .setStyle(TextInputStyle.Short)
+      .setValue(priceDefault)
       .setRequired(true)
 
     modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(currencyInput)
+      new ActionRowBuilder<TextInputBuilder>().addComponents(modeInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
     )
 
     await btnInteraction.showModal(modal)
@@ -766,21 +781,29 @@ async function handleOrderAction(
         time: 60000,
       })
 
-      const newPrice = parseFloat(modalSubmit.fields.getTextInputValue('price'))
-      const newCurrency = modalSubmit.fields.getTextInputValue('currency').toUpperCase()
-
-      if (isNaN(newPrice) || newPrice <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid price. Please enter a positive number.',
-          flags: MessageFlags.Ephemeral,
-        })
+      // Parse mode
+      const modeValue = modalSubmit.fields.getTextInputValue('mode').trim().toLowerCase()
+      const limitMode = parseLimitMode(modeValue)
+      if (!limitMode) {
+        await replyError(modalSubmit, 'Invalid mode. Use "All", "Max", or "Reserve".')
         return
       }
 
-      if (!isValidCurrency(newCurrency)) {
+      // Parse quantity
+      const quantityValue = modalSubmit.fields.getTextInputValue('quantity').trim()
+      const quantity = parseInt(quantityValue, 10)
+      if (limitMode !== 'none' && (isNaN(quantity) || quantity <= 0)) {
+        await replyError(modalSubmit, 'Quantity must be a positive number for Max/Reserve mode.')
+        return
+      }
+
+      // Parse price
+      const priceValue = modalSubmit.fields.getTextInputValue('price').trim()
+      const parsed = await parsePriceInput(priceValue)
+      if (!parsed) {
         await replyError(
           modalSubmit,
-          `Invalid currency. Must be one of: ${VALID_CURRENCIES.join(', ')}`
+          'Invalid price. Use a number with currency (e.g. "100 CIS") or a price list code (e.g. "KAWA").'
         )
         return
       }
@@ -788,16 +811,26 @@ async function handleOrderAction(
       await db
         .update(sellOrders)
         .set({
-          price: newPrice.toString(),
-          currency: newCurrency as ValidCurrency,
+          price: parsed.price.toString(),
+          priceListCode: parsed.priceListCode,
+          currency: parsed.currency,
+          limitMode,
+          limitQuantity: limitMode !== 'none' ? quantity : null,
           updatedAt: new Date(),
         })
         .where(and(eq(sellOrders.id, orderId), eq(sellOrders.userId, userId)))
 
-      logger.info({ orderId, orderType: 'sell', userId, newPrice, newCurrency }, 'Order updated')
+      const displayMode =
+        limitMode === 'none' ? 'All' : limitMode === 'max_sell' ? 'Max' : 'Reserve'
+      const displayQty = limitMode !== 'none' ? ` ${quantity}x` : ''
+      const displayPrice = parsed.priceListCode ?? `${parsed.price} ${parsed.currency}`
+      logger.info(
+        { orderId, orderType: 'sell', userId, limitMode, quantity, ...parsed },
+        'Order updated'
+      )
 
       await modalSubmit.reply({
-        content: `✅ Sell order updated: ${newPrice} ${newCurrency}`,
+        content: `✅ Sell order updated: ${displayMode}${displayQty} @ ${displayPrice}`,
         flags: MessageFlags.Ephemeral,
       })
     } catch {
@@ -827,24 +860,19 @@ async function handleOrderAction(
       .setValue(order.quantity.toString())
       .setRequired(true)
 
+    // Price: "100 CIS" for custom or "KAWA" for price list
+    const priceDefault = order.priceListCode ?? `${order.price} ${order.currency}`
+
     const priceInput = new TextInputBuilder()
       .setCustomId('price')
-      .setLabel('Price')
+      .setLabel('Price (e.g. "100 CIS" or "KAWA")')
       .setStyle(TextInputStyle.Short)
-      .setValue(order.price.toString())
-      .setRequired(true)
-
-    const currencyInput = new TextInputBuilder()
-      .setCustomId('currency')
-      .setLabel('Currency (CIS, AIC, ICA, NCC)')
-      .setStyle(TextInputStyle.Short)
-      .setValue(order.currency)
+      .setValue(priceDefault)
       .setRequired(true)
 
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(quantityInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(currencyInput)
+      new ActionRowBuilder<TextInputBuilder>().addComponents(priceInput)
     )
 
     await btnInteraction.showModal(modal)
@@ -856,29 +884,19 @@ async function handleOrderAction(
       })
 
       const newQuantity = parseInt(modalSubmit.fields.getTextInputValue('quantity'), 10)
-      const newPrice = parseFloat(modalSubmit.fields.getTextInputValue('price'))
-      const newCurrency = modalSubmit.fields.getTextInputValue('currency').toUpperCase()
+      const priceValue = modalSubmit.fields.getTextInputValue('price').trim()
 
       if (isNaN(newQuantity) || newQuantity <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid quantity. Please enter a positive integer.',
-          flags: MessageFlags.Ephemeral,
-        })
+        await replyError(modalSubmit, 'Quantity must be a positive number.')
         return
       }
 
-      if (isNaN(newPrice) || newPrice <= 0) {
-        await modalSubmit.reply({
-          content: '❌ Invalid price. Please enter a positive number.',
-          flags: MessageFlags.Ephemeral,
-        })
-        return
-      }
-
-      if (!isValidCurrency(newCurrency)) {
+      // Parse price
+      const parsed = await parsePriceInput(priceValue)
+      if (!parsed) {
         await replyError(
           modalSubmit,
-          `Invalid currency. Must be one of: ${VALID_CURRENCIES.join(', ')}`
+          'Invalid price. Use a number with currency (e.g. "100 CIS") or a price list code (e.g. "KAWA").'
         )
         return
       }
@@ -887,23 +905,132 @@ async function handleOrderAction(
         .update(buyOrders)
         .set({
           quantity: newQuantity,
-          price: newPrice.toString(),
-          currency: newCurrency as ValidCurrency,
+          price: parsed.price.toString(),
+          priceListCode: parsed.priceListCode,
+          currency: parsed.currency,
           updatedAt: new Date(),
         })
         .where(and(eq(buyOrders.id, orderId), eq(buyOrders.userId, userId)))
 
-      logger.info(
-        { orderId, orderType: 'buy', userId, newQuantity, newPrice, newCurrency },
-        'Order updated'
-      )
+      const displayPrice = parsed.priceListCode ?? `${parsed.price} ${parsed.currency}`
+      logger.info({ orderId, orderType: 'buy', userId, newQuantity, ...parsed }, 'Order updated')
 
       await modalSubmit.reply({
-        content: `✅ Buy order updated: ${newQuantity}x @ ${newPrice} ${newCurrency}`,
+        content: `✅ Buy order updated: ${newQuantity}x @ ${displayPrice}`,
         flags: MessageFlags.Ephemeral,
       })
     } catch {
       // Modal timed out or was dismissed
     }
   }
+}
+
+/**
+ * Build a summary string for a selected order.
+ */
+async function buildOrderSummary(
+  orderType: string,
+  orderId: number,
+  orders: {
+    id: number
+    commodityTicker: string
+    locationId: string
+    price: string
+    currency: ValidCurrency
+    priceListCode: string | null
+    quantity?: number
+    limitMode?: string
+    limitQuantity?: number | null
+    orderType: string
+  }[]
+): Promise<string> {
+  const order = orders.find(o => o.id === orderId)
+  if (!order) return ''
+
+  const priceInfo = await getOrderDisplayPrice({
+    price: order.price,
+    currency: order.currency,
+    priceListCode: order.priceListCode,
+    commodityTicker: order.commodityTicker,
+    locationId: order.locationId,
+  })
+
+  const priceDisplay = order.priceListCode
+    ? `${order.priceListCode}${priceInfo ? ` (${priceInfo.price.toFixed(2)} ${priceInfo.currency})` : ''}`
+    : priceInfo
+      ? `${priceInfo.price.toFixed(2)} ${priceInfo.currency}`
+      : `${order.price} ${order.currency}`
+
+  const lines: string[] = [
+    `> **${order.commodityTicker}** @ ${order.locationId}`,
+    `> Price: ${priceDisplay} · Visibility: ${order.orderType}`,
+  ]
+
+  if (orderType === 'sell' && order.limitMode) {
+    const mode =
+      order.limitMode === 'none' ? 'All' : order.limitMode === 'max_sell' ? 'Max' : 'Reserve'
+    const qty = order.limitMode !== 'none' && order.limitQuantity ? ` (${order.limitQuantity})` : ''
+    lines.push(`> Mode: ${mode}${qty}`)
+  }
+
+  if (orderType === 'buy' && order.quantity != null) {
+    lines.push(`> Quantity: ${order.quantity}`)
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * Parse a limit mode string into the DB enum value.
+ */
+function parseLimitMode(value: string): 'none' | 'max_sell' | 'reserve' | null {
+  switch (value) {
+    case 'all':
+    case 'none':
+      return 'none'
+    case 'max':
+    case 'max_sell':
+      return 'max_sell'
+    case 'reserve':
+      return 'reserve'
+    default:
+      return null
+  }
+}
+
+interface ParsedPrice {
+  price: number
+  priceListCode: string | null
+  currency: ValidCurrency
+}
+
+/**
+ * Parse a price input that can be:
+ * - "100 CIS" -> custom price with currency
+ * - "KAWA" -> price list code (dynamic pricing)
+ */
+async function parsePriceInput(value: string): Promise<ParsedPrice | null> {
+  const parts = value.split(/\s+/)
+
+  // Try "100 CIS" format: number + currency
+  if (parts.length === 2) {
+    const num = parseFloat(parts[0])
+    const cur = parts[1].toUpperCase()
+    if (!isNaN(num) && num > 0 && isValidCurrency(cur)) {
+      return { price: num, priceListCode: null, currency: cur }
+    }
+  }
+
+  // Try single token as price list code
+  if (parts.length === 1) {
+    const code = parts[0].toUpperCase()
+    const priceList = await db.query.priceLists.findFirst({
+      where: eq(priceLists.code, code),
+    })
+    if (priceList) {
+      return { price: 0, priceListCode: code, currency: priceList.currency }
+    }
+  }
+
+  return null
 }

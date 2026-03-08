@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { calculateEffectivePrice, calculateEffectivePrices } from './price-calculator.js'
+import {
+  calculateEffectivePrice,
+  calculateEffectivePrices,
+  calculateEffectivePriceBatch,
+} from './price-calculator.js'
 import { db } from '../db/index.js'
 
 vi.mock('../db/index.js', () => ({
@@ -516,6 +520,210 @@ describe('price-calculator', () => {
       expect(result[1].commodityTicker).toBe('RAT')
       expect(result[1].finalPrice).toBe(50) // No adjustment
       expect(result[1].adjustments).toHaveLength(0)
+    })
+  })
+
+  describe('calculateEffectivePriceBatch', () => {
+    // Query 1 (price lists): .select().from().where() — terminal is where()
+    // Query 2 (base prices): .select().from().innerJoin().leftJoin().leftJoin().where() — terminal is where()
+    // Query 3 (adjustments): .select().from().where().orderBy() — terminal is orderBy()
+    function createTerminalWhereMock(resolvedValue: unknown) {
+      const mock: Record<string, any> = {}
+      mock.from = vi.fn().mockReturnValue(mock)
+      mock.innerJoin = vi.fn().mockReturnValue(mock)
+      mock.leftJoin = vi.fn().mockReturnValue(mock)
+      mock.where = vi.fn().mockResolvedValue(resolvedValue)
+      return mock
+    }
+
+    function createTerminalOrderByMock(resolvedValue: unknown) {
+      const mock: Record<string, any> = {}
+      mock.from = vi.fn().mockReturnValue(mock)
+      mock.where = vi.fn().mockReturnValue(mock)
+      mock.orderBy = vi.fn().mockResolvedValue(resolvedValue)
+      return mock
+    }
+
+    it('should return empty map for empty requests', async () => {
+      const result = await calculateEffectivePriceBatch([])
+      expect(result.size).toBe(0)
+    })
+
+    it('should batch fetch prices for multiple orders in 3 queries', async () => {
+      const priceListMock = createTerminalWhereMock([
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+      ])
+      const basePriceMock = createTerminalWhereMock([
+        {
+          priceListCode: 'KAWA',
+          commodityTicker: 'H2O',
+          commodityName: 'Water',
+          locationId: 'BEN',
+          locationName: 'Benten',
+          price: '100.00',
+          currency: 'CIS',
+          source: 'manual',
+          sourceReference: null,
+        },
+        {
+          priceListCode: 'KAWA',
+          commodityTicker: 'RAT',
+          commodityName: 'Rations',
+          locationId: 'BEN',
+          locationName: 'Benten',
+          price: '50.00',
+          currency: 'CIS',
+          source: 'manual',
+          sourceReference: null,
+        },
+      ])
+      const adjustmentMock = createTerminalOrderByMock([])
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(priceListMock as any)
+        .mockReturnValueOnce(basePriceMock as any)
+        .mockReturnValueOnce(adjustmentMock as any)
+
+      const result = await calculateEffectivePriceBatch([
+        { priceListCode: 'KAWA', ticker: 'H2O', locationId: 'BEN', currency: 'CIS' },
+        { priceListCode: 'KAWA', ticker: 'RAT', locationId: 'BEN', currency: 'CIS' },
+      ])
+
+      expect(db.select).toHaveBeenCalledTimes(3)
+      expect(result.size).toBe(2)
+      expect(result.get('KAWA:H2O:BEN')?.finalPrice).toBe(100)
+      expect(result.get('KAWA:RAT:BEN')?.finalPrice).toBe(50)
+    })
+
+    it('should handle fallback to default location', async () => {
+      const priceListMock = createTerminalWhereMock([
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: 'BEN' },
+      ])
+      const basePriceMock = createTerminalWhereMock([
+        {
+          priceListCode: 'KAWA',
+          commodityTicker: 'H2O',
+          commodityName: 'Water',
+          locationId: 'BEN',
+          locationName: 'Benten',
+          price: '100.00',
+          currency: 'CIS',
+          source: 'manual',
+          sourceReference: null,
+        },
+      ])
+      const adjustmentMock = createTerminalOrderByMock([])
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(priceListMock as any)
+        .mockReturnValueOnce(basePriceMock as any)
+        .mockReturnValueOnce(adjustmentMock as any)
+
+      const result = await calculateEffectivePriceBatch([
+        { priceListCode: 'KAWA', ticker: 'H2O', locationId: 'OTHER', currency: 'CIS' },
+      ])
+
+      const price = result.get('KAWA:H2O:OTHER')
+      expect(price).not.toBeNull()
+      expect(price!.finalPrice).toBe(100)
+      expect(price!.isFallback).toBe(true)
+      expect(price!.requestedLocationId).toBe('OTHER')
+      expect(price!.locationId).toBe('BEN')
+    })
+
+    it('should return null for unknown price list', async () => {
+      const priceListMock = createTerminalWhereMock([])
+      const basePriceMock = createTerminalWhereMock([])
+      const adjustmentMock = createTerminalOrderByMock([])
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(priceListMock as any)
+        .mockReturnValueOnce(basePriceMock as any)
+        .mockReturnValueOnce(adjustmentMock as any)
+
+      const result = await calculateEffectivePriceBatch([
+        { priceListCode: 'UNKNOWN', ticker: 'H2O', locationId: 'BEN', currency: 'CIS' },
+      ])
+
+      expect(result.get('UNKNOWN:H2O:BEN')).toBeNull()
+    })
+
+    it('should apply adjustments correctly in batch', async () => {
+      const priceListMock = createTerminalWhereMock([
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+      ])
+      const basePriceMock = createTerminalWhereMock([
+        {
+          priceListCode: 'KAWA',
+          commodityTicker: 'H2O',
+          commodityName: 'Water',
+          locationId: 'BEN',
+          locationName: 'Benten',
+          price: '100.00',
+          currency: 'CIS',
+          source: 'manual',
+          sourceReference: null,
+        },
+      ])
+      const adjustmentMock = createTerminalOrderByMock([
+        {
+          id: 1,
+          priceListCode: 'KAWA',
+          commodityTicker: null,
+          locationId: null,
+          adjustmentType: 'percentage',
+          adjustmentValue: '10.0000',
+          priority: 0,
+          description: '10% markup',
+        },
+      ])
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(priceListMock as any)
+        .mockReturnValueOnce(basePriceMock as any)
+        .mockReturnValueOnce(adjustmentMock as any)
+
+      const result = await calculateEffectivePriceBatch([
+        { priceListCode: 'KAWA', ticker: 'H2O', locationId: 'BEN', currency: 'CIS' },
+      ])
+
+      const price = result.get('KAWA:H2O:BEN')
+      expect(price!.basePrice).toBe(100)
+      expect(price!.finalPrice).toBe(110)
+      expect(price!.adjustments).toHaveLength(1)
+    })
+
+    it('should deduplicate requests with same key', async () => {
+      const priceListMock = createTerminalWhereMock([
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+      ])
+      const basePriceMock = createTerminalWhereMock([
+        {
+          priceListCode: 'KAWA',
+          commodityTicker: 'H2O',
+          commodityName: 'Water',
+          locationId: 'BEN',
+          locationName: 'Benten',
+          price: '100.00',
+          currency: 'CIS',
+          source: 'manual',
+          sourceReference: null,
+        },
+      ])
+      const adjustmentMock = createTerminalOrderByMock([])
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(priceListMock as any)
+        .mockReturnValueOnce(basePriceMock as any)
+        .mockReturnValueOnce(adjustmentMock as any)
+
+      const result = await calculateEffectivePriceBatch([
+        { priceListCode: 'KAWA', ticker: 'H2O', locationId: 'BEN', currency: 'CIS' },
+        { priceListCode: 'KAWA', ticker: 'H2O', locationId: 'BEN', currency: 'CIS' },
+      ])
+
+      expect(result.size).toBe(1)
+      expect(result.get('KAWA:H2O:BEN')?.finalPrice).toBe(100)
     })
   })
 })

@@ -110,7 +110,16 @@
             <template #append>
               <div class="d-flex align-center ga-2">
                 <v-btn
-                  v-if="hasOrderLink(group.latest)"
+                  v-if="hasInvoiceLink(group.latest)"
+                  variant="text"
+                  color="primary"
+                  size="small"
+                  @click.stop="viewInvoice(group.latest)"
+                >
+                  View Invoice
+                </v-btn>
+                <v-btn
+                  v-else-if="hasOrderLink(group.latest)"
                   variant="text"
                   color="primary"
                   size="small"
@@ -219,12 +228,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUrlState } from '../composables'
 import { api } from '../services/api'
 import type { Notification, NotificationType } from '../services/api'
 import { formatRelativeDate } from '../utils/dateFormat'
 import { syncService, SYNC_EVENTS } from '../services/syncService'
 import OrderDetailDialog from '../components/OrderDetailDialog.vue'
+
+const router = useRouter()
 
 interface NotificationGroup {
   contextKey: string
@@ -276,7 +288,17 @@ function getContextKey(notification: Notification): string {
   const data = notification.data as Record<string, unknown> | null
   if (!data) return `generic-${notification.id}`
 
-  // Group by reservation
+  // Group invoice notifications by invoiceId
+  if (notification.type.startsWith('invoice_') && data.invoiceId) {
+    return `invoice-${data.invoiceId}`
+  }
+
+  // Group reservation notifications by invoiceId if present (for invoice-related reservations)
+  if (notification.type.startsWith('reservation_') && data.invoiceId) {
+    return `invoice-${data.invoiceId}`
+  }
+
+  // Group by reservation (for standalone reservations without invoice)
   if (notification.type.startsWith('reservation_') && data.reservationId) {
     return `reservation-${data.reservationId}`
   }
@@ -490,6 +512,10 @@ function getNotificationIcon(type: NotificationType): string {
       return 'mdi-cancel'
     case 'reservation_expired':
       return 'mdi-clock-alert'
+    case 'invoice_submitted':
+      return 'mdi-file-document-check'
+    case 'invoice_cancelled':
+      return 'mdi-file-document-remove'
     case 'user_needs_approval':
       return 'mdi-account-clock'
     case 'user_auto_approved':
@@ -505,6 +531,7 @@ function getNotificationIcon(type: NotificationType): string {
 function getNotificationColor(type: NotificationType): string {
   switch (type) {
     case 'reservation_placed':
+    case 'invoice_submitted':
       return 'info'
     case 'reservation_confirmed':
     case 'reservation_fulfilled':
@@ -514,6 +541,7 @@ function getNotificationColor(type: NotificationType): string {
     case 'reservation_rejected':
     case 'reservation_cancelled':
     case 'reservation_expired':
+    case 'invoice_cancelled':
     case 'user_rejected':
       return 'error'
     case 'user_needs_approval':
@@ -532,6 +560,20 @@ function hasOrderLink(notification: Notification): boolean {
   }
 
   return false
+}
+
+function hasInvoiceLink(notification: Notification): boolean {
+  const data = notification.data as Record<string, unknown> | null
+  if (!data) return false
+
+  return !!data.invoiceId
+}
+
+function viewInvoice(notification: Notification) {
+  const data = notification.data as Record<string, unknown> | null
+  if (data?.invoiceId) {
+    router.push({ name: 'my-orders', query: { invoice: String(data.invoiceId) } })
+  }
 }
 
 onMounted(() => {

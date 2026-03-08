@@ -655,11 +655,17 @@ export async function formatGroupedOrdersMulti(
     line += p.visIcon
     if (p.fioAge) line += ` - *${p.fioAge}*`
 
-    // Add XIT quantity indicator for sell orders
+    // Add availability indicator for sell orders when quantities are specified
     if (xitQuantities && p.type === 'sell') {
       const required = xitQuantities[p.commodityTicker]
-      if (required !== undefined) {
-        line += p.qtyNum >= required ? ' ✅' : ' ⚠️'
+      if (required !== undefined && required > 0) {
+        if (p.qtyNum >= required) {
+          line += ' ✅' // Has enough
+        } else if (p.qtyNum > 0) {
+          line += ' ⚠️' // Has some but not enough
+        } else {
+          line += ' ❌' // None available
+        }
       }
     }
 

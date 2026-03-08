@@ -33,6 +33,20 @@ vi.mock('drizzle-orm', () => ({
 // Import after mocks
 import { unlink } from './unlink.js'
 
+function setupDiscordOnlyMock() {
+  mockFindFirst.mockResolvedValueOnce({
+    userId: 1,
+    discordId: '123456789',
+    user: {
+      id: 1,
+      username: 'testuser',
+      displayName: 'Test User',
+      isActive: true,
+      passwordHash: 'discord:123456789:1234567890',
+    },
+  })
+}
+
 describe('unlink command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -51,34 +65,99 @@ describe('unlink command', () => {
 
     expect(replyFn).toHaveBeenCalledWith({
       content: "You don't have a linked Kawakawa account.",
-      flags: 64, // Ephemeral
+      flags: 64,
     })
   })
 
-  it('shows warning for Discord-only accounts', async () => {
-    mockFindFirst.mockResolvedValueOnce({
-      userId: 1,
-      discordId: '123456789',
-      user: {
-        id: 1,
-        username: 'testuser',
-        displayName: 'Test User',
-        isActive: true,
-        passwordHash: 'discord:123456789:1234567890', // Discord-only account
-      },
+  it('shows confirmation buttons for Discord-only accounts and cancels', async () => {
+    setupDiscordOnlyMock()
+
+    const updateFn = vi.fn()
+    const awaitComponent = vi.fn().mockResolvedValue({
+      customId: 'unlink-confirm:123:no',
+      user: { id: '123456789' },
+      update: updateFn,
     })
 
     const { interaction, replyFn } = createMockInteraction()
+    // fetchReply returns the message with awaitMessageComponent
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
     await unlink.execute(interaction as never)
 
+    // Should reply with embed AND button components
     expect(replyFn).toHaveBeenCalledWith({
       embeds: expect.any(Array),
-      ephemeral: true,
+      components: expect.any(Array),
+      flags: 64,
     })
 
-    // Should not delete the profile
+    // Should not delete the profile when cancelled
     expect(mockDelete).not.toHaveBeenCalled()
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'Unlink cancelled.',
+      })
+    )
+  })
+
+  it('unlinks Discord-only account when confirmed via button', async () => {
+    setupDiscordOnlyMock()
+
+    const updateFn = vi.fn()
+    const awaitComponent = vi.fn().mockResolvedValue({
+      customId: 'unlink-confirm:123:yes',
+      user: { id: '123456789' },
+      update: updateFn,
+    })
+
+    const mockWhere = vi.fn().mockResolvedValue(undefined)
+    mockDelete.mockReturnValue({ where: mockWhere })
+
+    const { interaction } = createMockInteraction()
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
+
+    await unlink.execute(interaction as never)
+
+    expect(mockDelete).toHaveBeenCalled()
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('Successfully unlinked'),
+        embeds: [],
+        components: [],
+      })
+    )
+  })
+
+  it('shows error when DB fails during confirmed unlink', async () => {
+    setupDiscordOnlyMock()
+
+    const updateFn = vi.fn()
+    const awaitComponent = vi.fn().mockResolvedValue({
+      customId: 'unlink-confirm:123:yes',
+      user: { id: '123456789' },
+      update: updateFn,
+    })
+
+    const mockWhere = vi.fn().mockRejectedValue(new Error('DB error'))
+    mockDelete.mockReturnValue({ where: mockWhere })
+
+    const { interaction } = createMockInteraction()
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
+
+    await unlink.execute(interaction as never)
+
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('error occurred'),
+      })
+    )
   })
 
   it('successfully unlinks for account with password', async () => {
@@ -90,7 +169,7 @@ describe('unlink command', () => {
         username: 'testuser',
         displayName: 'Test User',
         isActive: true,
-        passwordHash: '$2b$10$hashedpassword', // Real password hash
+        passwordHash: '$2b$10$hashedpassword',
       },
     })
 
@@ -104,11 +183,11 @@ describe('unlink command', () => {
     expect(mockDelete).toHaveBeenCalled()
     expect(replyFn).toHaveBeenCalledWith({
       content: expect.stringContaining('Successfully unlinked'),
-      flags: 64, // Ephemeral
+      flags: 64,
     })
   })
 
-  it('handles database errors gracefully', async () => {
+  it('handles DB error for password account unlink', async () => {
     mockFindFirst.mockResolvedValueOnce({
       userId: 1,
       discordId: '123456789',
@@ -121,11 +200,8 @@ describe('unlink command', () => {
       },
     })
 
-    const mockWhere = vi.fn().mockRejectedValue(new Error('Database error'))
+    const mockWhere = vi.fn().mockRejectedValue(new Error('DB error'))
     mockDelete.mockReturnValue({ where: mockWhere })
-
-    // Spy on console.error
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const { interaction, replyFn } = createMockInteraction()
 
@@ -133,9 +209,27 @@ describe('unlink command', () => {
 
     expect(replyFn).toHaveBeenCalledWith({
       content: expect.stringContaining('error occurred'),
-      flags: 64, // Ephemeral
+      flags: 64,
     })
+  })
 
-    consoleSpy.mockRestore()
+  it('handles confirmation timeout gracefully', async () => {
+    setupDiscordOnlyMock()
+
+    const awaitComponent = vi.fn().mockRejectedValue(new Error('Collector timed out'))
+
+    const { interaction, editReplyFn } = createMockInteraction()
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
+      .fn()
+      .mockResolvedValue({ awaitMessageComponent: awaitComponent })
+
+    await unlink.execute(interaction as never)
+
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(editReplyFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('timed out'),
+      })
+    )
   })
 })

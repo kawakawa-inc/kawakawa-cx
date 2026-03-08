@@ -32,7 +32,8 @@ export class MessageInteractionAdapter {
     private message: Message,
     private _commandName: string,
     private parsedOptions: Map<string, string | number | boolean | null>,
-    private _prefix: string = '!'
+    private _prefix: string = '!',
+    private _subcommand: string | null = null
   ) {}
 
   /** The command prefix that was used to invoke this command */
@@ -94,6 +95,13 @@ export class MessageInteractionAdapter {
    * Options accessor that mimics ChatInputCommandInteraction.options
    */
   options = {
+    getSubcommand: (_required?: boolean): string => {
+      if (!this._subcommand) {
+        throw new Error('No subcommand was provided')
+      }
+      return this._subcommand
+    },
+
     getString: (name: string, required?: boolean): string | null => {
       const value = this.parsedOptions.get(name)
       // Map.get() returns undefined if key doesn't exist, so check both

@@ -68,21 +68,25 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { parseXitJson } from '@kawakawa/types/xit'
+import { parseShoppingList, isShoppingList } from '@kawakawa/types/shopping-list'
 import { commodityService } from '../services/commodityService'
 import { locationService } from '../services/locationService'
+import { useShoppingListStore } from '../stores/shoppingList'
 
 export interface SearchChip {
-  type: 'commodity' | 'location' | 'user' | 'itemType' | 'xit'
+  type: 'commodity' | 'location' | 'user' | 'itemType' | 'shoppingList'
   value: string // Actual value (ticker, location ID, username, 'sell'/'buy')
   display: string // Display text
   color: string // Chip color
-  xitData?: {
+  shoppingListData?: {
     materials: Record<string, number>
     name?: string
     origin?: string // Location ID from XIT origin
   }
 }
+
+// Initialize shopping list store
+const shoppingListStore = useShoppingListStore()
 
 interface Suggestion {
   type: 'commodity' | 'location' | 'user' | 'itemType'
@@ -505,44 +509,57 @@ const extractJsonToken = (input: string): { json: string; remainder: string } | 
   return null // Incomplete JSON
 }
 
-// Try to parse XIT JSON and create chips (XIT + optional location from origin)
-const tryParseXitJson = (json: string): SearchChip[] => {
-  const result = parseXitJson(json)
+// Try to parse a shopping list (XIT JSON, CSV, or simple format) and create chips
+const tryParseShoppingList = (input: string): SearchChip[] => {
+  const result = parseShoppingList(input)
   if (!result.success) return []
 
   const newChips: SearchChip[] = []
 
-  // Parse the raw JSON to extract origin from actions
+  // For XIT format, try to extract origin from actions
   let originLocationId: string | undefined
-  try {
-    const parsed = JSON.parse(json)
-    if (parsed.actions && Array.isArray(parsed.actions)) {
-      for (const action of parsed.actions) {
-        if (action.origin && typeof action.origin === 'string') {
-          const locationId = parseXitOrigin(action.origin)
-          if (locationId) {
-            originLocationId = locationId
-            break
+  if (result.format === 'xit') {
+    try {
+      const parsed = JSON.parse(input)
+      if (parsed.actions && Array.isArray(parsed.actions)) {
+        for (const action of parsed.actions) {
+          if (action.origin && typeof action.origin === 'string') {
+            const locationId = parseXitOrigin(action.origin)
+            if (locationId) {
+              originLocationId = locationId
+              break
+            }
           }
         }
       }
+    } catch {
+      // Ignore JSON parse errors for origin extraction
     }
-  } catch {
-    // Ignore JSON parse errors for origin extraction
   }
 
-  // Create XIT chip
+  // Create shopping list chip with display based on format
+  let displayText: string
+  if (result.name) {
+    displayText = `List: ${result.name}`
+  } else {
+    const itemCount = Object.keys(result.materials).length
+    displayText = `List (${itemCount} items)`
+  }
+
   newChips.push({
-    type: 'xit',
-    value: 'xit',
-    display: result.name ? `XIT: ${result.name}` : 'XIT',
+    type: 'shoppingList',
+    value: 'shoppingList',
+    display: displayText,
     color: 'purple',
-    xitData: {
+    shoppingListData: {
       materials: result.materials,
       name: result.name,
       origin: originLocationId,
     },
   })
+
+  // Store materials in the shopping list store
+  shoppingListStore.setMaterials(result.materials, result.name)
 
   // Create location chip from origin if found
   if (originLocationId) {
@@ -557,24 +574,39 @@ const tryParseXitJson = (json: string): SearchChip[] => {
   return newChips
 }
 
-// Handle input changes - check for JSON
+// Handle input changes - check for shopping list (JSON or CSV/simple formats)
 const handleInput = () => {
   selectedIndex.value = 0
 
-  // Check for XIT JSON
+  // First check for XIT JSON (needs complete JSON object)
   const extracted = extractJsonToken(inputText.value)
   if (extracted) {
-    const xitChips = tryParseXitJson(extracted.json)
-    if (xitChips.length > 0) {
-      // Remove any existing XIT and location chips that will be replaced
+    const listChips = tryParseShoppingList(extracted.json)
+    if (listChips.length > 0) {
+      // Remove any existing shopping list and location chips that will be replaced
       chips.value = chips.value.filter(c => {
-        if (c.type === 'xit') return false
-        // Remove location chip if XIT has origin
-        if (c.type === 'location' && xitChips.some(xc => xc.type === 'location')) return false
+        if (c.type === 'shoppingList') return false
+        // Remove location chip if list has origin
+        if (c.type === 'location' && listChips.some(lc => lc.type === 'location')) return false
         return true
       })
-      chips.value.push(...xitChips)
+      chips.value.push(...listChips)
       inputText.value = extracted.remainder.trim()
+      emitChanges()
+      return
+    }
+  }
+
+  // Check for CSV/simple format (not JSON)
+  // Only try this when input doesn't start with '{' and has a potential shopping list pattern
+  const trimmedInput = inputText.value.trim()
+  if (!trimmedInput.startsWith('{') && isShoppingList(trimmedInput)) {
+    const listChips = tryParseShoppingList(trimmedInput)
+    if (listChips.length > 0) {
+      // Remove any existing shopping list chips
+      chips.value = chips.value.filter(c => c.type !== 'shoppingList')
+      chips.value.push(...listChips)
+      inputText.value = ''
       emitChanges()
       return
     }

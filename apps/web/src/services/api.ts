@@ -28,6 +28,18 @@ import type {
   UpdateGlobalDefaultsRequest,
   ChannelConfigMap,
   UpdateChannelConfigRequest,
+  InvoiceStatus,
+  InvoiceSummary,
+  Invoice,
+  InvoiceLineItem,
+  CreateInvoiceRequest,
+  AddLineItemRequest,
+  UpdateLineItemRequest,
+  SubmitInvoiceResponse,
+  SavedShoppingList,
+  ShoppingListSummary,
+  CreateShoppingListRequest,
+  UpdateShoppingListRequest,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -141,6 +153,17 @@ interface ValidateTokenResponse {
   valid: boolean
   username?: string
   expiresAt?: string
+}
+
+interface ValidateDiscordLinkTokenResponse {
+  valid: boolean
+  discordUsername?: string
+  expiresAt?: string
+  error?: string
+}
+
+interface CompleteDiscordLinkRequest {
+  token: string
 }
 
 interface UsernameAvailabilityResponse {
@@ -614,6 +637,7 @@ interface UpdateBuyOrderRequest {
 // Market listing types
 interface MarketListing {
   id: number
+  userId: number
   sellerName: string
   commodityTicker: string
   locationId: string
@@ -636,6 +660,7 @@ interface MarketListing {
 
 interface MarketBuyRequest {
   id: number
+  userId: number
   buyerName: string
   commodityTicker: string
   locationId: string
@@ -664,6 +689,8 @@ type NotificationType =
   | 'reservation_fulfilled'
   | 'reservation_cancelled'
   | 'reservation_expired'
+  | 'invoice_submitted'
+  | 'invoice_cancelled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
@@ -1203,6 +1230,40 @@ const realApi = {
 
     if (!response.ok) {
       return { available: false, message: 'Failed to check username availability' }
+    }
+
+    return response.json()
+  },
+
+  validateDiscordLinkToken: async (token: string): Promise<ValidateDiscordLinkTokenResponse> => {
+    const response = await fetchWithLogging(
+      `/api/auth/validate-discord-link-token?token=${encodeURIComponent(token)}`,
+      {
+        method: 'GET',
+      }
+    )
+
+    if (!response.ok) {
+      return { valid: false, error: 'Failed to validate link token' }
+    }
+
+    return response.json()
+  },
+
+  completeDiscordLink: async (
+    request: CompleteDiscordLinkRequest
+  ): Promise<{ message: string }> => {
+    const response = await fetchWithLogging('/api/auth/complete-discord-link', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to link Discord account')
     }
 
     return response.json()
@@ -3726,6 +3787,395 @@ const realApi = {
 
     return response.json()
   },
+
+  // Invoice methods
+  getInvoices: async (
+    status?: 'draft' | 'submitted' | 'completed' | 'cancelled'
+  ): Promise<InvoiceSummary[]> => {
+    const params = new URLSearchParams()
+    if (status) params.append('status', status)
+    const url = `/api/invoices${params.toString() ? `?${params}` : ''}`
+
+    const response = await fetchWithLogging(url, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      throw new Error(`Failed to get invoices: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getInvoice: async (id: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      throw new Error(`Failed to get invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getOrCreateInvoiceForPartner: async (counterpartyUserId: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/for-partner/${counterpartyUserId}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 404) {
+        throw new Error('User not found')
+      }
+      throw new Error(`Failed to get or create invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createInvoice: async (request: CreateInvoiceRequest): Promise<Invoice> => {
+    const response = await fetchWithLogging('/api/invoices', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 404) {
+        throw new Error('Counterparty user not found')
+      }
+      throw new Error(`Failed to create invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateInvoice: async (
+    id: number,
+    request: { name?: string; notes?: string }
+  ): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be updated')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to update invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteInvoice: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be deleted')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to delete invoice: ${response.statusText}`)
+    }
+  },
+
+  addInvoiceLineItem: async (
+    invoiceId: number,
+    request: AddLineItemRequest
+  ): Promise<InvoiceLineItem> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or order not found')
+      }
+      throw new Error(`Failed to add line item: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateInvoiceLineItem: async (
+    invoiceId: number,
+    itemId: number,
+    request: UpdateLineItemRequest
+  ): Promise<InvoiceLineItem> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or line item not found')
+      }
+      throw new Error(`Failed to update line item: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  removeInvoiceLineItem: async (invoiceId: number, itemId: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Can only remove items from draft invoices')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice or line item not found')
+      }
+      throw new Error(`Failed to remove line item: ${response.statusText}`)
+    }
+  },
+
+  submitInvoice: async (id: number): Promise<SubmitInvoiceResponse> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}/submit`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only draft invoices can be submitted')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to submit invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  cancelInvoice: async (id: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only submitted invoices can be cancelled')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to cancel invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  // Shopping Lists API
+  getShoppingLists: async (): Promise<ShoppingListSummary[]> => {
+    const response = await fetchWithLogging('/api/lists', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      throw new Error(`Failed to get shopping lists: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getShoppingList: async (id: number): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      throw new Error(`Failed to get shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createShoppingList: async (request: CreateShoppingListRequest): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging('/api/lists', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      throw new Error(`Failed to create shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateShoppingList: async (
+    id: number,
+    request: UpdateShoppingListRequest
+  ): Promise<SavedShoppingList> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      throw new Error(`Failed to update shopping list: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteShoppingList: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/lists/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('You do not have access to this shopping list')
+      }
+      if (response.status === 404) {
+        throw new Error('Shopping list not found')
+      }
+      throw new Error(`Failed to delete shopping list: ${response.statusText}`)
+    }
+  },
 }
 
 // Types for KAWA sheet preview and sync
@@ -3755,6 +4205,9 @@ export const api = {
     resetPassword: (request: ResetPasswordRequest) => realApi.resetPassword(request),
     validateResetToken: (token: string) => realApi.validateResetToken(token),
     checkUsernameAvailability: (username: string) => realApi.checkUsernameAvailability(username),
+    validateDiscordLinkToken: (token: string) => realApi.validateDiscordLinkToken(token),
+    completeDiscordLink: (request: CompleteDiscordLinkRequest) =>
+      realApi.completeDiscordLink(request),
   },
   account: {
     getProfile: () => realApi.getProfile(),
@@ -3875,6 +4328,34 @@ export const api = {
       realApi.reopenReservation(id, request),
     delete: (id: number) => realApi.deleteReservation(id),
   },
+  invoices: {
+    // Status filter uses stored DB status, not calculated display status
+    list: (status?: 'draft' | 'submitted' | 'completed' | 'cancelled') =>
+      realApi.getInvoices(status),
+    get: (id: number) => realApi.getInvoice(id),
+    getOrCreateForPartner: (counterpartyUserId: number) =>
+      realApi.getOrCreateInvoiceForPartner(counterpartyUserId),
+    create: (request: CreateInvoiceRequest) => realApi.createInvoice(request),
+    update: (id: number, request: { name?: string; notes?: string }) =>
+      realApi.updateInvoice(id, request),
+    delete: (id: number) => realApi.deleteInvoice(id),
+    addLineItem: (invoiceId: number, request: AddLineItemRequest) =>
+      realApi.addInvoiceLineItem(invoiceId, request),
+    updateLineItem: (invoiceId: number, itemId: number, request: UpdateLineItemRequest) =>
+      realApi.updateInvoiceLineItem(invoiceId, itemId, request),
+    removeLineItem: (invoiceId: number, itemId: number) =>
+      realApi.removeInvoiceLineItem(invoiceId, itemId),
+    submit: (id: number) => realApi.submitInvoice(id),
+    cancel: (id: number) => realApi.cancelInvoice(id),
+  },
+  lists: {
+    list: () => realApi.getShoppingLists(),
+    get: (id: number) => realApi.getShoppingList(id),
+    create: (request: CreateShoppingListRequest) => realApi.createShoppingList(request),
+    update: (id: number, request: UpdateShoppingListRequest) =>
+      realApi.updateShoppingList(id, request),
+    delete: (id: number) => realApi.deleteShoppingList(id),
+  },
   locations: {
     getDistance: (from: string, to: string) => realApi.getLocationDistance(from, to),
   },
@@ -3971,6 +4452,15 @@ export type {
   CreateSellOrderReservationRequest,
   CreateBuyOrderReservationRequest,
   UpdateReservationStatusRequest,
+  // Invoice types
+  InvoiceStatus,
+  InvoiceSummary,
+  Invoice,
+  InvoiceLineItem,
+  CreateInvoiceRequest,
+  AddLineItemRequest,
+  UpdateLineItemRequest,
+  SubmitInvoiceResponse,
   // Price types
   PriceSource,
   PriceListResponse,

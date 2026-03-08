@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - dev
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 env:
@@ -70,6 +72,7 @@ jobs:
 
   deploy:
     needs: build
+    if: startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
 
@@ -145,3 +148,50 @@ jobs:
       - name: Deploy to DigitalOcean App Platform
         run: |
           doctl apps update ${{ steps.app.outputs.id }} --spec ${{ steps.app.outputs.spec_file }} --wait
+
+  release:
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          TAG="v$(date +'%Y.%m.%d')-${GITHUB_SHA::7}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Get PR release notes
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find the merged PR for this commit
+          PR_NUMBER=$(gh pr list --state merged --search "${{ github.sha }}" --json number --jq '.[0].number')
+
+          if [ -n "$PR_NUMBER" ]; then
+            PR_TITLE=$(gh pr view "$PR_NUMBER" --json title --jq '.title')
+            PR_BODY=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+            echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
+
+            # Write body to file for multi-line support
+            echo "$PR_BODY" > /tmp/release_notes.md
+          else
+            echo "title=Release ${{ steps.tag.outputs.tag }}" >> $GITHUB_OUTPUT
+            echo "No PR found for this commit. See [commit history](https://github.com/${{ github.repository }}/commits/main) for details." > /tmp/release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.pr.outputs.title }}
+          body_path: /tmp/release_notes.md
+          make_latest: true

@@ -17,13 +17,22 @@ import { eq } from 'drizzle-orm'
 import crypto from 'crypto'
 import { getWebUrl } from '../../config.js'
 import logger from '../../utils/logger.js'
+import { getCommandPrefix } from '../../adapters/messageInteraction.js'
 
 export const password: Command = {
   data: new SlashCommandBuilder()
     .setName('password')
     .setDescription('Get a link to set or change your password on the website'),
 
+  helpInfo: {
+    category: 'getting_started',
+    details:
+      'Generates a password reset link (24h expiry). For Discord-only accounts, this lets you set a password for website login.',
+    examples: ['password'],
+  },
+
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    const prefix = getCommandPrefix(interaction)
     const discordId = interaction.user.id
 
     // Find user by Discord ID
@@ -38,7 +47,7 @@ export const password: Command = {
       await interaction.reply({
         content:
           'You do not have a linked Kawakawa account.\n\n' +
-          'Use `/register` to create a new account, or `/link` to connect an existing one.',
+          `Use \`${prefix}register\` to create a new account, or \`${prefix}link\` to connect an existing one.`,
         flags: MessageFlags.Ephemeral,
       })
       return

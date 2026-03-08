@@ -10,7 +10,7 @@ import {
   SuccessResponse,
 } from 'tsoa'
 import { db, fioInventory, fioUserStorage, fioCommodities, fioLocations } from '../db/index.js'
-import { eq, count, min, max } from 'drizzle-orm'
+import { eq, count, min, max, desc } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest } from '../utils/errors.js'
 import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
@@ -168,7 +168,7 @@ export class FioInventoryController extends Controller {
       })
       .from(fioUserStorage)
       .where(eq(fioUserStorage.userId, userId))
-      .orderBy(fioUserStorage.lastSyncedAt)
+      .orderBy(desc(fioUserStorage.lastSyncedAt))
       .limit(1)
 
     return {

@@ -3,6 +3,7 @@
 // Handles sensitive settings (like fio.apiKey) that are write-only
 // Resolution order: code defaults -> admin defaults -> user overrides
 
+import { createLogger } from '../utils/logger.js'
 import { db, userSettings } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import {
@@ -13,6 +14,8 @@ import {
 } from '@kawakawa/types/settings'
 import type { SettingDefinition } from '@kawakawa/types'
 import { settingsService } from './settingsService.js'
+
+const log = createLogger({ service: 'userSettings' })
 
 // ==================== CACHING ====================
 
@@ -130,7 +133,7 @@ export async function getAllSettings(
         settings.set(row.key, JSON.parse(row.value))
       } catch {
         // Invalid JSON, skip and use default
-        console.warn(`Invalid JSON for setting ${row.key}, using default`)
+        log.warn({ settingKey: row.key }, 'Invalid JSON for setting, using default')
       }
     }
   }

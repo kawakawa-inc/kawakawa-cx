@@ -662,6 +662,7 @@ const reserveMarketItem = computed((): MarketItem | null => {
   return {
     id: o.id,
     itemType: props.orderType,
+    userId: 0, // Placeholder - not available in single order detail view
     commodityTicker: o.commodityTicker,
     locationId: o.locationId,
     userName: ownerName.value ?? '',

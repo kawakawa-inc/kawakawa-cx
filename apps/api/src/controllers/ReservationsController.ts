@@ -21,13 +21,23 @@ import type {
   ReservationStatus,
   NotificationType,
 } from '@kawakawa/types'
-import { db, orderReservations, buyOrders, sellOrders, users } from '../db/index.js'
+import {
+  db,
+  orderReservations,
+  buyOrders,
+  sellOrders,
+  users,
+  invoiceLineItems,
+} from '../db/index.js'
 import { eq, or } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '../services/notificationService.js'
 import { hasPermission } from '../utils/permissionService.js'
-import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
+import {
+  calculateEffectivePriceWithFallback,
+  calculateEffectivePriceBatch,
+} from '../services/price-calculator.js'
 
 interface ReservationResponse {
   id: number
@@ -150,52 +160,56 @@ export class ReservationsController extends Controller {
     // Sort by createdAt descending
     results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
-    // Calculate effective prices for dynamic pricing orders
-    const resultsWithPricing = await Promise.all(
-      results.map(async r => {
-        const orderPrice = parseFloat(r.price)
-        const pricingMode: 'fixed' | 'dynamic' =
-          r.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
-
-        let effectivePrice: number | null = null
-        if (pricingMode === 'dynamic' && r.priceListCode) {
-          const effPrice = await calculateEffectivePriceWithFallback(
-            r.priceListCode,
-            r.commodityTicker,
-            r.locationId,
-            r.currency
+    // Batch fetch effective prices for dynamic pricing orders
+    const dynamicResults = results.filter(r => r.priceListCode && parseFloat(r.price) === 0)
+    const priceMap =
+      dynamicResults.length > 0
+        ? await calculateEffectivePriceBatch(
+            dynamicResults.map(r => ({
+              priceListCode: r.priceListCode!,
+              ticker: r.commodityTicker,
+              locationId: r.locationId,
+              currency: r.currency,
+            }))
           )
-          effectivePrice = effPrice?.finalPrice ?? null
-        }
+        : new Map()
 
-        return {
-          id: r.id,
-          sellOrderId: r.sellOrderId,
-          buyOrderId: r.buyOrderId,
-          counterpartyUserId: r.counterpartyUserId,
-          quantity: r.quantity,
-          status: r.status,
-          notes: r.notes,
-          expiresAt: r.expiresAt?.toISOString() ?? null,
-          createdAt: r.createdAt.toISOString(),
-          updatedAt: r.updatedAt.toISOString(),
-          orderOwnerName: userMap.get(r.orderOwnerUserId) ?? 'Unknown',
-          orderOwnerUserId: r.orderOwnerUserId,
-          counterpartyName: userMap.get(r.counterpartyUserId) ?? 'Unknown',
-          commodityTicker: r.commodityTicker,
-          locationId: r.locationId,
-          price: orderPrice,
-          currency: r.currency,
-          pricingMode,
-          effectivePrice,
-          priceListCode: r.priceListCode,
-          isOrderOwner: r.orderOwnerUserId === userId,
-          isCounterparty: r.counterpartyUserId === userId,
-        }
-      })
-    )
+    return results.map(r => {
+      const orderPrice = parseFloat(r.price)
+      const pricingMode: 'fixed' | 'dynamic' =
+        r.priceListCode && orderPrice === 0 ? 'dynamic' : 'fixed'
 
-    return resultsWithPricing
+      let effectivePrice: number | null = null
+      if (pricingMode === 'dynamic' && r.priceListCode) {
+        const key = `${r.priceListCode.toUpperCase()}:${r.commodityTicker.toUpperCase()}:${r.locationId}`
+        effectivePrice = priceMap.get(key)?.finalPrice ?? null
+      }
+
+      return {
+        id: r.id,
+        sellOrderId: r.sellOrderId,
+        buyOrderId: r.buyOrderId,
+        counterpartyUserId: r.counterpartyUserId,
+        quantity: r.quantity,
+        status: r.status,
+        notes: r.notes,
+        expiresAt: r.expiresAt?.toISOString() ?? null,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+        orderOwnerName: userMap.get(r.orderOwnerUserId) ?? 'Unknown',
+        orderOwnerUserId: r.orderOwnerUserId,
+        counterpartyName: userMap.get(r.counterpartyUserId) ?? 'Unknown',
+        commodityTicker: r.commodityTicker,
+        locationId: r.locationId,
+        price: orderPrice,
+        currency: r.currency,
+        pricingMode,
+        effectivePrice,
+        priceListCode: r.priceListCode,
+        isOrderOwner: r.orderOwnerUserId === userId,
+        isCounterparty: r.counterpartyUserId === userId,
+      }
+    })
   }
 
   /**
@@ -740,6 +754,14 @@ export class ReservationsController extends Controller {
       },
     }
 
+    // Find the invoiceId if this reservation is linked to an invoice
+    const [lineItem] = await db
+      .select({ invoiceId: invoiceLineItems.invoiceId })
+      .from(invoiceLineItems)
+      .where(eq(invoiceLineItems.reservationId, id))
+      .limit(1)
+    const invoiceId = lineItem?.invoiceId ?? null
+
     const notifConfig = notificationTypes[newStatus]
     await notificationService.create(
       otherPartyId,
@@ -753,6 +775,7 @@ export class ReservationsController extends Controller {
         quantity: reservation.quantity,
         commodityTicker,
         locationId,
+        ...(invoiceId && { invoiceId }),
       }
     )
 

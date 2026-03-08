@@ -306,8 +306,9 @@ export async function sendPaginatedResponse(
           .setDisabled(true)
       )
       await interaction.editReply({ components: [disabledRow] })
-    } catch {
+    } catch (error) {
       // Interaction may have been deleted
+      console.error('Failed to update expired pagination interaction:', error)
     }
   })
 }
@@ -367,5 +368,244 @@ export async function sendSimpleResponse(
     await buttonInteraction.reply({
       embeds: [sharedEmbed],
     })
+  })
+}
+
+/**
+ * Extra button configuration for paginated responses.
+ */
+export interface ExtraButton {
+  /** Custom ID for the button (will be prefixed with idPrefix) */
+  id: string
+  /** Button label text */
+  label: string
+  /** Button style (default: Primary) */
+  style?: ButtonStyle
+  /** Optional emoji */
+  emoji?: string
+  /** Handler for button click */
+  onClick: (interaction: ButtonInteraction) => Promise<void>
+}
+
+/**
+ * Extended pagination options with extra buttons.
+ */
+export interface PaginationOptionsWithExtraButtons extends PaginationOptions {
+  /** Additional buttons to show alongside pagination */
+  extraButtons?: ExtraButton[]
+}
+
+/**
+ * Create pagination buttons with optional extra buttons.
+ */
+function createButtonsWithExtras(
+  currentPage: number,
+  totalPages: number,
+  idPrefix: string,
+  allowShare: boolean,
+  extraButtons: ExtraButton[] = []
+): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = []
+  const mainRow = new ActionRowBuilder<ButtonBuilder>()
+
+  // Previous button
+  mainRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${idPrefix}:prev`)
+      .setLabel('◀ Previous')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage === 0)
+  )
+
+  // Page indicator (disabled button showing current page)
+  mainRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${idPrefix}:info`)
+      .setLabel(`${currentPage + 1} / ${totalPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true)
+  )
+
+  // Next button
+  mainRow.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${idPrefix}:next`)
+      .setLabel('Next ▶')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage >= totalPages - 1)
+  )
+
+  // Share button (posts publicly)
+  if (allowShare) {
+    mainRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${idPrefix}:share`)
+        .setLabel('📢 Share')
+        .setStyle(ButtonStyle.Primary)
+    )
+  }
+
+  rows.push(mainRow)
+
+  // Add extra buttons in a second row if present
+  if (extraButtons.length > 0) {
+    const extraRow = new ActionRowBuilder<ButtonBuilder>()
+    for (const btn of extraButtons) {
+      const button = new ButtonBuilder()
+        .setCustomId(`${idPrefix}:${btn.id}`)
+        .setLabel(btn.label)
+        .setStyle(btn.style ?? ButtonStyle.Success)
+
+      if (btn.emoji) {
+        button.setEmoji(btn.emoji)
+      }
+
+      extraRow.addComponents(button)
+    }
+    rows.push(extraRow)
+  }
+
+  return rows
+}
+
+/**
+ * Send a paginated response with interactive buttons and optional extra buttons.
+ *
+ * @param interaction - The command interaction to reply to
+ * @param baseEmbed - Base embed to use (title, color, description)
+ * @param allItems - All items to paginate
+ * @param options - Pagination options with extra buttons
+ */
+export async function sendPaginatedResponseWithExtraButtons(
+  interaction: ChatInputCommandInteraction,
+  baseEmbed: EmbedBuilder,
+  allItems: PaginatedItem[],
+  options?: PaginationOptionsWithExtraButtons
+): Promise<void> {
+  const opts = { ...DEFAULT_OPTIONS, ...options }
+  const { pageSize, maxEmbedSize, timeout, idPrefix, allowShare, ephemeral } = opts
+  const extraButtons = options?.extraButtons ?? []
+
+  // Pre-calculate pages based on size limits
+  const pages = calculatePages(allItems, pageSize, maxEmbedSize)
+  const totalPages = pages.length
+  let currentPage = 0
+
+  // Get items for current page
+  const getPageItems = (page: number): PaginatedItem[] => {
+    return pages[page] || []
+  }
+
+  // Build initial embed and buttons
+  const embed = buildPageEmbed(baseEmbed, getPageItems(0), 0, totalPages, allItems.length, opts)
+
+  // Only show buttons if there's more than one page or share is enabled (and is ephemeral) or extra buttons
+  const showShareButton = allowShare && ephemeral
+  const showButtons = totalPages > 1 || showShareButton || extraButtons.length > 0
+  const components = showButtons
+    ? createButtonsWithExtras(0, totalPages, idPrefix, showShareButton, extraButtons)
+    : []
+
+  // Send initial response
+  const response = await interaction.reply({
+    embeds: [embed],
+    components,
+    flags: ephemeral ? MessageFlags.Ephemeral : undefined,
+  })
+
+  // If no buttons needed, we're done
+  if (!showButtons) {
+    return
+  }
+
+  // Create collector for button interactions
+  const collector = response.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    time: timeout,
+    filter: i => i.customId.startsWith(idPrefix) && i.user.id === interaction.user.id,
+  })
+
+  collector.on('collect', async (buttonInteraction: ButtonInteraction) => {
+    const action = buttonInteraction.customId.split(':')[1]
+
+    // Check for extra button handlers
+    const extraButton = extraButtons.find(btn => btn.id === action)
+    if (extraButton) {
+      await extraButton.onClick(buttonInteraction)
+      return
+    }
+
+    switch (action) {
+      case 'prev':
+        if (currentPage > 0) {
+          currentPage--
+        }
+        break
+      case 'next':
+        if (currentPage < totalPages - 1) {
+          currentPage++
+        }
+        break
+      case 'share': {
+        // Post current page publicly (non-ephemeral)
+        const member = interaction.member
+        const sharedByName =
+          member && 'displayName' in member ? member.displayName : interaction.user.displayName
+        await buttonInteraction.reply({
+          embeds: [
+            buildPageEmbed(
+              baseEmbed,
+              getPageItems(currentPage),
+              currentPage,
+              totalPages,
+              allItems.length,
+              { ...opts, footerText: `Shared by ${sharedByName}` }
+            ),
+          ],
+        })
+        return // Don't update the ephemeral message
+      }
+      default:
+        return
+    }
+
+    // Update the message with new page
+    const newEmbed = buildPageEmbed(
+      baseEmbed,
+      getPageItems(currentPage),
+      currentPage,
+      totalPages,
+      allItems.length,
+      opts
+    )
+
+    await buttonInteraction.update({
+      embeds: [newEmbed],
+      components: createButtonsWithExtras(
+        currentPage,
+        totalPages,
+        idPrefix,
+        showShareButton,
+        extraButtons
+      ),
+    })
+  })
+
+  collector.on('end', async () => {
+    // Disable buttons after timeout
+    try {
+      const disabledRow = new ActionRowBuilder<ButtonBuilder>()
+      disabledRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`${idPrefix}:expired`)
+          .setLabel('Session expired - run command again')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      )
+      await interaction.editReply({ components: [disabledRow] })
+    } catch (error) {
+      // Interaction may have been deleted
+      console.error('Failed to update expired pagination interaction:', error)
+    }
   })
 }

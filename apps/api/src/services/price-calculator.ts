@@ -7,7 +7,7 @@ import {
   fioCommodities,
   fioLocations,
 } from '../db/index.js'
-import { eq, and, or, isNull, lte, gt } from 'drizzle-orm'
+import { eq, and, or, isNull, lte, gt, inArray } from 'drizzle-orm'
 
 export type PriceSource = 'manual' | 'csv_import' | 'google_sheets' | 'fio_exchange'
 export type AdjustmentType = 'percentage' | 'fixed'
@@ -365,4 +365,244 @@ export async function calculateEffectivePrices(
   }
 
   return results
+}
+
+/**
+ * Request for batch price calculation
+ */
+export interface PriceRequest {
+  priceListCode: string
+  ticker: string
+  locationId: string
+  currency: Currency // Ignored - we use the price list's currency
+}
+
+/**
+ * Apply adjustments to a base price, returning the final price and applied adjustments.
+ * Shared logic extracted from calculateEffectivePrice and batch function.
+ */
+function applyAdjustments(
+  basePrice: number,
+  adjustments: {
+    id: number
+    adjustmentType: AdjustmentType
+    adjustmentValue: string
+    description: string | null
+  }[]
+): { finalPrice: number; appliedAdjustments: AppliedAdjustment[] } {
+  let currentPrice = basePrice
+  const appliedAdjustments: AppliedAdjustment[] = []
+
+  for (const adj of adjustments) {
+    const adjustmentValue = parseFloat(adj.adjustmentValue)
+    let appliedAmount: number
+
+    if (adj.adjustmentType === 'percentage') {
+      appliedAmount = currentPrice * (adjustmentValue / 100)
+      currentPrice = currentPrice + appliedAmount
+    } else {
+      appliedAmount = adjustmentValue
+      currentPrice = currentPrice + appliedAmount
+    }
+
+    appliedAdjustments.push({
+      id: adj.id,
+      description: adj.description,
+      type: adj.adjustmentType,
+      value: adjustmentValue,
+      appliedAmount: Math.round(appliedAmount * 100) / 100,
+    })
+  }
+
+  return {
+    finalPrice: Math.round(currentPrice * 100) / 100,
+    appliedAdjustments,
+  }
+}
+
+/**
+ * Batch calculate effective prices with fallback for multiple orders.
+ * Uses only 3 DB queries regardless of the number of requests (vs 3-5 per request).
+ *
+ * Returns a Map keyed by "PRICELIST:TICKER:LOCATION" (using the original requested location).
+ */
+export async function calculateEffectivePriceBatch(
+  requests: PriceRequest[]
+): Promise<Map<string, EffectivePrice | null>> {
+  const result = new Map<string, EffectivePrice | null>()
+
+  if (requests.length === 0) {
+    return result
+  }
+
+  // Normalize requests
+  const normalized = requests.map(r => ({
+    priceListCode: r.priceListCode.toUpperCase(),
+    ticker: r.ticker.toUpperCase(),
+    locationId: r.locationId,
+  }))
+
+  // Deduplicate request keys
+  const uniqueKeys = new Set(normalized.map(r => `${r.priceListCode}:${r.ticker}:${r.locationId}`))
+
+  // Query 1: Fetch all needed price lists in one query
+  const uniqueCodes = [...new Set(normalized.map(r => r.priceListCode))]
+  const priceListRows = await db
+    .select({
+      code: priceLists.code,
+      currency: priceLists.currency,
+      defaultLocationId: priceLists.defaultLocationId,
+    })
+    .from(priceLists)
+    .where(inArray(priceLists.code, uniqueCodes))
+
+  const priceListMap = new Map(
+    priceListRows.map(r => [
+      r.code,
+      { currency: r.currency, defaultLocationId: r.defaultLocationId },
+    ])
+  )
+
+  // Build the full set of (code, ticker, location) tuples including fallback locations
+  const allTuples = new Set<string>()
+  for (const req of normalized) {
+    allTuples.add(`${req.priceListCode}:${req.ticker}:${req.locationId}`)
+    const pl = priceListMap.get(req.priceListCode)
+    if (pl?.defaultLocationId && pl.defaultLocationId !== req.locationId) {
+      allTuples.add(`${req.priceListCode}:${req.ticker}:${pl.defaultLocationId}`)
+    }
+  }
+
+  // Collect unique values for each column for the WHERE clause
+  const allPriceListCodes = [...new Set([...allTuples].map(t => t.split(':')[0]))]
+  const allTickers = [...new Set([...allTuples].map(t => t.split(':')[1]))]
+  const allLocationIds = [...new Set([...allTuples].map(t => t.split(':').slice(2).join(':')))]
+
+  // Query 2: Fetch all base prices in one query
+  const basePriceRows = await db
+    .select({
+      priceListCode: prices.priceListCode,
+      commodityTicker: prices.commodityTicker,
+      commodityName: fioCommodities.name,
+      locationId: prices.locationId,
+      locationName: fioLocations.name,
+      price: prices.price,
+      currency: priceLists.currency,
+      source: prices.source,
+      sourceReference: prices.sourceReference,
+    })
+    .from(prices)
+    .innerJoin(priceLists, eq(prices.priceListCode, priceLists.code))
+    .leftJoin(fioCommodities, eq(prices.commodityTicker, fioCommodities.ticker))
+    .leftJoin(fioLocations, eq(prices.locationId, fioLocations.naturalId))
+    .where(
+      and(
+        inArray(prices.priceListCode, allPriceListCodes),
+        inArray(prices.commodityTicker, allTickers),
+        inArray(prices.locationId, allLocationIds)
+      )
+    )
+
+  // Index base prices by tuple key, filtering to only tuples we actually need
+  const basePriceMap = new Map<string, (typeof basePriceRows)[number]>()
+  for (const row of basePriceRows) {
+    const key = `${row.priceListCode}:${row.commodityTicker}:${row.locationId}`
+    if (allTuples.has(key)) {
+      basePriceMap.set(key, row)
+    }
+  }
+
+  // Query 3: Fetch all potentially matching adjustments in one query
+  const now = new Date()
+  const allAdjustments = await db
+    .select({
+      id: priceAdjustments.id,
+      priceListCode: priceAdjustments.priceListCode,
+      commodityTicker: priceAdjustments.commodityTicker,
+      locationId: priceAdjustments.locationId,
+      adjustmentType: priceAdjustments.adjustmentType,
+      adjustmentValue: priceAdjustments.adjustmentValue,
+      priority: priceAdjustments.priority,
+      description: priceAdjustments.description,
+    })
+    .from(priceAdjustments)
+    .where(
+      and(
+        or(
+          isNull(priceAdjustments.priceListCode),
+          inArray(priceAdjustments.priceListCode, allPriceListCodes)
+        ),
+        or(
+          isNull(priceAdjustments.commodityTicker),
+          inArray(priceAdjustments.commodityTicker, allTickers)
+        ),
+        or(
+          isNull(priceAdjustments.locationId),
+          inArray(priceAdjustments.locationId, allLocationIds)
+        ),
+        eq(priceAdjustments.isActive, true),
+        or(isNull(priceAdjustments.effectiveFrom), lte(priceAdjustments.effectiveFrom, now)),
+        or(isNull(priceAdjustments.effectiveUntil), gt(priceAdjustments.effectiveUntil, now))
+      )
+    )
+    .orderBy(priceAdjustments.priority, priceAdjustments.id)
+
+  // Compute results for each unique request
+  for (const req of normalized) {
+    const requestKey = `${req.priceListCode}:${req.ticker}:${req.locationId}`
+    if (result.has(requestKey)) continue // Already computed (dedup)
+
+    const pl = priceListMap.get(req.priceListCode)
+    if (!pl) {
+      result.set(requestKey, null)
+      continue
+    }
+
+    // Try primary location, then fallback
+    let baseRecord = basePriceMap.get(requestKey)
+    let isFallback = false
+
+    if (!baseRecord && pl.defaultLocationId && pl.defaultLocationId !== req.locationId) {
+      const fallbackKey = `${req.priceListCode}:${req.ticker}:${pl.defaultLocationId}`
+      baseRecord = basePriceMap.get(fallbackKey)
+      if (baseRecord) isFallback = true
+    }
+
+    if (!baseRecord) {
+      result.set(requestKey, null)
+      continue
+    }
+
+    // Filter adjustments matching this specific (priceList, ticker, resolvedLocation)
+    const resolvedLocation = baseRecord.locationId
+    const matchingAdjustments = allAdjustments.filter(
+      adj =>
+        (adj.priceListCode === null || adj.priceListCode === req.priceListCode) &&
+        (adj.commodityTicker === null || adj.commodityTicker === req.ticker) &&
+        (adj.locationId === null || adj.locationId === resolvedLocation)
+    )
+
+    const basePrice = parseFloat(baseRecord.price)
+    const { finalPrice, appliedAdjustments } = applyAdjustments(basePrice, matchingAdjustments)
+
+    const effectivePrice: EffectivePrice = {
+      priceListCode: baseRecord.priceListCode,
+      commodityTicker: baseRecord.commodityTicker,
+      commodityName: baseRecord.commodityName,
+      locationId: baseRecord.locationId,
+      locationName: baseRecord.locationName,
+      currency: baseRecord.currency,
+      basePrice,
+      source: baseRecord.source,
+      sourceReference: baseRecord.sourceReference,
+      adjustments: appliedAdjustments,
+      finalPrice,
+      exchangeCode: baseRecord.priceListCode,
+      ...(isFallback ? { isFallback: true, requestedLocationId: req.locationId } : {}),
+    }
+
+    result.set(requestKey, effectivePrice)
+  }
+
+  return result
 }

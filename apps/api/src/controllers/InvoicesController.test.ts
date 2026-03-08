@@ -180,34 +180,27 @@ describe('InvoicesController', () => {
     })
 
     it('should return invoices with counterparty names and totals', async () => {
-      // Track which query we're on based on terminal method
-      // Query 1: .from(invoices).where().orderBy() -> invoices
-      // Query 2: .from(users).where() -> counterparty names
-      // Query 3: .from(lineItems).where().groupBy() -> stats (buy/sell totals)
-      // Query 4: .from(lineItems).where().groupBy() -> commodity tickers
-      // Query 5: .from(lineItems).leftJoin().where() -> reservation statuses
-      mockSelect.orderBy.mockResolvedValueOnce([mockInvoice])
+      // Query 1: .from(invoices).leftJoin(owner).leftJoin(counterparty).where().orderBy()
+      // Query 2 (parallel): .from(lineItems).where().groupBy() -> stats + tickers
+      // Query 3 (parallel): .from(lineItems).leftJoin(reservations).where().groupBy() -> reservation statuses
+      const invoiceWithNames = {
+        ...mockInvoice,
+        ownerDisplayName: 'User 1',
+        counterpartyDisplayName: 'Partner',
+      }
+      mockSelect.orderBy.mockResolvedValueOnce([invoiceWithNames])
       mockSelect.groupBy
         .mockResolvedValueOnce([
-          { invoiceId: 1, count: 2, currency: 'CIS', total: '500.00', orderType: 'sell' },
+          {
+            invoiceId: 1,
+            count: 2,
+            currency: 'CIS',
+            total: '500.00',
+            orderType: 'sell',
+            commodityTickers: ['H2O'],
+          },
         ])
-        .mockResolvedValueOnce([{ invoiceId: 1, commodityTickers: ['H2O'] }])
-      // where() is called in query 1, 3, 4 as intermediate, and in query 2 and 5 as terminal
-      // So we need: return mockSelect (query 1), resolve [counterparties] (query 2), return mockSelect (query 3 & 4), resolve [statuses] (query 5)
-      let whereCallCount = 0
-      mockSelect.where.mockImplementation(() => {
-        whereCallCount++
-        if (whereCallCount === 2) {
-          // Query 2 - terminal where for users, return promise
-          return Promise.resolve([{ id: 2, displayName: 'Partner' }])
-        }
-        if (whereCallCount === 5) {
-          // Query 5 - terminal where for reservation statuses, return promise
-          return Promise.resolve([{ invoiceId: 1, reservationStatus: null }])
-        }
-        // Other calls - continue chain
-        return mockSelect
-      })
+        .mockResolvedValueOnce([{ invoiceId: 1, reservationStatuses: [null] }])
 
       const result = await controller.getInvoices(mockUserRequest)
 

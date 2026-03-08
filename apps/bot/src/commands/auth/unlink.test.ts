@@ -81,7 +81,7 @@ describe('unlink command', () => {
 
     const { interaction, replyFn } = createMockInteraction()
     // fetchReply returns the message with awaitMessageComponent
-    ;(interaction as Record<string, unknown>).fetchReply = vi
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
       .fn()
       .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
@@ -117,7 +117,7 @@ describe('unlink command', () => {
     mockDelete.mockReturnValue({ where: mockWhere })
 
     const { interaction } = createMockInteraction()
-    ;(interaction as Record<string, unknown>).fetchReply = vi
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
       .fn()
       .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
@@ -147,7 +147,7 @@ describe('unlink command', () => {
     mockDelete.mockReturnValue({ where: mockWhere })
 
     const { interaction } = createMockInteraction()
-    ;(interaction as Record<string, unknown>).fetchReply = vi
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
       .fn()
       .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 
@@ -219,7 +219,7 @@ describe('unlink command', () => {
     const awaitComponent = vi.fn().mockRejectedValue(new Error('Collector timed out'))
 
     const { interaction, editReplyFn } = createMockInteraction()
-    ;(interaction as Record<string, unknown>).fetchReply = vi
+    ;(interaction as unknown as Record<string, unknown>).fetchReply = vi
       .fn()
       .mockResolvedValue({ awaitMessageComponent: awaitComponent })
 

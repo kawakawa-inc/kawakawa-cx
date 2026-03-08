@@ -447,7 +447,7 @@
         <v-card>
           <v-card-title>
             <v-row align="center">
-              <v-col cols="12" md="8">
+              <v-col cols="12" md="5">
                 <TokenSearchInput
                   placeholder="Search: user, commodity..."
                   :available-user-names="availableInvoiceUserNames"
@@ -469,7 +469,7 @@
                   clearable
                 />
               </v-col>
-              <v-col cols="12" md="2">
+              <v-col cols="12" md="5">
                 <v-select
                   v-model="invoiceStatusFilter"
                   :items="invoiceStatusOptions"
@@ -478,8 +478,22 @@
                   label="Status"
                   density="compact"
                   hide-details
-                  clearable
-                />
+                  multiple
+                  chips
+                  closable-chips
+                >
+                  <template #prepend-item>
+                    <v-list-item
+                      :title="isShowingAll ? 'Hide Completed' : 'Show All'"
+                      @click="toggleShowAllStatuses"
+                    >
+                      <template #prepend>
+                        <v-icon>{{ isShowingAll ? 'mdi-filter' : 'mdi-filter-off' }}</v-icon>
+                      </template>
+                    </v-list-item>
+                    <v-divider class="mt-2" />
+                  </template>
+                </v-select>
               </v-col>
             </v-row>
           </v-card-title>
@@ -1051,7 +1065,6 @@ const invoiceDirectionOptions = [
 ]
 
 const invoiceStatusOptions = [
-  { title: 'All Statuses', value: null },
   { title: 'Draft', value: 'draft' },
   { title: 'Pending', value: 'pending' },
   { title: 'Confirmed', value: 'confirmed' },
@@ -1059,6 +1072,15 @@ const invoiceStatusOptions = [
   { title: 'Partially Fulfilled', value: 'partially_fulfilled' },
   { title: 'Cancelled', value: 'cancelled' },
 ]
+
+const defaultStatusFilter: InvoiceStatus[] = [
+  'draft',
+  'pending',
+  'confirmed',
+  'partially_fulfilled',
+]
+
+const allStatuses: InvoiceStatus[] = invoiceStatusOptions.map(o => o.value) as InvoiceStatus[]
 
 // Sell orders state
 const sellOrders = ref<SellOrderResponse[]>([])
@@ -1076,7 +1098,7 @@ const orderDialogTab = ref<'buy' | 'sell'>('buy')
 const invoices = ref<InvoiceSummary[]>([])
 const loadingInvoices = ref(false)
 const invoiceSearchChips = ref<SearchChip[]>([])
-const invoiceStatusFilter = ref<InvoiceStatus | null>(null)
+const invoiceStatusFilter = ref<InvoiceStatus[]>([...defaultStatusFilter])
 const invoiceDirectionFilter = ref<'sent' | 'received' | null>(null)
 const invoiceDetailDialog = ref(false)
 const selectedInvoice = ref<Invoice | null>(null)
@@ -1188,9 +1210,9 @@ const filteredInvoices = computed(() => {
     result = result.filter(inv => inv.direction === invoiceDirectionFilter.value)
   }
 
-  // Filter by status
-  if (invoiceStatusFilter.value) {
-    result = result.filter(inv => inv.status === invoiceStatusFilter.value)
+  // Filter by status (multi-select: empty array = show all)
+  if (invoiceStatusFilter.value.length > 0) {
+    result = result.filter(inv => invoiceStatusFilter.value.includes(inv.status))
   }
 
   // Filter by search chips
@@ -1215,6 +1237,21 @@ const filteredInvoices = computed(() => {
 
   return result
 })
+
+// Show all / hide completed toggle for status filter
+const isShowingAll = computed(
+  () =>
+    invoiceStatusFilter.value.length === 0 ||
+    invoiceStatusFilter.value.length === allStatuses.length
+)
+
+const toggleShowAllStatuses = () => {
+  if (isShowingAll.value) {
+    invoiceStatusFilter.value = [...defaultStatusFilter]
+  } else {
+    invoiceStatusFilter.value = []
+  }
+}
 
 // Helper to check if an invoice is still active (not completed)
 const isActiveStatus = (status: string) => status !== 'fulfilled' && status !== 'cancelled'

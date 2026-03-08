@@ -88,7 +88,6 @@ function createTxMock(
   } = {}
 ) {
   const { updateReturning = [], findFirstResults = [], insertThrow } = overrides
-  let findFirstCallIndex = 0
 
   const txInsertValues = mockTxInsertValues
   const txInsert = vi.fn().mockReturnValue({ values: txInsertValues })

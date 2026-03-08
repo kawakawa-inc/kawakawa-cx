@@ -34,7 +34,7 @@ import {
   buyOrders,
   users,
 } from '../db/index.js'
-import { eq, and, or, inArray, sql } from 'drizzle-orm'
+import { eq, and, or, inArray, sql, aliasedTable } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '../services/notificationService.js'
@@ -211,7 +211,10 @@ export class InvoicesController extends Controller {
       whereCondition = status ? and(bothCondition, eq(invoices.status, status)) : bothCondition
     }
 
-    // Get invoices with line item counts and totals
+    // Query 1: Get invoices with user names via JOIN (eliminates separate user lookup)
+    const ownerUser = aliasedTable(users, 'owner_user')
+    const counterpartyUser = aliasedTable(users, 'counterparty_user')
+
     const invoiceRows = await db
       .select({
         id: invoices.id,
@@ -223,8 +226,12 @@ export class InvoicesController extends Controller {
         submittedAt: invoices.submittedAt,
         createdAt: invoices.createdAt,
         updatedAt: invoices.updatedAt,
+        ownerDisplayName: ownerUser.displayName,
+        counterpartyDisplayName: counterpartyUser.displayName,
       })
       .from(invoices)
+      .leftJoin(ownerUser, eq(invoices.userId, ownerUser.id))
+      .leftJoin(counterpartyUser, eq(invoices.counterpartyUserId, counterpartyUser.id))
       .where(whereCondition)
       .orderBy(sql`${invoices.updatedAt} DESC`)
 
@@ -232,54 +239,47 @@ export class InvoicesController extends Controller {
       return []
     }
 
-    // Get all user names needed (both owners and counterparties)
-    const allUserIds = [
-      ...new Set([
-        ...invoiceRows.map(i => i.userId),
-        ...invoiceRows.map(i => i.counterpartyUserId),
-      ]),
-    ]
-    const userRows = await db
-      .select({ id: users.id, displayName: users.displayName })
-      .from(users)
-      .where(inArray(users.id, allUserIds))
-
-    const userMap = new Map(userRows.map(u => [u.id, u.displayName]))
-
-    // Get line item counts and totals per invoice, grouped by order type
     const invoiceIds = invoiceRows.map(i => i.id)
-    const lineItemStats = await db
-      .select({
-        invoiceId: invoiceLineItems.invoiceId,
-        count: sql<number>`COUNT(*)::int`,
-        currency: invoiceLineItems.currency,
-        total: sql<number>`SUM(${invoiceLineItems.quantity} * ${invoiceLineItems.unitPrice})::numeric`,
-        // 'sell' when sellOrderId is set (user buying), 'buy' when buyOrderId is set (user selling)
-        orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
-      })
-      .from(invoiceLineItems)
-      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
-      .groupBy(
-        invoiceLineItems.invoiceId,
-        invoiceLineItems.currency,
-        sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
-      )
 
-    // Get unique commodity tickers per invoice for search
-    const commodityTickersPerInvoice = await db
-      .select({
-        invoiceId: invoiceLineItems.invoiceId,
-        commodityTickers: sql<string[]>`ARRAY_AGG(DISTINCT ${invoiceLineItems.commodityTicker})`,
-      })
-      .from(invoiceLineItems)
-      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
-      .groupBy(invoiceLineItems.invoiceId)
+    // Queries 2 & 3: Run line item stats and reservation statuses in parallel
+    const [lineItemStats, reservationStatusRows] = await Promise.all([
+      // Line item stats with commodity tickers (merges former queries 3 & 4)
+      db
+        .select({
+          invoiceId: invoiceLineItems.invoiceId,
+          count: sql<number>`COUNT(*)::int`,
+          currency: invoiceLineItems.currency,
+          total: sql<number>`SUM(${invoiceLineItems.quantity} * ${invoiceLineItems.unitPrice})::numeric`,
+          orderType: sql<string>`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`,
+          commodityTickers: sql<string[]>`ARRAY_AGG(DISTINCT ${invoiceLineItems.commodityTicker})`,
+        })
+        .from(invoiceLineItems)
+        .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
+        .groupBy(
+          invoiceLineItems.invoiceId,
+          invoiceLineItems.currency,
+          sql`CASE WHEN ${invoiceLineItems.sellOrderId} IS NOT NULL THEN 'sell' ELSE 'buy' END`
+        ),
+      // Reservation statuses aggregated per invoice (eliminates per-row grouping in JS)
+      db
+        .select({
+          invoiceId: invoiceLineItems.invoiceId,
+          reservationStatuses: sql<
+            (ReservationStatus | null)[]
+          >`array_agg(${orderReservations.status})`,
+        })
+        .from(invoiceLineItems)
+        .leftJoin(orderReservations, eq(invoiceLineItems.reservationId, orderReservations.id))
+        .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
+        .groupBy(invoiceLineItems.invoiceId),
+    ])
 
-    const commodityTickersMap = new Map(
-      commodityTickersPerInvoice.map(r => [r.invoiceId, r.commodityTickers])
+    // Build reservation statuses map (one row per invoice now)
+    const invoiceReservationStatuses = new Map(
+      reservationStatusRows.map(r => [r.invoiceId, r.reservationStatuses])
     )
 
-    // Group totals by invoice with buy/sell breakdown
+    // Group totals by invoice with buy/sell breakdown, collecting commodity tickers
     const invoiceStatsMap = new Map<
       number,
       {
@@ -289,6 +289,7 @@ export class InvoicesController extends Controller {
         totalsByCurrency: { currency: Currency; total: number }[]
         buyTotalsByCurrency: { currency: Currency; total: number }[]
         sellTotalsByCurrency: { currency: Currency; total: number }[]
+        commodityTickers: Set<string>
       }
     >()
     for (const stat of lineItemStats) {
@@ -300,12 +301,18 @@ export class InvoicesController extends Controller {
           totalsByCurrency: [],
           buyTotalsByCurrency: [],
           sellTotalsByCurrency: [],
+          commodityTickers: new Set(),
         })
       }
       const stats = invoiceStatsMap.get(stat.invoiceId)!
       stats.itemCount += stat.count
       const currencyTotal = { currency: stat.currency, total: parseFloat(String(stat.total)) }
       stats.totalsByCurrency.push(currencyTotal)
+
+      // Collect commodity tickers from each group
+      for (const ticker of stat.commodityTickers) {
+        stats.commodityTickers.add(ticker)
+      }
 
       // Separate buy vs sell totals and counts
       // orderType='sell' means user is BUYING (from a sell order)
@@ -331,25 +338,6 @@ export class InvoicesController extends Controller {
       }))
     }
 
-    // Get reservation statuses per invoice (for calculating invoice status)
-    const reservationStatusRows = await db
-      .select({
-        invoiceId: invoiceLineItems.invoiceId,
-        reservationStatus: orderReservations.status,
-      })
-      .from(invoiceLineItems)
-      .leftJoin(orderReservations, eq(invoiceLineItems.reservationId, orderReservations.id))
-      .where(inArray(invoiceLineItems.invoiceId, invoiceIds))
-
-    // Group reservation statuses by invoice ID
-    const invoiceReservationStatuses = new Map<number, (ReservationStatus | null)[]>()
-    for (const row of reservationStatusRows) {
-      if (!invoiceReservationStatuses.has(row.invoiceId)) {
-        invoiceReservationStatuses.set(row.invoiceId, [])
-      }
-      invoiceReservationStatuses.get(row.invoiceId)!.push(row.reservationStatus)
-    }
-
     return invoiceRows.map(inv => {
       // Determine direction and the "other party" based on who the current user is
       const isSent = inv.userId === userId
@@ -357,6 +345,9 @@ export class InvoicesController extends Controller {
       // For sent invoices, counterparty is who we're sending to
       // For received invoices, counterparty is who sent it to us
       const otherPartyId = isSent ? inv.counterpartyUserId : inv.userId
+      const counterpartyName = isSent
+        ? (inv.counterpartyDisplayName ?? 'Unknown')
+        : (inv.ownerDisplayName ?? 'Unknown')
 
       // Calculate status from reservation states
       const reservationStatuses = invoiceReservationStatuses.get(inv.id) ?? []
@@ -366,7 +357,7 @@ export class InvoicesController extends Controller {
       return {
         id: inv.id,
         counterpartyUserId: otherPartyId,
-        counterpartyName: userMap.get(otherPartyId) ?? 'Unknown',
+        counterpartyName,
         status: calculatedStatus,
         direction,
         name: inv.name,
@@ -376,7 +367,7 @@ export class InvoicesController extends Controller {
         totalsByCurrency: stats?.totalsByCurrency ?? [],
         buyTotalsByCurrency: stats?.buyTotalsByCurrency ?? [],
         sellTotalsByCurrency: stats?.sellTotalsByCurrency ?? [],
-        commodityTickers: commodityTickersMap.get(inv.id) ?? [],
+        commodityTickers: stats ? [...stats.commodityTickers] : [],
         createdAt: inv.createdAt.toISOString(),
         updatedAt: inv.updatedAt.toISOString(),
       }

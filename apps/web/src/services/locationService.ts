@@ -1,5 +1,6 @@
 // Location service - fetches from backend API with localStorage persistence
 
+import { ref } from 'vue'
 import type { Location, LocationDisplayMode } from '../types'
 
 // Cache keys and TTL
@@ -27,6 +28,10 @@ interface UserLocationsCacheEntry {
 let cachedLocations: Location[] | null = null
 // User's storage locations (where they have inventory) with storage types
 let cachedUserLocations: Map<string, string[]> | null = null
+
+// Reactive version counter — Vue computed properties that read this will
+// re-evaluate when the cache is populated after an async fetch.
+const cacheVersion = ref(0)
 let userLocationsLoadedAt = 0
 
 // Load from localStorage on module init
@@ -77,6 +82,7 @@ const fetchLocations = async (): Promise<Location[]> => {
     const data = await response.json()
     cachedLocations = data
     saveToStorage(data)
+    cacheVersion.value++
     return data
   } catch (error) {
     console.error('Error fetching locations:', error)
@@ -93,6 +99,7 @@ export const locationService = {
 
   // Get all locations from cache (synchronous, returns empty array if not loaded)
   getAllLocationsSync: (): Location[] => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedLocations) return []
     return [...cachedLocations].sort((a, b) => a.name.localeCompare(b.name))
   },
@@ -113,7 +120,7 @@ export const locationService = {
   //   natural-ids-only: "BEN"
   //   both: "Benten Station (BEN)"
   getLocationDisplay: (id: string, mode: LocationDisplayMode = 'names-only'): string => {
-    // Synchronous fallback for display - shows ID until data loads
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedLocations) {
       return id
     }
@@ -171,6 +178,7 @@ export const locationService = {
 
   // Get location type by ID (synchronous, uses cache)
   getLocationType: (id: string): Location['type'] | null => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     if (!cachedLocations) return null
     const location = cachedLocations.find(l => l.id === id)
     return location?.type ?? null
@@ -257,6 +265,7 @@ export const locationService = {
       // Cache the result as Map<locationId, storageTypes>
       cachedUserLocations = new Map(locations.map(l => [l.locationId, l.storageTypes]))
       userLocationsLoadedAt = Date.now()
+      cacheVersion.value++
 
       // Save to localStorage
       try {
@@ -278,16 +287,19 @@ export const locationService = {
 
   // Check if a location is a user location (synchronous, uses cache)
   isUserLocation: (id: string): boolean => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     return cachedUserLocations?.has(id) ?? false
   },
 
   // Get storage types for a user location (synchronous, uses cache)
   getStorageTypes: (id: string): string[] | undefined => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     return cachedUserLocations?.get(id)
   },
 
   // Get all user location IDs (synchronous, uses cache)
   getUserLocationIds: (): Set<string> => {
+    void cacheVersion.value // reactive dependency for Vue computed properties
     return cachedUserLocations ? new Set(cachedUserLocations.keys()) : new Set()
   },
 }

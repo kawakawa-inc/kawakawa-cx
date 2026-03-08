@@ -1,6 +1,6 @@
 import pino from 'pino'
 
-const isDevelopment = process.env.NODE_ENV !== 'production'
+const isDevelopment = process.env.NODE_ENV === 'development'
 
 /**
  * Logging size limits to prevent excessive log output

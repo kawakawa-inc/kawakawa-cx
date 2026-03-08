@@ -12,13 +12,13 @@ install: ## Install dependencies
 	pnpm install
 
 dev: ## Start development servers (API + Web)
-	pnpm dev
+	NODE_ENV=development LOG_LEVEL=debug pnpm dev
 
 dev-api: ## Start API dev server only
-	pnpm --filter @kawakawa/api dev
+	NODE_ENV=development LOG_LEVEL=debug pnpm --filter @kawakawa/api dev
 
 dev-web: ## Start Web dev server only
-	pnpm --filter @kawakawa/web dev
+	NODE_ENV=development pnpm --filter @kawakawa/web dev
 
 build: ## Build all packages
 	pnpm build
@@ -131,7 +131,7 @@ kill-web: ## Kill all running web processes
 	@echo "Done."
 
 dev-bot: ## Start Discord bot dev server with hot reload
-	pnpm --filter @kawakawa/bot dev
+	NODE_ENV=development LOG_LEVEL=debug pnpm --filter @kawakawa/bot dev
 
 bot-deploy: ## Deploy slash commands to Discord
 	pnpm --filter @kawakawa/bot deploy-commands

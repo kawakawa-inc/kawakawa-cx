@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createMockInteraction, getDiscordMock } from '../../test/mockDiscord.js'
 
 // Create hoisted mock functions
@@ -60,9 +60,13 @@ vi.mock('../../utils/logger.js', () => ({
 }))
 
 // Mock message interaction adapter
+const { mockIsMessageInteraction } = vi.hoisted(() => ({
+  mockIsMessageInteraction: vi.fn().mockReturnValue(false),
+}))
+
 vi.mock('../../adapters/messageInteraction.js', () => ({
   getCommandPrefix: vi.fn().mockReturnValue('/'),
-  isMessageInteractionAdapter: vi.fn().mockReturnValue(false),
+  isMessageInteractionAdapter: mockIsMessageInteraction,
 }))
 
 // Import after mocks
@@ -255,6 +259,110 @@ describe('register command', () => {
         (f: { name: string }) => f.name === 'Assigned Roles'
       )
       expect(rolesField.value).toContain('unverified')
+    })
+  })
+
+  describe('prefix command parsing', () => {
+    beforeEach(() => {
+      mockIsMessageInteraction.mockReturnValue(true)
+    })
+
+    afterEach(() => {
+      mockIsMessageInteraction.mockReturnValue(false)
+    })
+
+    it('shows usage when no input provided', async () => {
+      mockFindFirstProfile.mockResolvedValueOnce(null)
+
+      const { interaction, replyFn } = createMockInteraction({
+        stringOptions: { input: '' },
+      })
+
+      await register.execute(interaction as never)
+
+      expect(replyFn).toHaveBeenCalledWith({
+        content: expect.stringContaining('Usage'),
+        flags: 64,
+      })
+    })
+
+    it('shows usage when input is null', async () => {
+      mockFindFirstProfile.mockResolvedValueOnce(null)
+
+      const { interaction, replyFn } = createMockInteraction({
+        stringOptions: {},
+      })
+
+      await register.execute(interaction as never)
+
+      expect(replyFn).toHaveBeenCalledWith({
+        content: expect.stringContaining('Usage'),
+        flags: 64,
+      })
+    })
+
+    it('parses username only (uses username as display name)', async () => {
+      mockFindFirstProfile.mockResolvedValueOnce(null)
+      mockFindFirstUser.mockResolvedValueOnce(null)
+      mockSettingsGetAll.mockResolvedValueOnce({})
+
+      mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
+        const tx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 1, username: 'myuser' }]),
+            }),
+          }),
+        }
+        await cb(tx)
+      })
+
+      const { interaction, replyFn } = createMockInteraction({
+        stringOptions: { input: 'myuser' },
+      })
+
+      await register.execute(interaction as never)
+
+      expect(mockTransaction).toHaveBeenCalled()
+      const embed = replyFn.mock.calls[0][0].embeds[0]
+      const usernameField = embed.data.fields.find((f: { name: string }) => f.name === 'Username')
+      expect(usernameField.value).toBe('myuser')
+      const displayField = embed.data.fields.find(
+        (f: { name: string }) => f.name === 'Display Name'
+      )
+      expect(displayField.value).toBe('myuser')
+    })
+
+    it('parses username and multi-word display name', async () => {
+      mockFindFirstProfile.mockResolvedValueOnce(null)
+      mockFindFirstUser.mockResolvedValueOnce(null)
+      mockSettingsGetAll.mockResolvedValueOnce({})
+
+      mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
+        const tx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 1, username: 'myuser' }]),
+            }),
+          }),
+        }
+        await cb(tx)
+      })
+
+      const { interaction, replyFn } = createMockInteraction({
+        stringOptions: { input: 'myuser My Cool Display Name' },
+      })
+
+      await register.execute(interaction as never)
+
+      expect(mockTransaction).toHaveBeenCalled()
+      const embed = replyFn.mock.calls[0][0].embeds[0]
+      const usernameField = embed.data.fields.find((f: { name: string }) => f.name === 'Username')
+      expect(usernameField.value).toBe('myuser')
+      const displayField = embed.data.fields.find(
+        (f: { name: string }) => f.name === 'Display Name'
+      )
+      expect(displayField.value).toBe('My Cool Display Name')
     })
   })
 

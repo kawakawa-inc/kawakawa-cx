@@ -5,35 +5,37 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const {
   mockDbSelect,
-  mockDbInsert,
   mockDbUpdate,
+  mockDbTransaction,
   mockSelectFrom,
   mockSelectWhere,
   mockSelectLimit,
-  mockFindFirstDiscordProfile,
   mockFindFirstUserDiscordProfile,
   mockUpdateSet,
   mockUpdateWhere,
-  mockInsertValues,
+  mockUpdateReturning,
+  mockTxInsertValues,
+  mockTxFindFirstUserDiscordProfile,
 } = vi.hoisted(() => ({
   mockDbSelect: vi.fn(),
-  mockDbInsert: vi.fn(),
   mockDbUpdate: vi.fn(),
+  mockDbTransaction: vi.fn(),
   mockSelectFrom: vi.fn(),
   mockSelectWhere: vi.fn(),
   mockSelectLimit: vi.fn(),
-  mockFindFirstDiscordProfile: vi.fn(),
   mockFindFirstUserDiscordProfile: vi.fn(),
   mockUpdateSet: vi.fn(),
   mockUpdateWhere: vi.fn(),
-  mockInsertValues: vi.fn(),
+  mockUpdateReturning: vi.fn(),
+  mockTxInsertValues: vi.fn(),
+  mockTxFindFirstUserDiscordProfile: vi.fn(),
 }))
 
 vi.mock('../db/index.js', () => ({
   db: {
     select: mockDbSelect,
-    insert: mockDbInsert,
     update: mockDbUpdate,
+    transaction: mockDbTransaction,
     query: {
       userDiscordProfiles: {
         findFirst: mockFindFirstUserDiscordProfile,
@@ -77,6 +79,47 @@ vi.mock('../services/notificationService.js', () => ({
 
 import { AuthController } from './AuthController.js'
 
+// Helper to build the tx mock used inside db.transaction callback
+function createTxMock(
+  overrides: {
+    updateReturning?: unknown[]
+    findFirstResults?: (unknown | null)[]
+    insertThrow?: Error
+  } = {}
+) {
+  const { updateReturning = [], findFirstResults = [], insertThrow } = overrides
+  let findFirstCallIndex = 0
+
+  const txInsertValues = mockTxInsertValues
+  const txInsert = vi.fn().mockReturnValue({ values: txInsertValues })
+
+  mockTxFindFirstUserDiscordProfile.mockReset()
+  for (const result of findFirstResults) {
+    mockTxFindFirstUserDiscordProfile.mockResolvedValueOnce(result)
+  }
+
+  mockUpdateReturning.mockResolvedValue(updateReturning)
+  mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning })
+  mockUpdateSet.mockReturnValue({ where: mockUpdateWhere })
+  const txUpdate = vi.fn().mockReturnValue({ set: mockUpdateSet })
+
+  if (insertThrow) {
+    txInsertValues.mockRejectedValue(insertThrow)
+  } else {
+    txInsertValues.mockResolvedValue(undefined)
+  }
+
+  return {
+    update: txUpdate,
+    insert: txInsert,
+    query: {
+      userDiscordProfiles: {
+        findFirst: mockTxFindFirstUserDiscordProfile,
+      },
+    },
+  }
+}
+
 describe('AuthController - Discord Linking', () => {
   let controller: AuthController
 
@@ -84,20 +127,22 @@ describe('AuthController - Discord Linking', () => {
     vi.clearAllMocks()
     controller = new AuthController()
 
-    // Default select chain
+    // Default select chain (for validateDiscordLinkToken)
     mockSelectLimit.mockResolvedValue([])
     mockSelectWhere.mockReturnValue({ limit: mockSelectLimit })
     mockSelectFrom.mockReturnValue({ where: mockSelectWhere })
     mockDbSelect.mockReturnValue({ from: mockSelectFrom })
 
-    // Default update chain
+    // Default update chain (for validateDiscordLinkToken marking token as used)
     mockUpdateWhere.mockResolvedValue(undefined)
     mockUpdateSet.mockReturnValue({ where: mockUpdateWhere })
     mockDbUpdate.mockReturnValue({ set: mockUpdateSet })
 
-    // Default insert chain
-    mockInsertValues.mockResolvedValue(undefined)
-    mockDbInsert.mockReturnValue({ values: mockInsertValues })
+    // Default transaction: execute the callback with tx mock
+    mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const tx = createTxMock({ updateReturning: [] })
+      return cb(tx)
+    })
   })
 
   describe('validateDiscordLinkToken', () => {
@@ -140,7 +185,7 @@ describe('AuthController - Discord Linking', () => {
           discordId: '123',
           discordUsername: 'user',
           used: false,
-          expiresAt: new Date(Date.now() - 60000), // In the past
+          expiresAt: new Date(Date.now() - 60000),
         },
       ])
 
@@ -203,14 +248,27 @@ describe('AuthController - Discord Linking', () => {
   describe('completeDiscordLink', () => {
     const mockRequest = (userId?: number) => ({ user: userId ? { userId } : undefined }) as never
 
+    const validToken = {
+      id: 1,
+      token: 'valid',
+      discordId: '123',
+      discordUsername: 'testuser',
+      discordAvatar: 'avatar.png',
+      used: true, // already set to true by atomic update
+      expiresAt: new Date(Date.now() + 60000),
+    }
+
     it('throws Unauthorized when no user', async () => {
       await expect(controller.completeDiscordLink(mockRequest(), { token: 'tok' })).rejects.toThrow(
         'Authentication required'
       )
     })
 
-    it('throws BadRequest when token not found', async () => {
-      mockSelectLimit.mockResolvedValue([])
+    it('throws BadRequest when token not found (atomic update returns empty)', async () => {
+      mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = createTxMock({ updateReturning: [] })
+        return cb(tx)
+      })
 
       await expect(
         controller.completeDiscordLink(mockRequest(1), { token: 'bad-token' })
@@ -218,17 +276,12 @@ describe('AuthController - Discord Linking', () => {
     })
 
     it('throws BadRequest when token expired', async () => {
-      mockSelectLimit.mockResolvedValue([
-        {
-          id: 1,
-          token: 'expired',
-          discordId: '123',
-          discordUsername: 'user',
-          discordAvatar: null,
-          used: false,
-          expiresAt: new Date(Date.now() - 60000),
-        },
-      ])
+      const expiredToken = { ...validToken, expiresAt: new Date(Date.now() - 60000) }
+
+      mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = createTxMock({ updateReturning: [expiredToken] })
+        return cb(tx)
+      })
 
       await expect(
         controller.completeDiscordLink(mockRequest(1), { token: 'expired' })
@@ -236,19 +289,13 @@ describe('AuthController - Discord Linking', () => {
     })
 
     it('throws Conflict when user already has Discord linked', async () => {
-      mockSelectLimit.mockResolvedValue([
-        {
-          id: 1,
-          token: 'valid',
-          discordId: '123',
-          discordUsername: 'user',
-          discordAvatar: null,
-          used: false,
-          expiresAt: new Date(Date.now() + 60000),
-        },
-      ])
-      // First findFirst call = check if user already has Discord
-      mockFindFirstUserDiscordProfile.mockResolvedValueOnce({ userId: 1, discordId: '999' })
+      mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = createTxMock({
+          updateReturning: [validToken],
+          findFirstResults: [{ userId: 1, discordId: '999' }],
+        })
+        return cb(tx)
+      })
 
       await expect(
         controller.completeDiscordLink(mockRequest(1), { token: 'valid' })
@@ -256,22 +303,13 @@ describe('AuthController - Discord Linking', () => {
     })
 
     it('throws BadRequest when Discord already linked to another account', async () => {
-      mockSelectLimit.mockResolvedValue([
-        {
-          id: 1,
-          token: 'valid',
-          discordId: '123',
-          discordUsername: 'user',
-          discordAvatar: null,
-          used: false,
-          expiresAt: new Date(Date.now() + 60000),
-        },
-      ])
-      // First call: user has no Discord profile
-      // Second call: this Discord is already linked to someone else
-      mockFindFirstUserDiscordProfile
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ userId: 99, discordId: '123' })
+      mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = createTxMock({
+          updateReturning: [validToken],
+          findFirstResults: [null, { userId: 99, discordId: '123' }],
+        })
+        return cb(tx)
+      })
 
       await expect(
         controller.completeDiscordLink(mockRequest(1), { token: 'valid' })
@@ -279,27 +317,19 @@ describe('AuthController - Discord Linking', () => {
     })
 
     it('successfully links Discord account', async () => {
-      mockSelectLimit.mockResolvedValue([
-        {
-          id: 1,
-          token: 'valid',
-          discordId: '123',
-          discordUsername: 'testuser',
-          discordAvatar: 'avatar.png',
-          used: false,
-          expiresAt: new Date(Date.now() + 60000),
-        },
-      ])
-      mockFindFirstUserDiscordProfile.mockResolvedValue(null)
+      mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = createTxMock({
+          updateReturning: [validToken],
+          findFirstResults: [null, null],
+        })
+        return cb(tx)
+      })
 
       const result = await controller.completeDiscordLink(mockRequest(1), { token: 'valid' })
 
       expect(result.message).toContain('Successfully linked')
       expect(result.message).toContain('testuser')
-      // Should insert the profile
-      expect(mockDbInsert).toHaveBeenCalled()
-      // Should mark token as used
-      expect(mockDbUpdate).toHaveBeenCalled()
+      expect(mockTxInsertValues).toHaveBeenCalled()
     })
   })
 })

@@ -7,7 +7,7 @@ const MAX_STRING_LENGTH = 500
 const MAX_ARRAY_ITEMS = 10
 const MAX_OBJECT_DEPTH = 5
 
-const isDevelopment = process.env.NODE_ENV !== 'production'
+const isDevelopment = process.env.NODE_ENV === 'development'
 
 /**
  * PII fields that should be redacted from logs

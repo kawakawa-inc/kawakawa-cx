@@ -72,6 +72,7 @@ jobs:
 
   deploy:
     needs: build
+    if: startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
 

@@ -550,62 +550,52 @@ export class AuthController extends Controller {
       throw Unauthorized('Authentication required')
     }
 
-    // Find the token
-    const [linkToken] = await db
-      .select()
-      .from(discordLinkTokens)
-      .where(and(eq(discordLinkTokens.token, body.token), eq(discordLinkTokens.used, false)))
-      .limit(1)
-
-    if (!linkToken) {
-      throw BadRequest('Invalid or expired link token')
-    }
-
-    // Check if expired
-    if (new Date() > linkToken.expiresAt) {
-      throw BadRequest('This link has expired. Please run /link again in Discord.')
-    }
-
-    // Check if user already has a Discord linked
-    const existingUserProfile = await db.query.userDiscordProfiles.findFirst({
-      where: eq(userDiscordProfiles.userId, userId),
-    })
-
-    if (existingUserProfile) {
-      throw Conflict('Your account already has a Discord linked. Unlink it first via Discord.')
-    }
-
-    // Check if this Discord is already linked to another account
-    const existingDiscordProfile = await db.query.userDiscordProfiles.findFirst({
-      where: eq(userDiscordProfiles.discordId, linkToken.discordId),
-    })
-
-    if (existingDiscordProfile) {
-      // Mark token as used
-      await db
+    return await db.transaction(async tx => {
+      // Atomically consume the token (WHERE used=false prevents races)
+      const [linkToken] = await tx
         .update(discordLinkTokens)
         .set({ used: true })
-        .where(eq(discordLinkTokens.id, linkToken.id))
+        .where(and(eq(discordLinkTokens.token, body.token), eq(discordLinkTokens.used, false)))
+        .returning()
 
-      throw BadRequest('This Discord account is already linked to another Kawakawa account.')
-    }
+      if (!linkToken) {
+        throw BadRequest('Invalid or expired link token')
+      }
 
-    // Create the Discord profile link
-    await db.insert(userDiscordProfiles).values({
-      userId,
-      discordId: linkToken.discordId,
-      discordUsername: linkToken.discordUsername,
-      discordAvatar: linkToken.discordAvatar,
+      // Check if expired
+      if (new Date() > linkToken.expiresAt) {
+        throw BadRequest('This link has expired. Please run /link again in Discord.')
+      }
+
+      // Check if user already has a Discord linked
+      const existingUserProfile = await tx.query.userDiscordProfiles.findFirst({
+        where: eq(userDiscordProfiles.userId, userId),
+      })
+
+      if (existingUserProfile) {
+        throw Conflict('Your account already has a Discord linked. Unlink it first via Discord.')
+      }
+
+      // Check if this Discord is already linked to another account
+      const existingDiscordProfile = await tx.query.userDiscordProfiles.findFirst({
+        where: eq(userDiscordProfiles.discordId, linkToken.discordId),
+      })
+
+      if (existingDiscordProfile) {
+        throw BadRequest('This Discord account is already linked to another Kawakawa account.')
+      }
+
+      // Create the Discord profile link
+      await tx.insert(userDiscordProfiles).values({
+        userId,
+        discordId: linkToken.discordId,
+        discordUsername: linkToken.discordUsername,
+        discordAvatar: linkToken.discordAvatar,
+      })
+
+      return {
+        message: `Successfully linked Discord account ${linkToken.discordUsername}!`,
+      }
     })
-
-    // Mark token as used
-    await db
-      .update(discordLinkTokens)
-      .set({ used: true })
-      .where(eq(discordLinkTokens.id, linkToken.id))
-
-    return {
-      message: `Successfully linked Discord account ${linkToken.discordUsername}!`,
-    }
   }
 }

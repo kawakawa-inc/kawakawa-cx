@@ -122,6 +122,7 @@ services:
       - key: JWT_SECRET
         scope: RUN_TIME
         type: SECRET
+        value: EV[1:REVej1Bj38GjGxOsdtLj9SXchiZWlIL8:LazpwsSeIbsrYFAFL4BVm8dNdZBmUhJTIxgbQeUbt3JwR16/m13lpM/Dpr3CFwcS]
       - key: PORT
         scope: RUN_TIME
         value: '3000'

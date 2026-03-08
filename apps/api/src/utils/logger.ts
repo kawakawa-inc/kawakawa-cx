@@ -74,6 +74,25 @@ export function redactObject(
     return truncated
   }
 
+  // Handle Error objects: extract non-enumerable message/stack/name
+  if (obj instanceof Error) {
+    const result: Record<string, unknown> = {
+      message: redactObject(obj.message, seen, depth + 1),
+      stack: obj.stack,
+      type: obj.constructor.name,
+    }
+    // Also include any custom enumerable properties (e.g., statusCode)
+    for (const [key, value] of Object.entries(obj)) {
+      const lowerKey = key.toLowerCase()
+      if (PII_FIELDS.some(field => lowerKey.includes(field.toLowerCase()))) {
+        result[key] = '[REDACTED]'
+      } else {
+        result[key] = redactObject(value, seen, depth + 1)
+      }
+    }
+    return result
+  }
+
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
     const lowerKey = key.toLowerCase()

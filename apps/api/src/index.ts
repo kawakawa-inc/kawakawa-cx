@@ -5,7 +5,7 @@ import type { Options as PinoHttpOptions } from 'pino-http'
 import { RegisterRoutes } from './generated/routes.js'
 import swaggerDocument from './generated/swagger.json' with { type: 'json' }
 import { requestContext, getContextValue } from './utils/requestContext.js'
-import logger from './utils/logger.js'
+import logger, { redactObject } from './utils/logger.js'
 
 const app = express()
 
@@ -45,14 +45,13 @@ const httpLoggerOptions: PinoHttpOptions = {
   // Custom log messages that include status code
   customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
   customErrorMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
-  // Add custom properties including request/response bodies
-  // Note: redaction happens in logger formatter, not here (to avoid double-redaction)
+  // Add custom properties including request/response bodies (redacted)
   customProps: (req, res) => {
     const props: Record<string, unknown> = {}
     const reqBody = (req as RequestWithBody)._reqBody
     const resBody = (res as ResponseWithBody)._resBody
-    if (reqBody !== undefined) props.reqBody = reqBody
-    if (resBody !== undefined) props.resBody = resBody
+    if (reqBody !== undefined) props.reqBody = redactObject(reqBody)
+    if (resBody !== undefined) props.resBody = redactObject(resBody)
     return props
   },
   // Customize serializers - use pino's request serializer, omit redundant res object
@@ -111,6 +110,15 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
 })
 
 const port = process.env.PORT || 3000
+
+// Fail fast if critical env vars are missing
+if (
+  !process.env.JWT_SECRET &&
+  process.env.NODE_ENV !== 'test' &&
+  process.env.NODE_ENV !== 'development'
+) {
+  logger.fatal('JWT_SECRET environment variable is not set — authentication will fail')
+}
 
 app.listen(port, () => {
   logger.info({ port }, 'API server started')

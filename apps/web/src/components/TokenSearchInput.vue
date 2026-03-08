@@ -297,6 +297,20 @@ const suggestions = computed((): Suggestion[] => {
 
   // Commodities - match by ticker, internal name, or localized name
   const commodities = commodityService.getAllCommoditiesSync()
+
+  // Always include exact ticker match first (so early break doesn't skip it)
+  const exactTickerMatch = commodities.find(c => c.ticker.toUpperCase() === upperWord)
+  if (exactTickerMatch) {
+    results.push({
+      type: 'commodity',
+      typeLabel: 'Commodity',
+      value: exactTickerMatch.ticker,
+      display: exactTickerMatch.ticker,
+      hint: props.getCommodityName(exactTickerMatch.ticker),
+      color: 'primary',
+    })
+  }
+
   for (const c of commodities) {
     const localizedName = props.getCommodityName(c.ticker).toLowerCase()
     if (
@@ -307,7 +321,7 @@ const suggestions = computed((): Suggestion[] => {
       localizedName.startsWith(lowerWord) ||
       localizedName.includes(lowerWord)
     ) {
-      // Avoid duplicates
+      // Avoid duplicates (including exact match added above)
       if (!results.find(r => r.type === 'commodity' && r.value === c.ticker)) {
         results.push({
           type: 'commodity',

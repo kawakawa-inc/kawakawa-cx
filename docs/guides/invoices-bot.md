@@ -66,14 +66,14 @@ If you run `/buy` or `/sell` without a counterparty, the bot shows available mar
 
 ## Quick Reference
 
-| Command | Description |
-|---------|-------------|
+| Command                   | Description                   |
+| ------------------------- | ----------------------------- |
 | `/buy 100 RAT BEN @alice` | Add buy to invoice with alice |
-| `/sell 50 COF MOR bob` | Add sell to invoice with bob |
-| `/invoices` | View all your invoices |
-| `/invoice 5` | View invoice #5 with actions |
-| `/close` | Submit a draft invoice |
-| `/close 5` | Submit invoice #5 |
+| `/sell 50 COF MOR bob`    | Add sell to invoice with bob  |
+| `/invoices`               | View all your invoices        |
+| `/invoice 5`              | View invoice #5 with actions  |
+| `/close`                  | Submit a draft invoice        |
+| `/close 5`                | Submit invoice #5             |
 
 ## Tips
 

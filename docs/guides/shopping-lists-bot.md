@@ -53,11 +53,11 @@ Removes the list permanently (asks for confirmation first).
 
 ## Quick Reference
 
-| Command | Description |
-|---------|-------------|
-| `/list 100 COF 200 RAT` | Create a new shopping list |
-| `/list <XIT JSON>` | Create from PRUNplanner export |
-| `/lists` | View and manage all your lists |
+| Command                 | Description                    |
+| ----------------------- | ------------------------------ |
+| `/list 100 COF 200 RAT` | Create a new shopping list     |
+| `/list <XIT JSON>`      | Create from PRUNplanner export |
+| `/lists`                | View and manage all your lists |
 
 ## Tips
 

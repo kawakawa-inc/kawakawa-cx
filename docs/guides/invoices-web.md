@@ -45,14 +45,14 @@ For each pending reservation, you can:
 
 ## Invoice Statuses
 
-| Status | Meaning |
-|--------|---------|
-| Draft | Still building, not yet sent |
-| Pending | Submitted, waiting for counterparty |
-| Confirmed | Counterparty accepted |
-| Fulfilled | Trade completed in-game |
+| Status              | Meaning                                       |
+| ------------------- | --------------------------------------------- |
+| Draft               | Still building, not yet sent                  |
+| Pending             | Submitted, waiting for counterparty           |
+| Confirmed           | Counterparty accepted                         |
+| Fulfilled           | Trade completed in-game                       |
 | Partially Fulfilled | Some items complete, others still in progress |
-| Cancelled | Invoice was cancelled by either party |
+| Cancelled           | Invoice was cancelled by either party         |
 
 ## Contract Breakdown
 

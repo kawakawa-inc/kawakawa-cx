@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
 import { fioClient } from '../services/fio/client.js'
-import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
+import { calculateEffectivePriceBatch, type PriceRequest } from '../services/price-calculator.js'
 
 // Market listing with seller info and calculated availability
 interface MarketListing {
@@ -162,48 +162,50 @@ export class MarketController extends Controller {
       }))
     )
 
-    // Process orders and filter by permissions
-    const filteredOrders: FilteredSellOrder[] = []
-
-    for (const order of orders) {
+    // Filter orders by permissions and query params first (before any price lookups)
+    const permissionFiltered = orders.filter(order => {
       const isOwn = order.userId === userId
-
-      // Filter by order type permissions (always show user's own orders)
       if (!isOwn) {
-        if (order.orderType === 'internal' && !canViewInternal) continue
-        if (order.orderType === 'partner' && !canViewPartner) continue
+        if (order.orderType === 'internal' && !canViewInternal) return false
+        if (order.orderType === 'partner' && !canViewPartner) return false
       }
+      if (commodity && order.commodityTicker !== commodity) return false
+      if (location && order.locationId !== location) return false
+      return true
+    })
 
-      // Filter by commodity if specified
-      if (commodity && order.commodityTicker !== commodity) continue
+    // Batch calculate effective prices for all dynamic pricing orders (3 queries total)
+    const dynamicOrders = permissionFiltered.filter(o => o.priceListCode)
+    const priceRequests: PriceRequest[] = dynamicOrders.map(o => ({
+      priceListCode: o.priceListCode!,
+      ticker: o.commodityTicker,
+      locationId: o.locationId,
+      currency: o.currency,
+    }))
+    const priceMap =
+      priceRequests.length > 0
+        ? await calculateEffectivePriceBatch(priceRequests)
+        : new Map<string, never>()
 
-      // Filter by location if specified
-      if (location && order.locationId !== location) continue
-
-      // Get quantity info from shared service
+    // Build filtered orders with pricing info
+    const filteredOrders: FilteredSellOrder[] = permissionFiltered.map(order => {
+      const isOwn = order.userId === userId
       const qty = quantityInfo.get(order.id)
-
-      // Determine pricing mode and effective price
-      // Price list takes precedence over custom price when both are set
       const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
+
       let effectivePrice: number | null = null
       let isFallback = false
       let priceLocationId: string | null = null
 
       if (order.priceListCode) {
-        // Calculate effective price from price list
-        const effPrice = await calculateEffectivePriceWithFallback(
-          order.priceListCode,
-          order.commodityTicker,
-          order.locationId,
-          order.currency
-        )
+        const key = `${order.priceListCode.toUpperCase()}:${order.commodityTicker.toUpperCase()}:${order.locationId}`
+        const effPrice = priceMap.get(key)
         effectivePrice = effPrice?.finalPrice ?? null
         isFallback = effPrice?.isFallback ?? false
         priceLocationId = effPrice?.locationId ?? null
       }
 
-      filteredOrders.push({
+      return {
         id: order.id,
         userId: order.userId,
         commodityTicker: order.commodityTicker,
@@ -223,8 +225,8 @@ export class MarketController extends Controller {
         isFallback,
         priceLocationId,
         pricingMode,
-      })
-    }
+      }
+    })
 
     // Calculate jump counts if destination is provided
     const jumpCountMap = new Map<string, number | null>()
@@ -337,45 +339,49 @@ export class MarketController extends Controller {
     // Use shared service for reservation stats (handles expiration correctly)
     const reservationStats = await getReservationStatsForBuyOrders(orders.map(o => o.id))
 
-    // Process orders and filter by permissions
-    const filteredBuyOrders: FilteredBuyOrder[] = []
-
-    for (const order of orders) {
+    // Filter orders by permissions and query params first (before any price lookups)
+    const permissionFilteredBuy = orders.filter(order => {
       const isOwn = order.userId === userId
-
-      // Filter by order type permissions (always show user's own orders)
       if (!isOwn) {
-        if (order.orderType === 'internal' && !canViewInternal) continue
-        if (order.orderType === 'partner' && !canViewPartner) continue
+        if (order.orderType === 'internal' && !canViewInternal) return false
+        if (order.orderType === 'partner' && !canViewPartner) return false
       }
+      if (commodity && order.commodityTicker !== commodity) return false
+      if (location && order.locationId !== location) return false
+      return true
+    })
 
-      // Filter by commodity if specified
-      if (commodity && order.commodityTicker !== commodity) continue
+    // Batch calculate effective prices for all dynamic pricing orders (3 queries total)
+    const dynamicBuyOrders = permissionFilteredBuy.filter(o => o.priceListCode)
+    const buyPriceRequests: PriceRequest[] = dynamicBuyOrders.map(o => ({
+      priceListCode: o.priceListCode!,
+      ticker: o.commodityTicker,
+      locationId: o.locationId,
+      currency: o.currency,
+    }))
+    const buyPriceMap =
+      buyPriceRequests.length > 0
+        ? await calculateEffectivePriceBatch(buyPriceRequests)
+        : new Map<string, never>()
 
-      // Filter by location if specified
-      if (location && order.locationId !== location) continue
-
-      // Determine pricing mode and effective price
-      // Price list takes precedence over custom price when both are set
+    // Build filtered buy orders with pricing info
+    const filteredBuyOrders: FilteredBuyOrder[] = permissionFilteredBuy.map(order => {
+      const isOwn = order.userId === userId
       const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
+
       let effectivePrice: number | null = null
       let isFallback = false
       let priceLocationId: string | null = null
 
       if (order.priceListCode) {
-        // Calculate effective price from price list
-        const effPrice = await calculateEffectivePriceWithFallback(
-          order.priceListCode,
-          order.commodityTicker,
-          order.locationId,
-          order.currency
-        )
+        const key = `${order.priceListCode.toUpperCase()}:${order.commodityTicker.toUpperCase()}:${order.locationId}`
+        const effPrice = buyPriceMap.get(key)
         effectivePrice = effPrice?.finalPrice ?? null
         isFallback = effPrice?.isFallback ?? false
         priceLocationId = effPrice?.locationId ?? null
       }
 
-      filteredBuyOrders.push({
+      return {
         id: order.id,
         userId: order.userId,
         commodityTicker: order.commodityTicker,
@@ -391,8 +397,8 @@ export class MarketController extends Controller {
         isFallback,
         priceLocationId,
         pricingMode,
-      })
-    }
+      }
+    })
 
     // Calculate jump counts if destination is provided
     const jumpCountMap = new Map<string, number | null>()

@@ -34,6 +34,7 @@
     "admin:add-role": "tsx --env-file-if-exists=.env src/scripts/admin-add-role.ts",
     "admin:rm-role": "tsx --env-file-if-exists=.env src/scripts/admin-rm-role.ts",
     "logs": "tsx --env-file-if-exists=.env src/scripts/logs.ts",
+    "opensearch:lifecycle": "tsx --env-file-if-exists=.env src/scripts/opensearch-lifecycle.ts",
     "logs:dev": "tsx --env-file-if-exists=.env src/scripts/logs.ts dev",
     "logs:prod": "tsx --env-file-if-exists=.env src/scripts/logs.ts prod",
     "db:drop": "tsx --env-file-if-exists=.env src/scripts/drop-all-tables.ts",

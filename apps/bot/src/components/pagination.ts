@@ -306,8 +306,9 @@ export async function sendPaginatedResponse(
           .setDisabled(true)
       )
       await interaction.editReply({ components: [disabledRow] })
-    } catch {
+    } catch (error) {
       // Interaction may have been deleted
+      console.error('Failed to update expired pagination interaction:', error)
     }
   })
 }
@@ -602,8 +603,9 @@ export async function sendPaginatedResponseWithExtraButtons(
           .setDisabled(true)
       )
       await interaction.editReply({ components: [disabledRow] })
-    } catch {
+    } catch (error) {
       // Interaction may have been deleted
+      console.error('Failed to update expired pagination interaction:', error)
     }
   })
 }

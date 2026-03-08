@@ -142,7 +142,7 @@ export async function calculateEffectivePrice(
     if (adj.adjustmentType === 'percentage') {
       // Percentage adjustment: price = price * (1 + value/100)
       appliedAmount = currentPrice * (adjustmentValue / 100)
-      currentPrice = currentPrice + appliedAmount
+      currentPrice = Math.round((currentPrice + appliedAmount) * 100) / 100
     } else {
       // Fixed adjustment: price = price + value
       appliedAmount = adjustmentValue
@@ -330,7 +330,7 @@ export async function calculateEffectivePrices(
 
       if (adj.adjustmentType === 'percentage') {
         appliedAmount = currentPrice * (adjustmentValue / 100)
-        currentPrice = currentPrice + appliedAmount
+        currentPrice = Math.round((currentPrice + appliedAmount) * 100) / 100
       } else {
         appliedAmount = adjustmentValue
         currentPrice = currentPrice + appliedAmount
@@ -399,7 +399,7 @@ function applyAdjustments(
 
     if (adj.adjustmentType === 'percentage') {
       appliedAmount = currentPrice * (adjustmentValue / 100)
-      currentPrice = currentPrice + appliedAmount
+      currentPrice = Math.round((currentPrice + appliedAmount) * 100) / 100
     } else {
       appliedAmount = adjustmentValue
       currentPrice = currentPrice + appliedAmount

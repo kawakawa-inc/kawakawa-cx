@@ -354,10 +354,8 @@ const handleRegister = async () => {
     } else if (response.status === 400) {
       const data = await response.json()
       // Check if it's a duplicate username error
-      if (
-        data.message &&
-        (data.message.includes('already exists') || data.message.includes('already taken'))
-      ) {
+      const msg = (data.message || '').toLowerCase()
+      if (msg.includes('already exists') || msg.includes('already taken')) {
         errorMessage.value = 'Profile name already taken. Please choose a different one.'
       } else {
         errorMessage.value = data.message || 'Invalid registration data. Please check your input.'
@@ -365,10 +363,8 @@ const handleRegister = async () => {
     } else if (response.status === 500) {
       // Backend returns 500 for validation errors, check message
       const data = await response.json()
-      if (
-        data.message &&
-        (data.message.includes('already exists') || data.message.includes('already taken'))
-      ) {
+      const msg = (data.message || '').toLowerCase()
+      if (msg.includes('already exists') || msg.includes('already taken')) {
         errorMessage.value = 'Profile name already taken. Please choose a different one.'
       } else if (data.message) {
         errorMessage.value = data.message

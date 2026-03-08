@@ -38,11 +38,18 @@ function loadFromStorage(): void {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
-      workingList.value = JSON.parse(stored)
+      const parsed = JSON.parse(stored)
+      if (parsed && typeof parsed === 'object' && parsed.materials) {
+        workingList.value = parsed
+      } else {
+        localStorage.removeItem(STORAGE_KEY)
+        workingList.value = null
+      }
     }
   } catch (e) {
     console.error('Failed to load shopping list from localStorage:', e)
     localStorage.removeItem(STORAGE_KEY)
+    workingList.value = null
   }
 }
 

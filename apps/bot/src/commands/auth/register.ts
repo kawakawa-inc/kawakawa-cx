@@ -78,6 +78,16 @@ export const register: Command = {
 
       const parts = input.trim().split(/\s+/)
       username = parts[0]
+      if (!username) {
+        await interaction.reply({
+          content:
+            `Please provide a username.\n\n` +
+            `**Usage:** \`${prefix}register <username> [display name]\`\n` +
+            `**Example:** \`${prefix}register MyUser My Display Name\``,
+          flags: MessageFlags.Ephemeral,
+        })
+        return
+      }
       displayName = parts.length > 1 ? parts.slice(1).join(' ') : username
     } else {
       // Slash command: use named options

@@ -26,9 +26,8 @@ import {
 } from '../db/index.js'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken } from '../utils/jwt.js'
-import { Unauthorized, Forbidden, BadRequest, Conflict } from '../utils/errors.js'
+import { Unauthorized, Forbidden, BadRequest, NotFound, Conflict } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
-import crypto from 'crypto'
 import { notificationService } from '../services/notificationService.js'
 
 interface LoginRequest {
@@ -288,34 +287,10 @@ export class AuthController extends Controller {
       .limit(1)
 
     if (!user) {
-      this.setStatus(404)
-      throw new Error('User not found')
+      throw NotFound('User not found')
     }
 
-    if (!user.email) {
-      this.setStatus(400)
-      throw new Error('This user has no email address set. Please contact an administrator.')
-    }
-
-    // Generate reset token
-    const token = crypto.randomBytes(32).toString('hex')
-    const expirationHours = parseInt(process.env.PASSWORD_RESET_EXPIRATION_HOURS || '24')
-    const expiresAt = new Date(Date.now() + expirationHours * 60 * 60 * 1000)
-
-    // Store reset token
-    await db.insert(passwordResetTokens).values({
-      userId: user.id,
-      token,
-      expiresAt,
-      used: false,
-    })
-
-    // TODO: Send email with reset link (integrate email service like SendGrid, AWS SES)
-    // For now, administrator must generate reset link via admin panel
-
-    return {
-      message: 'Password reset instructions have been sent to your email address.',
-    }
+    throw BadRequest('Password reset is not yet available. Please contact an administrator.')
   }
 
   @Post('reset-password')

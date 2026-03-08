@@ -1,6 +1,12 @@
 import jwt from 'jsonwebtoken'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-for-development-only'
+const JWT_SECRET = (() => {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET
+  if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
+    return 'fallback-secret-for-development-only'
+  }
+  throw new Error('JWT_SECRET environment variable is required in production')
+})()
 const JWT_EXPIRES_IN = '7d' // 7 days
 
 export interface JwtPayload {

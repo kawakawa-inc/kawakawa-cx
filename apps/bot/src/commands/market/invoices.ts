@@ -246,8 +246,9 @@ async function sendPaginatedInvoices(
           .setDisabled(true)
       )
       await interaction.editReply({ components: [disabledRow] })
-    } catch {
+    } catch (error) {
       // Interaction may have been deleted
+      logger.error({ error }, 'Failed to update expired invoices interaction')
     }
   })
 }

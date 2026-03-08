@@ -123,7 +123,7 @@ const handleLogin = async () => {
     } else if (response.status === 500) {
       // Backend returns 500 for auth errors, check message
       const data = await response.json()
-      if (data.message && data.message.includes('Invalid')) {
+      if (data.message && data.message.toLowerCase().includes('invalid')) {
         errorMessage.value = 'Invalid credentials. Please try again.'
       } else {
         errorMessage.value = 'An error occurred. Please try again later.'

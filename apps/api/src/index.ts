@@ -114,5 +114,5 @@ const port = process.env.PORT || 3000
 
 app.listen(port, () => {
   logger.info({ port }, 'API server started')
-  logger.info({ url: `http://localhost:${port}/api/docs` }, 'Swagger docs available')
+  logger.info({ path: '/api/docs', port }, 'Swagger docs available')
 })

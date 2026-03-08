@@ -260,7 +260,9 @@ async function buildInvoiceSummaries(
     if (!commodityTickersMap.has(stat.invoiceId)) {
       commodityTickersMap.set(stat.invoiceId, new Set())
     }
-    commodityTickersMap.get(stat.invoiceId)!.add(stat.commodityTicker)
+    const tickerSet = commodityTickersMap.get(stat.invoiceId)
+    if (!tickerSet) continue
+    tickerSet.add(stat.commodityTicker)
   }
 
   // Build stats map with buy/sell breakdown
@@ -286,7 +288,8 @@ async function buildInvoiceSummaries(
         sellTotalsByCurrency: new Map(),
       })
     }
-    const entry = statsMap.get(stat.invoiceId)!
+    const entry = statsMap.get(stat.invoiceId)
+    if (!entry) continue
     entry.itemCount += stat.itemCount
     const total = parseFloat(stat.total?.toString() ?? '0')
     entry.totalsByCurrency.set(

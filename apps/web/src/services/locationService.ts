@@ -240,10 +240,13 @@ export const locationService = {
 
     // Fetch from API
     try {
+      const jwt = localStorage.getItem('jwt')
+      const headers: Record<string, string> = {}
+      if (jwt) {
+        headers['Authorization'] = `Bearer ${jwt}`
+      }
       const response = await fetch('/api/fio/inventory/locations', {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('jwt') ?? ''}`,
-        },
+        headers,
       })
       if (!response.ok) {
         throw new Error('Failed to fetch user locations')

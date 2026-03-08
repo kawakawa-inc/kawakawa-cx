@@ -119,9 +119,6 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         value: ${kawa-db.DATABASE_URL}
-      - key: JWT_SECRET
-        scope: RUN_TIME
-        type: SECRET
       - key: PORT
         scope: RUN_TIME
         value: '3000'

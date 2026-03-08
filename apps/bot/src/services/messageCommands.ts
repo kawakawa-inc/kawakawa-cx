@@ -282,8 +282,57 @@ export async function handleMessageCommand(message: Message, client: BotClient):
   // Use the actual command name (may differ from input if partial match was used)
   const actualCommandName = command.data.name
 
+  // Extract subcommand from input if the command has subcommands
+  // e.g., "!order buy COF Katoa 500" → subcommand="buy", input="COF Katoa 500"
+  let subcommandName: string | null = null
+  const commandJson = command.data.toJSON() as { options?: { type: number; name: string }[] }
+  const subcommandNames = (commandJson.options ?? [])
+    .filter(opt => opt.type === 1) // ApplicationCommandOptionType.Subcommand = 1
+    .map(opt => opt.name)
+
+  if (subcommandNames.length > 0) {
+    const inputValue = options.get('input')
+    if (typeof inputValue === 'string') {
+      const firstWord = inputValue.split(/\s+/)[0]?.toLowerCase()
+      if (firstWord && subcommandNames.includes(firstWord)) {
+        subcommandName = firstWord
+        // Remove subcommand from input, leaving just the arguments
+        const remaining = inputValue.slice(firstWord.length).trim()
+        if (remaining) {
+          options.set('input', remaining)
+          options.set('query', remaining)
+          options.set('target', remaining)
+          options.set('topic', remaining)
+        } else {
+          options.set('input', null)
+          options.set('query', null)
+          options.set('target', null)
+          options.set('topic', null)
+        }
+      }
+    }
+
+    // If no valid subcommand found, show usage help
+    if (!subcommandName) {
+      const subcommandList = subcommandNames
+        .map(name => `\`${prefix}${actualCommandName} ${name}\``)
+        .join(', ')
+      await message.reply({
+        content: `Please specify a subcommand: ${subcommandList}`,
+        allowedMentions: { repliedUser: false },
+      })
+      return
+    }
+  }
+
   // Create adapter to make message look like an interaction
-  const adapter = new MessageInteractionAdapter(message, actualCommandName, options, prefix)
+  const adapter = new MessageInteractionAdapter(
+    message,
+    actualCommandName,
+    options,
+    prefix,
+    subcommandName
+  )
 
   // Log command invocation
   const startTime = Date.now()

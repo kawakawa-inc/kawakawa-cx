@@ -1,14 +1,19 @@
 /**
  * Interaction utilities for Discord bot commands
  */
-import type {
-  ChatInputCommandInteraction,
-  MessageComponentInteraction,
-  ModalSubmitInteraction,
-  StringSelectMenuInteraction,
-  ButtonInteraction,
-  Message,
+import {
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+  type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
+  type ButtonInteraction,
+  type Message,
+  type ModalBuilder,
 } from 'discord.js'
+import { isMessageInteractionAdapter } from '../adapters/messageInteraction.js'
 
 /** Default modal timeout: 5 minutes */
 export const MODAL_TIMEOUT = 5 * 60 * 1000
@@ -110,4 +115,60 @@ export async function awaitButton(
     return interaction
   }
   return null
+}
+
+/**
+ * Show a modal, handling prefix commands by DMing a button first.
+ *
+ * Slash commands can show modals directly, but prefix commands cannot.
+ * For prefix commands, this sends a DM with a button that opens the modal.
+ *
+ * @returns The modal submit interaction, or null if timed out/cancelled
+ */
+export async function showModalWithPrefixSupport(
+  interaction: ChatInputCommandInteraction,
+  modal: ModalBuilder,
+  modalId: string
+): Promise<ModalSubmitInteraction | null> {
+  // Slash commands: show modal directly
+  if (!isMessageInteractionAdapter(interaction)) {
+    await interaction.showModal(modal)
+    return awaitModal(interaction, modalId)
+  }
+
+  // Prefix commands: send a button that opens the modal
+  const buttonId = `open-modal:${Date.now()}`
+  const button = new ButtonBuilder()
+    .setCustomId(buttonId)
+    .setLabel('Open Form')
+    .setStyle(ButtonStyle.Primary)
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button)
+
+  const reply = (await interaction.reply({
+    content: 'Click the button below to open the form:',
+    components: [row],
+  })) as unknown as Message
+
+  const buttonClick = await awaitButton(reply, buttonId, interaction.user.id, MODAL_TIMEOUT)
+  if (!buttonClick) {
+    // Button timed out — remove it
+    await reply.edit({ content: 'Form expired.', components: [] }).catch(() => {})
+    return null
+  }
+
+  // Button clicked — show modal (this is the interaction response)
+  await buttonClick.showModal(modal)
+
+  // Remove the button so it can't be clicked again
+  await reply
+    .edit({ content: 'Form opened. Fill it out and submit.', components: [] })
+    .catch(() => {})
+
+  const modalSubmit = await awaitModal(buttonClick, modalId)
+  if (!modalSubmit) {
+    // Modal dismissed or timed out
+    await reply.edit({ content: 'Form cancelled or timed out.', components: [] }).catch(() => {})
+  }
+  return modalSubmit
 }

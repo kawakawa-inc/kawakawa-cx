@@ -78,7 +78,9 @@ vi.mock('../../services/display.js', () => ({
 }))
 vi.mock('../../services/userSettings.js', () => ({ getMarketSettings: mockGetMarketSettings }))
 vi.mock('../../utils/auth.js', () => ({ requireLinkedUser: mockRequireLinkedUser }))
-vi.mock('../../utils/interactions.js', () => ({ awaitModal: mockAwaitModal }))
+vi.mock('../../utils/interactions.js', () => ({
+  showModalWithPrefixSupport: mockAwaitModal,
+}))
 vi.mock('../../utils/validation.js', () => ({ isValidCurrency: vi.fn() }))
 vi.mock('../../utils/logger.js', () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -109,7 +111,7 @@ describe('bulkbuy command', () => {
     await bulkbuy.execute(interaction)
 
     expect(mockRequireLinkedUser).toHaveBeenCalledWith(interaction)
-    expect((interaction as any).showModal).not.toHaveBeenCalled()
+    expect(mockAwaitModal).not.toHaveBeenCalled()
   })
 
   it('shows modal when user is linked', async () => {
@@ -123,7 +125,6 @@ describe('bulkbuy command', () => {
     const interaction = createMockInteraction()
     await bulkbuy.execute(interaction)
 
-    expect((interaction as any).showModal).toHaveBeenCalled()
     expect(mockAwaitModal).toHaveBeenCalled()
   })
 })

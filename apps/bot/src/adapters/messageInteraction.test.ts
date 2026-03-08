@@ -299,6 +299,22 @@ describe('MessageInteractionAdapter', () => {
     })
   })
 
+  describe('getSubcommand', () => {
+    it('returns subcommand when provided', () => {
+      const message = createMockMessage()
+      const adapter = new MessageInteractionAdapter(message, 'order', new Map(), '!', 'buy')
+
+      expect(adapter.options.getSubcommand()).toBe('buy')
+    })
+
+    it('throws when no subcommand was provided', () => {
+      const message = createMockMessage()
+      const adapter = new MessageInteractionAdapter(message, 'order', new Map())
+
+      expect(() => adapter.options.getSubcommand()).toThrow('No subcommand was provided')
+    })
+  })
+
   describe('reply', () => {
     it('replies with string content', async () => {
       const message = createMockMessage()

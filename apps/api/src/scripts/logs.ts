@@ -11,6 +11,7 @@
  *   pnpm --filter @kawakawa/api logs dev --search "JWT"   # Search for keyword
  *   pnpm --filter @kawakawa/api logs prod --hours 4       # Last 4 hours
  *   pnpm --filter @kawakawa/api logs dev --component kawa-api  # Filter by component
+ *   pnpm --filter @kawakawa/api logs dev --raw            # Show full JSON entries
  */
 
 const LOGS_USERNAME = process.env.LOGS_USERNAME
@@ -54,7 +55,7 @@ async function search(index: string, query: Record<string, unknown>): Promise<Lo
   const data = (await res.json()) as {
     hits: { hits: Array<{ _source: LogEntry }> }
   }
-  return data.hits.hits.map((h) => h._source)
+  return data.hits.hits.map(h => h._source)
 }
 
 function parseArgs(args: string[]) {
@@ -67,6 +68,7 @@ function parseArgs(args: string[]) {
   let searchTerm: string | null = null
   let component: string | null = null
   let limit = 50
+  let raw = false
 
   for (let i = 0; i < rest.length; i++) {
     switch (rest[i]) {
@@ -90,10 +92,14 @@ function parseArgs(args: string[]) {
       case '-n':
         limit = parseInt(rest[++i], 10) || 50
         break
+      case '--raw':
+      case '-r':
+        raw = true
+        break
     }
   }
 
-  return { env, errors, hours, searchTerm, component, limit }
+  return { env, errors, hours, searchTerm, component, limit, raw }
 }
 
 function formatEntry(entry: LogEntry): string {
@@ -102,7 +108,16 @@ function formatEntry(entry: LogEntry): string {
   const comp = entry.do_component_name ?? '?'
   const level = (entry.level ?? 'info').toUpperCase().padEnd(5)
   const msg = entry.msg ?? JSON.stringify(entry)
-  return `${time} [${comp}] ${level} ${msg}`
+  let line = `${time} [${comp}] ${level} ${msg}`
+
+  // Show error details if present
+  const err = entry.err as Record<string, unknown> | undefined
+  if (err) {
+    if (err.message) line += `\n       Error: ${err.message}`
+    if (err.stack) line += `\n       ${String(err.stack).split('\n').join('\n       ')}`
+  }
+
+  return line
 }
 
 async function main() {
@@ -115,16 +130,15 @@ async function main() {
   --search STR, -s STR Search for keyword in messages
   --component X, -c X  Filter by DO component name
   --limit N, -n N      Max results (default: 50)
+  --raw, -r            Show full raw JSON entries
   --help               Show this help`)
     return
   }
 
-  const { env, errors, hours, searchTerm, component, limit } = parseArgs(args)
+  const { env, errors, hours, searchTerm, component, limit, raw } = parseArgs(args)
   const index = env === 'prod' ? 'logs-prod-kawakawa-cx' : 'logs-dev-kawakawa-cx'
 
-  const must: Record<string, unknown>[] = [
-    { range: { '@timestamp': { gte: `now-${hours}h` } } },
-  ]
+  const must: Record<string, unknown>[] = [{ range: { '@timestamp': { gte: `now-${hours}h` } } }]
 
   if (errors) {
     must.push({ match: { level: 'error' } })
@@ -150,11 +164,15 @@ async function main() {
   console.log(`--- ${index} (last ${hours}h, ${entries.length} entries) ---\n`)
   // Reverse so oldest is first (chronological order)
   for (const entry of entries.reverse()) {
-    console.log(formatEntry(entry))
+    if (raw) {
+      console.log(JSON.stringify(entry, null, 2))
+    } else {
+      console.log(formatEntry(entry))
+    }
   }
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error('Failed:', err.message)
   process.exit(1)
 })

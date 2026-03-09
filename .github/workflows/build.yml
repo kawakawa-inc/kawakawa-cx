@@ -122,25 +122,25 @@ jobs:
           yq -i '(.services[] | select(.name == "kawa-api")).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}
           yq -i '(.services[] | select(.name == "kawa-api")).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
           yq -i '(.services[] | select(.name == "kawa-api")).image.repository = env(IMAGE_PREFIX) + "-api"' ${{ steps.app.outputs.spec_file }}
-          yq -i '(.services[] | select(.name == "kawa-api")).image.tag = env(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.services[] | select(.name == "kawa-api")).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
 
           # Update Bot worker
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.repository = env(IMAGE_PREFIX) + "-bot"' ${{ steps.app.outputs.spec_file }}
-          yq -i '(.workers[] | select(.name == "kawa-bot")).image.tag = env(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.workers[] | select(.name == "kawa-bot")).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
 
           # Update Web service
           yq -i '(.services[] | select(.name == "kawa-web")).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}
           yq -i '(.services[] | select(.name == "kawa-web")).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
           yq -i '(.services[] | select(.name == "kawa-web")).image.repository = env(IMAGE_PREFIX) + "-web"' ${{ steps.app.outputs.spec_file }}
-          yq -i '(.services[] | select(.name == "kawa-web")).image.tag = env(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.services[] | select(.name == "kawa-web")).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
 
           # Update jobs to use API image
           yq -i '(.jobs[]).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}
           yq -i '(.jobs[]).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
           yq -i '(.jobs[]).image.repository = env(IMAGE_PREFIX) + "-api"' ${{ steps.app.outputs.spec_file }}
-          yq -i '(.jobs[]).image.tag = env(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.jobs[]).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
 
           echo "Updated spec file:"
           cat ${{ steps.app.outputs.spec_file }}

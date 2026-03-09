@@ -45,6 +45,7 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'reservation_expired',
   'invoice_submitted',
   'invoice_cancelled',
+  'invoice_fulfilled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',

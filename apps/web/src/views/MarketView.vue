@@ -1290,8 +1290,8 @@ const userNameOptions = computed(() => {
     }))
 })
 
-// Side panel visibility - manually controlled, no auto-open/close
-const sidePanelOpen = ref(false)
+// Side panel visibility - open by default
+const sidePanelOpen = ref(true)
 
 // Toggle side panel
 const toggleSidePanel = () => {

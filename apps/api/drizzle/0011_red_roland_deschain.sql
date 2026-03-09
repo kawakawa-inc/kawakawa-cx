@@ -1,0 +1,1 @@
+ALTER TYPE "public"."notification_type" ADD VALUE 'invoice_fulfilled' BEFORE 'user_needs_approval';

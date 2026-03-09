@@ -782,6 +782,31 @@
                   </v-tooltip>
                 </template>
 
+                <!-- Fulfill for sent invoices (pending, confirmed, partially_fulfilled) -->
+                <v-tooltip
+                  v-if="
+                    item.direction === 'sent' &&
+                    ['pending', 'confirmed', 'partially_fulfilled'].includes(item.status)
+                  "
+                  location="top"
+                >
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      icon
+                      size="small"
+                      variant="text"
+                      color="success"
+                      :loading="invoiceActionLoading === `fulfill-${item.id}`"
+                      :disabled="invoiceActionLoading !== null"
+                      @click.stop="fulfillInvoice(item)"
+                    >
+                      <v-icon>mdi-check-all</v-icon>
+                    </v-btn>
+                  </template>
+                  Fulfill Invoice
+                </v-tooltip>
+
                 <!-- Cancel for sent invoices -->
                 <v-tooltip
                   v-if="item.direction === 'sent' && item.status === 'pending'"
@@ -1451,6 +1476,23 @@ async function cancelInvoice(inv: InvoiceSummary) {
   } catch (error) {
     console.error('Failed to cancel invoice', error)
     showSnackbar('Failed to cancel invoice', 'error')
+  } finally {
+    invoiceActionLoading.value = null
+  }
+}
+
+async function fulfillInvoice(inv: InvoiceSummary) {
+  invoiceActionLoading.value = `fulfill-${inv.id}`
+  try {
+    await api.invoices.fulfill(inv.id)
+    showSnackbar('Invoice fulfilled')
+    // Collapse the fulfilled invoice row
+    const idx = expandedInvoices.value.indexOf(String(inv.id))
+    if (idx !== -1) expandedInvoices.value.splice(idx, 1)
+    await loadInvoices()
+  } catch (error) {
+    console.error('Failed to fulfill invoice', error)
+    showSnackbar('Failed to fulfill invoice', 'error')
   } finally {
     invoiceActionLoading.value = null
   }

@@ -4066,6 +4066,31 @@ const realApi = {
     return response.json()
   },
 
+  fulfillInvoice: async (id: number): Promise<Invoice> => {
+    const response = await fetchWithLogging(`/api/invoices/${id}/fulfill`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'This invoice cannot be fulfilled')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have access to this invoice')
+      }
+      if (response.status === 404) {
+        throw new Error('Invoice not found')
+      }
+      throw new Error(`Failed to fulfill invoice: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
   // Shopping Lists API
   getShoppingLists: async (): Promise<ShoppingListSummary[]> => {
     const response = await fetchWithLogging('/api/lists', {
@@ -4347,6 +4372,7 @@ export const api = {
       realApi.removeInvoiceLineItem(invoiceId, itemId),
     submit: (id: number) => realApi.submitInvoice(id),
     cancel: (id: number) => realApi.cancelInvoice(id),
+    fulfill: (id: number) => realApi.fulfillInvoice(id),
   },
   lists: {
     list: () => realApi.getShoppingLists(),

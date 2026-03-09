@@ -429,6 +429,7 @@ export type NotificationType =
   | 'reservation_expired'
   | 'invoice_submitted'
   | 'invoice_cancelled'
+  | 'invoice_fulfilled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
@@ -443,6 +444,7 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'reservation_expired',
   'invoice_submitted',
   'invoice_cancelled',
+  'invoice_fulfilled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',

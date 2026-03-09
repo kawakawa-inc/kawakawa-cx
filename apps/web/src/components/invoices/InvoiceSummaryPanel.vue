@@ -291,6 +291,10 @@ import type { Currency, Invoice, InvoiceSummary } from '@kawakawa/types'
 
 const emit = defineEmits<{
   'invoice-submitted': [invoiceId: number, invoicedQuantities: Record<string, number>]
+  'all-invoices-submitted': [
+    results: { invoiceId: number; counterpartyName: string }[],
+    invoicedQuantities: Record<string, number>,
+  ]
   'filter-add': [userName: string]
   'add-invoice': []
 }>()
@@ -485,23 +489,25 @@ const openSubmitAllDialog = () => {
 const handleSubmitAll = async () => {
   submittingAll.value = true
   try {
+    const submitted: { invoiceId: number; counterpartyName: string }[] = []
+    const allInvoicedQuantities: Record<string, number> = {}
+
     // Submit all invoices in sequence
     for (const invoice of draftInvoices.value) {
       // Capture invoiced quantities before submission
-      const invoicedQuantities: Record<string, number> = {}
       const invoiceDetails = expandedInvoices.value[invoice.id]
       if (invoiceDetails) {
         for (const item of invoiceDetails.lineItems) {
           if (item.orderType === 'sell') {
-            invoicedQuantities[item.commodityTicker] =
-              (invoicedQuantities[item.commodityTicker] ?? 0) + item.quantity
+            allInvoicedQuantities[item.commodityTicker] =
+              (allInvoicedQuantities[item.commodityTicker] ?? 0) + item.quantity
           }
         }
       }
 
       const result = await invoicesStore.submitInvoice(invoice.id)
       if (result) {
-        emit('invoice-submitted', invoice.id, invoicedQuantities)
+        submitted.push({ invoiceId: invoice.id, counterpartyName: invoice.counterpartyName })
         // Remove from expanded cache
         delete expandedInvoices.value[invoice.id]
       }
@@ -509,6 +515,10 @@ const handleSubmitAll = async () => {
     // Clear expanded panels
     expandedPanels.value = []
     submitAllDialog.value = false
+
+    if (submitted.length > 0) {
+      emit('all-invoices-submitted', submitted, allInvoicedQuantities)
+    }
   } finally {
     submittingAll.value = false
   }

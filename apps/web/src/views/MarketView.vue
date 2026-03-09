@@ -25,6 +25,58 @@
     <!-- Shopping List Preference Dialog -->
     <ShoppingListPreferenceDialog v-model="showPreferenceDialog" @choice="onPreferenceChoice" />
 
+    <!-- Contract Breakdown Dialog (shown after single invoice submission) -->
+    <InvoiceDetailDialog
+      v-model="showContractBreakdown"
+      :invoice="submittedInvoice"
+    />
+
+    <!-- Submit All Results Dialog -->
+    <v-dialog v-model="showSubmitAllResults" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon start color="success">mdi-check-all</v-icon>
+          {{ submitAllResults.length }} Invoice{{ submitAllResults.length === 1 ? '' : 's' }}
+          Submitted
+        </v-card-title>
+
+        <v-card-text class="pa-0">
+          <v-list density="compact">
+            <v-list-item
+              v-for="result in submitAllResults"
+              :key="result.invoiceId"
+              class="px-4"
+            >
+              <template #prepend>
+                <v-icon color="success" size="small">mdi-check-circle</v-icon>
+              </template>
+              <v-list-item-title class="text-body-2">
+                {{ result.counterpartyName }}
+              </v-list-item-title>
+              <v-list-item-subtitle class="text-caption">
+                Invoice #{{ result.invoiceId }}
+              </v-list-item-subtitle>
+              <template #append>
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  color="primary"
+                  @click="openContractForResult(result.invoiceId)"
+                >
+                  Contracts
+                </v-btn>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showSubmitAllResults = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- New Invoice Dialog - Select counterparty -->
     <v-dialog v-model="newInvoiceDialog" max-width="400">
       <v-card>
@@ -886,6 +938,7 @@
           <template #top>
             <InvoiceSummaryPanel
               @invoice-submitted="onInvoiceSubmitted"
+              @all-invoices-submitted="onAllInvoicesSubmitted"
               @filter-add="onFilterAdd"
               @add-invoice="onAddInvoice"
             />
@@ -906,7 +959,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { PERMISSIONS, type Currency, type OrderType } from '@kawakawa/types'
+import { PERMISSIONS, type Currency, type OrderType, type Invoice } from '@kawakawa/types'
 import type { XitMaterials } from '@kawakawa/types/xit'
 import { api, type EffectivePrice } from '../services/api'
 import { useUserStore } from '../stores/user'
@@ -934,6 +987,7 @@ import PricingModeChip from '../components/PricingModeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
 import InvoiceSummaryPanel from '../components/invoices/InvoiceSummaryPanel.vue'
+import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import ResizableSplitPanel from '../components/ResizableSplitPanel.vue'
 import ShoppingListPanel, {
   type ListItemStatus as ShoppingListStatus,
@@ -1302,6 +1356,15 @@ const toggleSidePanel = () => {
 const showPreferenceDialog = ref(false)
 const pendingInvoicedQuantities = ref<Record<string, number> | null>(null)
 
+// Contract breakdown dialog state (shown after single invoice submission)
+const showContractBreakdown = ref(false)
+const submittedInvoice = ref<Invoice | null>(null)
+const submittedInvoiceId = ref<number | null>(null)
+
+// Submit All results dialog state
+const showSubmitAllResults = ref(false)
+const submitAllResults = ref<{ invoiceId: number; counterpartyName: string }[]>([])
+
 // Apply invoice quantities to shopping list (reduce or remove items)
 const applyInvoiceToShoppingList = (invoicedQuantities: Record<string, number>) => {
   const materials = shoppingListStore.workingMaterials.value
@@ -1344,11 +1407,32 @@ const onPreferenceChoice = (autoUpdate: boolean) => {
     applyInvoiceToShoppingList(pendingInvoicedQuantities.value)
   }
   pendingInvoicedQuantities.value = null
+
+  // Show appropriate dialog after preference dialog closes
+  if (submitAllResults.value.length > 0) {
+    showSubmitAllResults.value = true
+  } else {
+    openContractBreakdown()
+  }
 }
 
-const onInvoiceSubmitted = (_invoiceId: number, invoicedQuantities: Record<string, number>) => {
+// Fetch and show the contract breakdown dialog for a submitted invoice
+const openContractBreakdown = async () => {
+  if (!submittedInvoiceId.value) return
+  try {
+    submittedInvoice.value = await api.invoices.get(submittedInvoiceId.value)
+    showContractBreakdown.value = true
+  } catch (error) {
+    console.error('Failed to load submitted invoice', error)
+  }
+}
+
+const onInvoiceSubmitted = (invoiceId: number, invoicedQuantities: Record<string, number>) => {
   showSnackbar('Invoice submitted successfully!', 'success')
   loadMarketItems()
+
+  // Store submitted invoice ID for contract breakdown dialog
+  submittedInvoiceId.value = invoiceId
 
   // Check if we should update the shopping list
   const updateSetting = settingsStore.getSetting<boolean | null>('market.updateShoppingList')
@@ -1357,16 +1441,63 @@ const onInvoiceSubmitted = (_invoiceId: number, invoicedQuantities: Record<strin
   const hasShoppingList = shoppingListStore.hasWorkingList.value
   const hasInvoicedItems = Object.keys(invoicedQuantities).length > 0
 
+  let showingPreference = false
   if (hasShoppingList && hasInvoicedItems) {
     if (updateSetting === null) {
-      // First time - show preference dialog
+      // First time - show preference dialog (contract breakdown deferred to after choice)
       pendingInvoicedQuantities.value = invoicedQuantities
       showPreferenceDialog.value = true
+      showingPreference = true
     } else if (updateSetting === true) {
       // Auto-update enabled - apply changes
       applyInvoiceToShoppingList(invoicedQuantities)
     }
     // If updateSetting === false, do nothing (keep list unchanged)
+  }
+
+  // Show contract breakdown immediately if no preference dialog
+  if (!showingPreference) {
+    openContractBreakdown()
+  }
+}
+
+// Handle Submit All results
+const onAllInvoicesSubmitted = (
+  results: { invoiceId: number; counterpartyName: string }[],
+  invoicedQuantities: Record<string, number>,
+) => {
+  showSnackbar(`${results.length} invoice${results.length === 1 ? '' : 's'} submitted!`, 'success')
+  loadMarketItems()
+
+  // Handle shopping list update with aggregated quantities
+  const updateSetting = settingsStore.getSetting<boolean | null>('market.updateShoppingList')
+  const hasShoppingList = shoppingListStore.hasWorkingList.value
+  const hasInvoicedItems = Object.keys(invoicedQuantities).length > 0
+
+  if (hasShoppingList && hasInvoicedItems) {
+    if (updateSetting === null) {
+      pendingInvoicedQuantities.value = invoicedQuantities
+      showPreferenceDialog.value = true
+      // Store results to show after preference dialog
+      submitAllResults.value = results
+      return
+    } else if (updateSetting === true) {
+      applyInvoiceToShoppingList(invoicedQuantities)
+    }
+  }
+
+  // Show results dialog
+  submitAllResults.value = results
+  showSubmitAllResults.value = true
+}
+
+// Open contract breakdown for a specific invoice from the Submit All results
+const openContractForResult = async (invoiceId: number) => {
+  try {
+    submittedInvoice.value = await api.invoices.get(invoiceId)
+    showContractBreakdown.value = true
+  } catch (error) {
+    console.error('Failed to load invoice', error)
   }
 }
 

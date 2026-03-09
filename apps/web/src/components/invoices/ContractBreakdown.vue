@@ -38,6 +38,7 @@
             @click="copyText(contract.locationId)"
           >
             {{ contract.locationDisplay }}
+            <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
           </span>
           <v-chip size="x-small" variant="tonal" class="ml-2">{{ contract.currency }}</v-chip>
           <v-spacer />
@@ -51,32 +52,36 @@
         <table class="contract-table">
           <thead>
             <tr>
-              <th class="text-left">Commodity</th>
               <th class="text-right">Qty</th>
+              <th class="text-left">Commodity</th>
               <th class="text-right">Unit Price</th>
               <th class="text-right">Total</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="item in contract.items" :key="item.id">
-              <td>
-                <span class="copyable" @click="copyText(item.commodityTicker)">
-                  <CommodityDisplay :ticker="item.commodityTicker" />
-                </span>
-              </td>
               <td class="text-right">
                 <span class="copyable" @click="copyText(String(item.quantity))">
                   {{ item.quantity.toLocaleString() }}
+                  <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
+                </span>
+              </td>
+              <td>
+                <span class="copyable" @click="copyText(item.commodityTicker)">
+                  <CommodityDisplay :ticker="item.commodityTicker" />
+                  <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
                 </span>
               </td>
               <td class="text-right">
                 <span class="copyable" @click="copyText(item.unitPrice.toFixed(2))">
                   {{ formatPrice(item.unitPrice) }} {{ item.currency }}
+                  <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
                 </span>
               </td>
               <td class="text-right font-weight-medium">
                 <span class="copyable" @click="copyText(item.totalValue.toFixed(2))">
                   {{ formatPrice(item.totalValue) }} {{ item.currency }}
+                  <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
                 </span>
               </td>
             </tr>
@@ -92,6 +97,7 @@
               >
                 <span class="copyable" @click="copyText(contract.total.toFixed(2))">
                   {{ formatPrice(contract.total) }} {{ contract.currency }}
+                  <v-icon class="copy-hint" size="14">mdi-content-copy</v-icon>
                 </span>
               </td>
             </tr>
@@ -221,12 +227,21 @@ const copyText = async (text: string) => {
   vertical-align: middle;
 }
 
+.contract-table tbody tr:nth-child(even) {
+  background-color: rgba(var(--v-theme-on-surface), 0.06);
+}
+
+.contract-table tbody tr:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.12);
+}
+
 .copyable {
   cursor: pointer;
   border-radius: 4px;
   padding: 1px 4px;
   margin: -1px -4px;
   transition: background-color 0.15s;
+  position: relative;
 }
 
 .copyable:hover {
@@ -235,5 +250,16 @@ const copyText = async (text: string) => {
 
 .copyable:active {
   background-color: rgba(var(--v-theme-primary), 0.25);
+}
+
+.copy-hint {
+  opacity: 0;
+  margin-left: 2px;
+  transition: opacity 0.15s;
+  color: rgb(var(--v-theme-primary));
+}
+
+.copyable:hover .copy-hint {
+  opacity: 1;
 }
 </style>

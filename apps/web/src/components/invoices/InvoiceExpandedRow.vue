@@ -20,9 +20,9 @@
         <table v-else-if="buyExpanded" class="item-table">
           <thead>
             <tr>
+              <th class="text-right">Qty</th>
               <th class="text-left">Item</th>
               <th class="text-left">Location</th>
-              <th class="text-right">Qty</th>
               <th class="text-right">Price</th>
               <th class="text-left">List</th>
               <th class="text-right">Total</th>
@@ -32,13 +32,13 @@
           </thead>
           <tbody>
             <tr v-for="item in buyItems" :key="item.id">
+              <td class="text-caption text-right">{{ item.quantity.toLocaleString() }}</td>
               <td>
                 <CommodityDisplay :ticker="item.commodityTicker" show-icon />
               </td>
               <td class="text-caption text-medium-emphasis">
                 {{ getLocationDisplay(item.locationId) }}
               </td>
-              <td class="text-caption text-right">{{ item.quantity.toLocaleString() }}</td>
               <td class="text-caption text-right">
                 {{ formatPrice(item.unitPrice) }} {{ item.currency }}
               </td>
@@ -203,9 +203,9 @@
         <table v-else-if="sellExpanded" class="item-table">
           <thead>
             <tr>
+              <th class="text-right">Qty</th>
               <th class="text-left">Item</th>
               <th class="text-left">Location</th>
-              <th class="text-right">Qty</th>
               <th class="text-right">Price</th>
               <th class="text-left">List</th>
               <th class="text-right">Total</th>
@@ -215,13 +215,13 @@
           </thead>
           <tbody>
             <tr v-for="item in sellItems" :key="item.id">
+              <td class="text-caption text-right">{{ item.quantity.toLocaleString() }}</td>
               <td>
                 <CommodityDisplay :ticker="item.commodityTicker" show-icon />
               </td>
               <td class="text-caption text-medium-emphasis">
                 {{ getLocationDisplay(item.locationId) }}
               </td>
-              <td class="text-caption text-right">{{ item.quantity.toLocaleString() }}</td>
               <td class="text-caption text-right">
                 {{ formatPrice(item.unitPrice) }} {{ item.currency }}
               </td>
@@ -575,10 +575,14 @@ onMounted(async () => {
 <style>
 /* Zebra striping for alternating rows - unscoped for specificity */
 .item-table tbody tr:nth-child(odd) {
-  background-color: rgba(var(--v-theme-on-surface), 0.02) !important;
+  background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
 }
 
 .item-table tbody tr:nth-child(even) {
-  background-color: rgba(var(--v-theme-on-surface), 0.06) !important;
+  background-color: rgba(var(--v-theme-on-surface), 0.08) !important;
+}
+
+.item-table tbody tr:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.14) !important;
 }
 </style>

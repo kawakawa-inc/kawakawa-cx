@@ -8,7 +8,7 @@
         <v-chip
           :color="invoice.direction === 'sent' ? 'primary' : 'info'"
           size="small"
-          variant="tonal"
+          variant="flat"
           class="mr-2"
         >
           <v-icon start size="small">{{

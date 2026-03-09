@@ -47,19 +47,27 @@ interface OrphanReservation {
 function reservationStatusToInvoiceStatus(
   statuses: string[]
 ): 'pending' | 'confirmed' | 'fulfilled' | 'partially_fulfilled' | 'cancelled' {
-  const active = statuses.filter(s => s !== 'cancelled' && s !== 'rejected' && s !== 'expired')
+  const closedStatuses = ['cancelled', 'rejected', 'expired', 'fulfilled']
+  const cancelledLike = ['cancelled', 'rejected', 'expired']
 
-  // All cancelled/rejected/expired → cancelled
-  if (active.length === 0) return 'cancelled'
+  const closed = statuses.filter(s => closedStatuses.includes(s)).length
+  const fulfilled = statuses.filter(s => s === 'fulfilled').length
+  const allCancelledLike = statuses.filter(s => cancelledLike.includes(s)).length
 
-  // All fulfilled → fulfilled
-  if (active.every(s => s === 'fulfilled')) return 'fulfilled'
+  // All reservations are closed
+  if (closed === statuses.length) {
+    // If none were fulfilled, it's cancelled
+    if (fulfilled === 0) return 'cancelled'
+    // At least one fulfilled — invoice is done
+    return 'fulfilled'
+  }
 
-  // Some fulfilled → partially_fulfilled
-  if (active.some(s => s === 'fulfilled')) return 'partially_fulfilled'
+  // Some fulfilled but others still open
+  if (fulfilled > 0) return 'partially_fulfilled'
 
-  // All confirmed → confirmed
-  if (active.every(s => s === 'confirmed')) return 'confirmed'
+  // All confirmed (excluding cancelled-like)
+  const confirmed = statuses.filter(s => s === 'confirmed').length
+  if (confirmed === statuses.length - allCancelledLike && confirmed > 0) return 'confirmed'
 
   // Otherwise pending
   return 'pending'

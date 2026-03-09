@@ -7,14 +7,17 @@
     <div v-else-if="invoice" class="d-flex ga-6">
       <!-- BUY Section -->
       <div class="flex-grow-1">
-        <div class="d-flex align-center mb-2">
+        <div class="d-flex align-center mb-2 section-header" @click="buyExpanded = !buyExpanded">
+          <v-icon size="x-small" class="mr-1">{{
+            buyExpanded ? 'mdi-chevron-down' : 'mdi-chevron-right'
+          }}</v-icon>
           <v-icon color="warning" size="small" class="mr-1">mdi-arrow-down</v-icon>
           <span class="text-subtitle-2 text-warning">Buying ({{ buyItems.length }})</span>
         </div>
         <div v-if="buyItems.length === 0" class="text-caption text-medium-emphasis">
           No buy items
         </div>
-        <table v-else class="item-table">
+        <table v-else-if="buyExpanded" class="item-table">
           <thead>
             <tr>
               <th class="text-left">Item</th>
@@ -134,6 +137,49 @@
                       </template>
                       Cancel
                     </v-tooltip>
+                    <v-tooltip
+                      v-if="
+                        item.reservationStatus === 'cancelled' ||
+                        item.reservationStatus === 'fulfilled'
+                      "
+                      location="top"
+                    >
+                      <template #activator="{ props: tooltipProps }">
+                        <v-btn
+                          v-bind="tooltipProps"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="info"
+                          :loading="actionLoading === `reopen-${item.reservationId}`"
+                          :disabled="actionLoading !== null"
+                          @click.stop="reopenReservation(item)"
+                        >
+                          <v-icon size="small">mdi-refresh</v-icon>
+                        </v-btn>
+                      </template>
+                      Reopen
+                    </v-tooltip>
+                  </template>
+                  <!-- Delete orphaned items (no reservation) -->
+                  <template v-if="direction === 'sent' && !item.reservationId">
+                    <v-tooltip location="top">
+                      <template #activator="{ props: tooltipProps }">
+                        <v-btn
+                          v-bind="tooltipProps"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="error"
+                          :loading="actionLoading === `delete-${item.id}`"
+                          :disabled="actionLoading !== null"
+                          @click.stop="deleteLineItem(item)"
+                        >
+                          <v-icon size="small">mdi-delete</v-icon>
+                        </v-btn>
+                      </template>
+                      Remove item
+                    </v-tooltip>
                   </template>
                 </div>
               </td>
@@ -144,14 +190,17 @@
 
       <!-- SELL Section -->
       <div class="flex-grow-1">
-        <div class="d-flex align-center mb-2">
+        <div class="d-flex align-center mb-2 section-header" @click="sellExpanded = !sellExpanded">
+          <v-icon size="x-small" class="mr-1">{{
+            sellExpanded ? 'mdi-chevron-down' : 'mdi-chevron-right'
+          }}</v-icon>
           <v-icon color="success" size="small" class="mr-1">mdi-arrow-up</v-icon>
           <span class="text-subtitle-2 text-success">Selling ({{ sellItems.length }})</span>
         </div>
         <div v-if="sellItems.length === 0" class="text-caption text-medium-emphasis">
           No sell items
         </div>
-        <table v-else class="item-table">
+        <table v-else-if="sellExpanded" class="item-table">
           <thead>
             <tr>
               <th class="text-left">Item</th>
@@ -271,6 +320,49 @@
                       </template>
                       Cancel
                     </v-tooltip>
+                    <v-tooltip
+                      v-if="
+                        item.reservationStatus === 'cancelled' ||
+                        item.reservationStatus === 'fulfilled'
+                      "
+                      location="top"
+                    >
+                      <template #activator="{ props: tooltipProps }">
+                        <v-btn
+                          v-bind="tooltipProps"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="info"
+                          :loading="actionLoading === `reopen-${item.reservationId}`"
+                          :disabled="actionLoading !== null"
+                          @click.stop="reopenReservation(item)"
+                        >
+                          <v-icon size="small">mdi-refresh</v-icon>
+                        </v-btn>
+                      </template>
+                      Reopen
+                    </v-tooltip>
+                  </template>
+                  <!-- Delete orphaned items (no reservation) -->
+                  <template v-if="direction === 'sent' && !item.reservationId">
+                    <v-tooltip location="top">
+                      <template #activator="{ props: tooltipProps }">
+                        <v-btn
+                          v-bind="tooltipProps"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="error"
+                          :loading="actionLoading === `delete-${item.id}`"
+                          :disabled="actionLoading !== null"
+                          @click.stop="deleteLineItem(item)"
+                        >
+                          <v-icon size="small">mdi-delete</v-icon>
+                        </v-btn>
+                      </template>
+                      Remove item
+                    </v-tooltip>
                   </template>
                 </div>
               </td>
@@ -306,6 +398,8 @@ const userStore = useUserStore()
 const loading = ref(true)
 const invoice = ref<Invoice | null>(null)
 const actionLoading = ref<string | null>(null)
+const buyExpanded = ref(true)
+const sellExpanded = ref(true)
 
 // Display helpers
 const getLocationDisplay = (locationId: string): string => {
@@ -403,6 +497,35 @@ async function cancelReservation(item: InvoiceLineItem) {
   }
 }
 
+async function deleteLineItem(item: InvoiceLineItem) {
+  if (!invoice.value) return
+  actionLoading.value = `delete-${item.id}`
+  try {
+    await api.invoices.removeLineItem(invoice.value.id, item.id)
+    // Remove from local state
+    invoice.value.lineItems = invoice.value.lineItems.filter(li => li.id !== item.id)
+    emit('updated')
+  } catch (error) {
+    console.error('Failed to remove line item', error)
+  } finally {
+    actionLoading.value = null
+  }
+}
+
+async function reopenReservation(item: InvoiceLineItem) {
+  if (!item.reservationId) return
+  actionLoading.value = `reopen-${item.reservationId}`
+  try {
+    await api.reservations.reopen(item.reservationId)
+    item.reservationStatus = 'pending'
+    emit('updated')
+  } catch (error) {
+    console.error('Failed to reopen reservation', error)
+  } finally {
+    actionLoading.value = null
+  }
+}
+
 onMounted(async () => {
   try {
     invoice.value = await api.invoices.get(props.invoiceId)
@@ -417,6 +540,15 @@ onMounted(async () => {
 <style scoped>
 .invoice-expanded-row {
   border-top: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.section-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-header:hover {
+  opacity: 0.8;
 }
 
 .item-table {

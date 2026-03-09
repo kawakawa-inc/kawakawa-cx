@@ -81,6 +81,25 @@ vi.mock('../services/price-calculator.js', () => ({
   calculateEffectivePriceWithFallback: vi.fn().mockResolvedValue({ finalPrice: 100 }),
 }))
 
+vi.mock('../services/fio/sync-user-inventory.js', () => ({
+  syncUserInventory: vi.fn().mockResolvedValue({ success: true }),
+}))
+
+vi.mock('../services/userSettingsService.js', () => ({
+  userSettingsService: {
+    getFioCredentials: vi.fn().mockResolvedValue({ fioUsername: 'fiouser', fioApiKey: 'key123' }),
+  },
+}))
+
+vi.mock('../utils/logger.js', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}))
+
 describe('InvoicesController', () => {
   let controller: InvoicesController
   let mockSelect: any
@@ -745,6 +764,73 @@ describe('InvoicesController', () => {
 
       await expect(controller.cancelInvoice(1, mockUserRequest)).rejects.toThrow(
         'You do not have access to this invoice'
+      )
+    })
+  })
+
+  describe('fulfillInvoice', () => {
+    it('should fulfill reservations and update status', async () => {
+      const pendingInvoice = { ...mockInvoice, status: 'pending' as const }
+      const lineItemWithReservation = { ...mockLineItem, reservationId: 200 }
+      const fulfilledLineItem = { ...lineItemWithReservation, reservationStatus: 'fulfilled' }
+
+      // Get invoice
+      mockSelect.where.mockResolvedValueOnce([pendingInvoice])
+      // Get line items
+      mockSelect.where.mockResolvedValueOnce([lineItemWithReservation])
+      // Fulfill reservation
+      mockUpdate.where.mockResolvedValueOnce(undefined)
+      // Update invoice status
+      mockUpdate.where.mockResolvedValueOnce(undefined)
+      // Get user name for notification
+      mockSelect.where.mockResolvedValueOnce([{ displayName: 'User One' }])
+      vi.mocked(notificationService.create).mockResolvedValue({} as any)
+      // getInvoice flow
+      mockSelect.where.mockResolvedValueOnce([{ ...pendingInvoice, status: 'fulfilled' }])
+      mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
+      mockSelect.orderBy.mockResolvedValueOnce([fulfilledLineItem])
+
+      const result = await controller.fulfillInvoice(1, mockUserRequest)
+
+      expect(result.status).toBe('fulfilled')
+      expect(notificationService.create).toHaveBeenCalledWith(
+        2,
+        'invoice_fulfilled',
+        'Invoice Fulfilled',
+        expect.any(String),
+        expect.objectContaining({ invoiceId: 1 })
+      )
+    })
+
+    it('should throw BadRequest if invoice is a draft', async () => {
+      mockSelect.where.mockResolvedValueOnce([mockInvoice])
+
+      await expect(controller.fulfillInvoice(1, mockUserRequest)).rejects.toThrow(
+        'This invoice cannot be fulfilled'
+      )
+    })
+
+    it('should throw BadRequest if invoice is cancelled', async () => {
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'cancelled' }])
+
+      await expect(controller.fulfillInvoice(1, mockUserRequest)).rejects.toThrow(
+        'This invoice cannot be fulfilled'
+      )
+    })
+
+    it('should throw Forbidden if user is not owner', async () => {
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'pending', userId: 99 }])
+
+      await expect(controller.fulfillInvoice(1, mockUserRequest)).rejects.toThrow(
+        'You do not have access to this invoice'
+      )
+    })
+
+    it('should throw NotFound if invoice does not exist', async () => {
+      mockSelect.where.mockResolvedValueOnce([])
+
+      await expect(controller.fulfillInvoice(1, mockUserRequest)).rejects.toThrow(
+        'Invoice not found'
       )
     })
   })

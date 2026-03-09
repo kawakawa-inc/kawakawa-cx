@@ -39,6 +39,11 @@ import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '../services/notificationService.js'
 import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
+import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
+import { userSettingsService } from '../services/userSettingsService.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger({ service: 'invoices' })
 
 import type { ReservationStatus } from '@kawakawa/types'
 
@@ -106,18 +111,20 @@ function calculateInvoiceStatus(
 
   const total = statuses.length
 
-  // All cancelled (including rejected/expired as "cancelled-like")
+  // A reservation is "closed" if it's cancelled, rejected, expired, or fulfilled
   const cancelledLike = counts.cancelled + counts.rejected + counts.expired
-  if (cancelledLike === total) {
-    return 'cancelled'
-  }
+  const closed = cancelledLike + counts.fulfilled
 
-  // All fulfilled
-  if (counts.fulfilled === total) {
+  // All reservations are closed — invoice is fulfilled (done)
+  if (closed === total) {
+    // If every single one was cancelled/rejected/expired (none fulfilled), show as cancelled
+    if (counts.fulfilled === 0) {
+      return 'cancelled'
+    }
     return 'fulfilled'
   }
 
-  // Some fulfilled, some in other states
+  // Some fulfilled/closed, some still open
   if (counts.fulfilled > 0) {
     return 'partially_fulfilled'
   }
@@ -1040,10 +1047,6 @@ export class InvoicesController extends Controller {
       throw Forbidden('You do not have access to this invoice')
     }
 
-    if (invoice.status !== 'draft') {
-      throw BadRequest('Can only remove items from draft invoices')
-    }
-
     const [lineItem] = await db
       .select()
       .from(invoiceLineItems)
@@ -1051,6 +1054,11 @@ export class InvoicesController extends Controller {
 
     if (!lineItem) {
       throw NotFound('Line item not found')
+    }
+
+    // Non-draft invoices: only allow removing orphaned items (no reservation)
+    if (invoice.status !== 'draft' && lineItem.reservationId) {
+      throw BadRequest('Can only remove unreserved items from submitted invoices')
     }
 
     await db.delete(invoiceLineItems).where(eq(invoiceLineItems.id, itemId))
@@ -1239,6 +1247,92 @@ export class InvoicesController extends Controller {
         counterpartyUserId: userId,
       }
     )
+
+    return this.getInvoice(id, request)
+  }
+
+  /**
+   * Fulfill an invoice — marks all reservations as fulfilled, releases holds, and triggers FIO sync for both users
+   */
+  @Post('{id}/fulfill')
+  public async fulfillInvoice(
+    @Path() id: number,
+    @Request() request: { user: JwtPayload }
+  ): Promise<Invoice> {
+    const userId = request.user.userId
+
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id))
+
+    if (!invoice) {
+      throw NotFound('Invoice not found')
+    }
+
+    if (invoice.userId !== userId) {
+      throw Forbidden('You do not have access to this invoice')
+    }
+
+    if (invoice.status === 'draft' || invoice.status === 'cancelled') {
+      throw BadRequest('This invoice cannot be fulfilled')
+    }
+
+    // Fulfill all pending/confirmed reservations
+    const lineItemRows = await db
+      .select()
+      .from(invoiceLineItems)
+      .where(eq(invoiceLineItems.invoiceId, id))
+
+    for (const lineItem of lineItemRows) {
+      if (lineItem.reservationId) {
+        await db
+          .update(orderReservations)
+          .set({ status: 'fulfilled', updatedAt: new Date() })
+          .where(
+            and(
+              eq(orderReservations.id, lineItem.reservationId),
+              or(eq(orderReservations.status, 'pending'), eq(orderReservations.status, 'confirmed'))
+            )
+          )
+      }
+    }
+
+    // Update invoice status
+    await db
+      .update(invoices)
+      .set({ status: 'fulfilled', updatedAt: new Date() })
+      .where(eq(invoices.id, id))
+
+    // Notify counterparty
+    const [user] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId))
+
+    await notificationService.create(
+      invoice.counterpartyUserId,
+      'invoice_fulfilled',
+      'Invoice Fulfilled',
+      `${user?.displayName ?? 'Someone'} marked an invoice as fulfilled`,
+      {
+        invoiceId: id,
+        counterpartyUserId: userId,
+      }
+    )
+
+    // Fire-and-forget FIO sync for both users
+    const syncUser = async (uid: number) => {
+      try {
+        const { fioUsername, fioApiKey } = await userSettingsService.getFioCredentials(uid)
+        if (fioUsername && fioApiKey) {
+          await syncUserInventory(uid, fioApiKey, fioUsername)
+        }
+      } catch (err) {
+        log.warn(
+          { userId: uid, invoiceId: id, error: err },
+          'FIO sync failed after invoice fulfillment'
+        )
+      }
+    }
+    void Promise.all([syncUser(userId), syncUser(invoice.counterpartyUserId)])
 
     return this.getInvoice(id, request)
   }

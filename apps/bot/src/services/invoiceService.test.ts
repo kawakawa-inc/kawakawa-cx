@@ -457,6 +457,43 @@ describe('submitInvoice', () => {
     // 2 reservations created + 2 line item updates + 1 invoice status update = 5 calls
     expect(mockDbInsert).toHaveBeenCalledTimes(2)
   })
+
+  it('sets counterpartyUserId to the submitting user, not the invoice counterparty', async () => {
+    mockInvoicesFindFirst.mockResolvedValue({
+      id: 1,
+      userId: 10, // invoice creator/sender
+      counterpartyUserId: 20, // invoice recipient
+      status: 'draft',
+    })
+    mockLineItemsFindMany.mockResolvedValue([
+      { id: 1, sellOrderId: 5, buyOrderId: null, quantity: 100, notes: null },
+    ])
+
+    const capturedValues: Record<string, unknown>[] = []
+    const insertChain = {
+      values: vi.fn().mockImplementation((vals: Record<string, unknown>) => {
+        capturedValues.push(vals)
+        return {
+          returning: vi.fn().mockResolvedValue([{ id: 100 }]),
+        }
+      }),
+    }
+    mockDbInsert.mockReturnValue(insertChain)
+
+    const updateChain = {
+      set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+    }
+    mockDbUpdate.mockReturnValue(updateChain)
+
+    // userId=10 is the submitter
+    await submitInvoice(1, 10)
+
+    // The reservation should have counterpartyUserId = 10 (the submitter/sender),
+    // NOT 20 (the invoice recipient). This was a bug where the bot incorrectly used
+    // invoice.counterpartyUserId instead of userId.
+    const reservationInsert = capturedValues[0]
+    expect(reservationInsert).toEqual(expect.objectContaining({ counterpartyUserId: 10 }))
+  })
 })
 
 // ==================== confirmInvoice ====================

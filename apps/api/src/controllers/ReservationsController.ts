@@ -570,7 +570,7 @@ export class ReservationsController extends Controller {
   }
 
   /**
-   * Reopen a cancelled reservation (counterparty only)
+   * Reopen a cancelled or fulfilled reservation (either party)
    */
   @Put('{id}/reopen')
   @SuccessResponse(200, 'Reservation reopened')
@@ -579,13 +579,7 @@ export class ReservationsController extends Controller {
     @Body() body: UpdateReservationStatusRequest,
     @Request() request: { user: JwtPayload }
   ): Promise<ReservationResponse> {
-    return this.updateReservationStatus(
-      id,
-      'pending',
-      request.user.userId,
-      body.notes,
-      'counterparty'
-    )
+    return this.updateReservationStatus(id, 'pending', request.user.userId, body.notes, 'either')
   }
 
   /**
@@ -689,7 +683,7 @@ export class ReservationsController extends Controller {
       pending: ['confirmed', 'rejected', 'cancelled', 'fulfilled'],
       confirmed: ['fulfilled', 'cancelled'],
       rejected: [],
-      fulfilled: [],
+      fulfilled: ['pending'], // Allow reopening fulfilled reservations
       expired: [],
       cancelled: ['pending'], // Allow reopening cancelled reservations
     }

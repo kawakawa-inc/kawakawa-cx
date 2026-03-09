@@ -78,6 +78,13 @@
       "when": 1772940865637,
       "tag": "0010_glorious_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1773013829274,
+      "tag": "0011_red_roland_deschain",
+      "breakpoints": true
     }
   ]
 }

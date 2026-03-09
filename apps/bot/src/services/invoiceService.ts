@@ -469,7 +469,7 @@ export async function submitInvoice(
       .values({
         sellOrderId: item.sellOrderId,
         buyOrderId: item.buyOrderId,
-        counterpartyUserId: invoice.counterpartyUserId,
+        counterpartyUserId: userId,
         quantity: item.quantity,
         status: 'pending',
         notes: item.notes,

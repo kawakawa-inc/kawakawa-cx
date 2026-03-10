@@ -86,8 +86,8 @@
                     >
                       {{ item.orderType === 'sell' ? 'BUY' : 'SELL' }}
                     </v-chip>
+                    <span class="quantity">{{ item.quantity.toLocaleString() }}x</span>
                     <span class="commodity">{{ item.commodityTicker }}</span>
-                    <span class="quantity">x{{ item.quantity.toLocaleString() }}</span>
                   </div>
                   <div class="line-item-right">
                     <span class="price">{{ formatPrice(item.totalValue, item.currency) }}</span>

@@ -272,26 +272,28 @@ const onSelect = () => {
   }
 }
 
-// Location type sort priority: Station > Planet > Platform > Ship > undefined
-const locationTypePriority: Record<string, number> = {
-  Station: 0,
-  Planet: 1,
-  Platform: 2,
-  Ship: 3,
+// Get location category priority: Bases > CX Warehouses > Warehouses > Stations > Planets
+const getLocationCategoryPriority = (item: KeyValueItem): number => {
+  const hasBase = item.storageTypes?.includes('STORE')
+  const hasWarehouse = item.storageTypes?.includes('WAREHOUSE_STORE')
+
+  if (hasBase) return 0 // Bases first
+  if (hasWarehouse && item.locationType === 'Station') return 1 // CX Warehouses
+  if (hasWarehouse) return 2 // Other Warehouses
+  if (item.locationType === 'Station') return 3 // Non-warehouse Stations
+  return 4 // Planets and everything else
 }
 
-// Compare two items by location type (lower priority number = first)
-const compareByLocationType = (a: KeyValueItem, b: KeyValueItem): number => {
-  const aPriority = a.locationType ? (locationTypePriority[a.locationType] ?? 99) : 99
-  const bPriority = b.locationType ? (locationTypePriority[b.locationType] ?? 99) : 99
-  return aPriority - bPriority
+// Compare two items by location category (lower priority number = first)
+const compareByLocationCategory = (a: KeyValueItem, b: KeyValueItem): number => {
+  return getLocationCategoryPriority(a) - getLocationCategoryPriority(b)
 }
 
-// Sort items by location type first, then alphabetically
+// Sort items by location category first, then alphabetically
 const sortByLocationThenAlpha = (items: KeyValueItem[]): KeyValueItem[] => {
   return [...items].sort((a, b) => {
-    const typeCompare = compareByLocationType(a, b)
-    if (typeCompare !== 0) return typeCompare
+    const categoryCompare = compareByLocationCategory(a, b)
+    if (categoryCompare !== 0) return categoryCompare
     return a.display.localeCompare(b.display)
   })
 }
@@ -304,7 +306,7 @@ const sortByLocationThenAlpha = (items: KeyValueItem[]): KeyValueItem[] => {
 // 4. Exact key matches (when searching)
 // 5. Partial key matches
 // 6. Display text matches
-// For locations: Station > Planet within each group
+// For locations: Bases > CX Warehouses > Warehouses > Stations > Planets within each group
 // Items are sorted alphabetically within each type group
 const sortedFilteredItems = computed(() => {
   const search = searchText.value.toLowerCase().trim()
@@ -418,10 +420,10 @@ const sortedFilteredItems = computed(() => {
       if (!a.isUserLocation && b.isUserLocation) return 1
     }
 
-    // Same user location status - sort by location type if present
+    // Same user location status - sort by location category if present
     if (hasLocationTypes) {
-      const typeCompare = compareByLocationType(a, b)
-      if (typeCompare !== 0) return typeCompare
+      const categoryCompare = compareByLocationCategory(a, b)
+      if (categoryCompare !== 0) return categoryCompare
     }
 
     // Same priority level - sort alphabetically by display

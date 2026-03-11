@@ -128,6 +128,22 @@ export const commodityService = {
     return commodity?.category ?? null
   },
 
+  // Get commodity weight by ticker (synchronous, uses cache)
+  getCommodityWeight: (ticker: string): number | null => {
+    void cacheVersion.value
+    if (!cachedCommodities) return null
+    const commodity = cachedCommodities.find(c => c.ticker === ticker)
+    return commodity?.weight ?? null
+  },
+
+  // Get commodity volume by ticker (synchronous, uses cache)
+  getCommodityVolume: (ticker: string): number | null => {
+    void cacheVersion.value
+    if (!cachedCommodities) return null
+    const commodity = cachedCommodities.find(c => c.ticker === ticker)
+    return commodity?.volume ?? null
+  },
+
   // Get commodities for dropdown (returns array of { title, value })
   getCommodityOptions: async (mode: CommodityDisplayMode = 'both') => {
     const commodities = await fetchCommodities()

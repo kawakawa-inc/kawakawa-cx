@@ -37,3 +37,10 @@ export {
   type UseQueryParserOptions,
   type UseQueryParserReturn,
 } from './useQueryParser'
+export {
+  useCargoHold,
+  SHIP_CARGO_BAYS,
+  type CargoHoldRow,
+  type ShipCargoBay,
+  type CargoCapacity,
+} from './useCargoHold'

@@ -1,11 +1,10 @@
-import { ref, computed, watch, type Ref } from 'vue'
+import { ref, computed, type Ref } from 'vue'
 import { commodityService } from '../services/commodityService'
 import { useSettingsStore } from '../stores/settings'
 
 export interface CargoHoldRow {
   commodityTicker: string | null
   amount: number | null
-  ratio?: number | null
 }
 
 export interface ShipCargoBay {
@@ -35,9 +34,8 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
   const settingsStore = useSettingsStore()
   const selectedShip = ref<string | null>(null)
   const hoveredShip = ref<string | null>(null)
-  const customWeight = ref<number | null>(1000)
-  const customVolume = ref<number | null>(1000)
-  const ratioMode = ref(false)
+  const customWeight = ref<number | null>(null)
+  const customVolume = ref<number | null>(null)
 
   // Build icon data for cargo bay tickers
   const getCargoIcon = (code: string) => {
@@ -109,8 +107,9 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
     customVolume.value = typeof val === 'number' ? val : null
   }
 
-  // Unified cargo capacity from preset or custom
+  // Unified cargo capacity: hover preview > preset > custom
   const cargoCapacity = computed((): CargoCapacity | null => {
+    if (hoveredPreset.value) return hoveredPreset.value
     if (!selectedShip.value) return null
     if (selectedShip.value === 'CUSTOM') {
       if (
@@ -219,17 +218,9 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
     return Math.max(1, Math.ceil(Math.max(weightTrips, volumeTrips)))
   })
 
-  // Turn off ratio mode when ship is cleared
-  watch(selectedShip, newShip => {
-    if (!newShip) {
-      ratioMode.value = false
-    }
-  })
-
   return {
     selectedShip,
     hoveredShip,
-    ratioMode,
     isCustomEditable,
     isHoverPreview,
     shipOptions,

@@ -51,7 +51,8 @@
             :items="shipOptions"
             item-title="title"
             item-value="value"
-            label="Cargo Hold"
+            :label="selectedShip ? undefined : 'Cargo Bay'"
+            :placeholder="selectedShip ? undefined : 'Cargo Bay'"
             density="compact"
             hide-details
             clearable
@@ -110,7 +111,7 @@
             v-model.number="displayVolume"
             type="number"
             min="1"
-            label="Vol (m3)"
+            label="Vol (m³)"
             density="compact"
             hide-details
             variant="outlined"
@@ -137,24 +138,15 @@
             <span class="text-caption text-medium-emphasis">Trips:</span>
             <v-chip
               :color="tripsNeeded > 1 ? 'warning' : 'success'"
-              size="x-small"
+              size="small"
               variant="tonal"
-              class="ml-1"
+              class="ml-1 font-weight-bold"
             >
               {{ tripsNeeded }}
             </v-chip>
           </template>
         </div>
         <div class="cargo-hold-spacer" />
-        <div v-if="cargoCapacity" class="cargo-hold-ratio">
-          <v-switch
-            v-model="ratioMode"
-            label="Ratio"
-            density="compact"
-            hide-details
-            color="primary"
-          />
-        </div>
       </v-card-text>
     </v-card>
 
@@ -212,6 +204,7 @@
               class="amount-input"
               @update:model-value="onAmountChange(index)"
               @keydown.tab="onAmountTab($event, index)"
+              @focus="selectOnFocus"
             />
           </div>
           <div class="col-wt text-right">
@@ -225,25 +218,23 @@
             </span>
           </div>
           <div v-if="cargoCapacity" class="col-ratio text-right">
-            <template v-if="ratioMode && row.commodityTicker">
-              <v-text-field
-                v-model.number="row.ratio"
-                type="number"
-                min="0"
-                max="100"
-                step="1"
-                placeholder="%"
-                suffix="%"
-                density="compact"
-                hide-details
-                variant="outlined"
-                class="ratio-input"
-                @update:model-value="onRatioChange(index)"
-              />
-            </template>
-            <span v-else-if="getRowRatio(row) !== null" class="text-caption">
-              {{ getRowRatio(row)!.toFixed(1) }}%
-            </span>
+            <v-text-field
+              v-if="row.commodityTicker"
+              :ref="el => setRatioRef(index, el as FocusableComponent | null)"
+              :model-value="getRowRatio(row)?.toFixed(1) ?? ''"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              suffix="%"
+              density="compact"
+              hide-details
+              variant="outlined"
+              class="ratio-input"
+              @update:model-value="onRatioChange(index, $event)"
+              @keydown.tab="onRatioTab($event, index)"
+              @focus="selectOnFocus"
+            />
           </div>
           <div class="col-price text-right">
             <span v-if="getUnitPrice(row.commodityTicker) !== null" class="font-weight-medium">
@@ -425,6 +416,7 @@ interface FocusableComponent {
 }
 const materialRefs = ref<Record<number, FocusableComponent | null>>({})
 const amountRefs = ref<Record<number, FocusableComponent | null>>({})
+const ratioRefs = ref<Record<number, FocusableComponent | null>>({})
 
 const setMaterialRef = (index: number, el: FocusableComponent | null) => {
   materialRefs.value[index] = el
@@ -432,6 +424,16 @@ const setMaterialRef = (index: number, el: FocusableComponent | null) => {
 
 const setAmountRef = (index: number, el: FocusableComponent | null) => {
   amountRefs.value[index] = el
+}
+
+const setRatioRef = (index: number, el: FocusableComponent | null) => {
+  ratioRefs.value[index] = el
+}
+
+// Select input value on focus for easy type-over
+const selectOnFocus = (event: FocusEvent) => {
+  const input = (event.target as HTMLElement)?.querySelector?.('input') ?? (event.target as HTMLInputElement)
+  input?.select?.()
 }
 
 // Computed values
@@ -505,7 +507,6 @@ const hasFilledRows = computed(() =>
 const {
   selectedShip,
   hoveredShip,
-  ratioMode,
   isCustomEditable,
   isHoverPreview,
   shipOptions,
@@ -528,10 +529,11 @@ const {
 } = useCargoHold(rows)
 
 // Ratio input: back-calculate quantity from a target ratio %
-const onRatioChange = (index: number) => {
+const onRatioChange = (index: number, value: string | number | null) => {
   const row = rows.value[index]
-  if (!row.commodityTicker || !row.ratio) return
-  const amount = calculateAmountFromRatio(row.commodityTicker, row.ratio)
+  const ratio = typeof value === 'string' ? parseFloat(value) : value
+  if (!row.commodityTicker || !ratio || ratio <= 0) return
+  const amount = calculateAmountFromRatio(row.commodityTicker, ratio)
   if (amount !== null) row.amount = amount
   if (index === rows.value.length - 1) ensureEmptyLastRow()
 }
@@ -653,6 +655,28 @@ const onAmountChange = (index: number) => {
   }
 }
 
+// Focus material field in next row, or wrap to top if last row is empty
+const focusNextRowMaterial = (currentIndex: number) => {
+  const nextIndex = currentIndex + 1
+  const lastRow = rows.value[rows.value.length - 1]
+  const lastRowIsEmpty = !lastRow.commodityTicker && (!lastRow.amount || lastRow.amount <= 0)
+
+  if (nextIndex >= rows.value.length) {
+    if (lastRowIsEmpty) {
+      // Wrap to the first row
+      nextTick(() => {
+        materialRefs.value[0]?.focus?.()
+      })
+    } else {
+      addRow()
+    }
+  } else {
+    nextTick(() => {
+      materialRefs.value[nextIndex]?.focus?.()
+    })
+  }
+}
+
 const onMaterialTab = (event: globalThis.KeyboardEvent, index: number) => {
   if (!event.shiftKey) {
     // Forward tab: focus amount field in same row
@@ -665,17 +689,24 @@ const onMaterialTab = (event: globalThis.KeyboardEvent, index: number) => {
 
 const onAmountTab = (event: globalThis.KeyboardEvent, index: number) => {
   if (!event.shiftKey) {
-    // Forward tab: focus material field in next row
-    event.preventDefault()
-    const nextIndex = index + 1
-    if (nextIndex >= rows.value.length) {
-      // Add new row if we're on the last one
-      addRow()
-    } else {
+    const row = rows.value[index]
+    // If ratio field is visible for this row, tab into it
+    if (cargoCapacity.value && row.commodityTicker) {
+      event.preventDefault()
       nextTick(() => {
-        materialRefs.value[nextIndex]?.focus?.()
+        ratioRefs.value[index]?.focus?.()
       })
+      return
     }
+    event.preventDefault()
+    focusNextRowMaterial(index)
+  }
+}
+
+const onRatioTab = (event: globalThis.KeyboardEvent, index: number) => {
+  if (!event.shiftKey) {
+    event.preventDefault()
+    focusNextRowMaterial(index)
   }
 }
 
@@ -837,8 +868,8 @@ onMounted(async () => {
 }
 
 .cargo-hold-select {
-  flex: 0 0 18rem;
-  min-width: 12rem;
+  flex: 0 0 22rem;
+  min-width: 14rem;
 }
 
 .cargo-hold-capacity {

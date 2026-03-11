@@ -42,116 +42,8 @@
       </v-card-text>
     </v-card>
 
-    <!-- Cargo Hold Card -->
-    <v-card class="calculator-card mb-4">
-      <v-card-text class="cargo-hold-bar">
-        <div class="cargo-hold-select">
-          <v-select
-            v-model="selectedShip"
-            :items="shipOptions"
-            item-title="title"
-            item-value="value"
-            :label="selectedShip ? undefined : 'Cargo Bay'"
-            :placeholder="selectedShip ? undefined : 'Cargo Bay'"
-            density="compact"
-            hide-details
-            clearable
-            @update:menu="
-              (open: boolean) => {
-                if (!open) hoveredShip = null
-              }
-            "
-          >
-            <template #item="{ item, props: itemProps }">
-              <v-list-item
-                v-bind="itemProps"
-                :title="undefined"
-                @mouseenter="hoveredShip = item.raw.value === 'CUSTOM' ? null : item.raw.value"
-                @mouseleave="hoveredShip = null"
-              >
-                <template #prepend>
-                  <CommodityIcon
-                    v-if="item.raw.icon"
-                    :commodity="item.raw.icon"
-                    class="cargo-icon mr-2"
-                  />
-                </template>
-                <v-list-item-title>{{ item.title }}</v-list-item-title>
-              </v-list-item>
-            </template>
-            <template #selection="{ item }">
-              <div class="d-flex align-center">
-                <CommodityIcon
-                  v-if="item.raw.icon"
-                  :commodity="item.raw.icon"
-                  class="cargo-icon-sm mr-2"
-                />
-                <span>{{ item.title }}</span>
-              </div>
-            </template>
-          </v-select>
-        </div>
-        <div class="cargo-hold-capacity">
-          <v-text-field
-            v-model.number="displayWeight"
-            type="number"
-            min="1"
-            label="Wt (t)"
-            density="compact"
-            hide-details
-            variant="outlined"
-            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
-            :disabled="!isCustomEditable && !isHoverPreview"
-            :readonly="isHoverPreview"
-            @update:model-value="onCustomWeightChange"
-          />
-        </div>
-        <div class="cargo-hold-capacity">
-          <v-text-field
-            v-model.number="displayVolume"
-            type="number"
-            min="1"
-            label="Vol (m³)"
-            density="compact"
-            hide-details
-            variant="outlined"
-            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
-            :disabled="!isCustomEditable && !isHoverPreview"
-            :readonly="isHoverPreview"
-            @update:model-value="onCustomVolumeChange"
-          />
-        </div>
-        <div v-if="hasFilledRows" class="cargo-hold-stats">
-          <span class="text-caption text-medium-emphasis">Wt:</span>
-          <span class="font-weight-medium">{{ totalWeight.toFixed(1) }}t</span>
-          <span v-if="cargoCapacity" class="font-weight-medium" :class="weightFillColor">
-            ({{ weightFillPercent.toFixed(0) }}%)
-          </span>
-          <span class="mx-2 text-medium-emphasis">|</span>
-          <span class="text-caption text-medium-emphasis">Vol:</span>
-          <span class="font-weight-medium">{{ totalVolume.toFixed(1) }}m3</span>
-          <span v-if="cargoCapacity" class="font-weight-medium" :class="volumeFillColor">
-            ({{ volumeFillPercent.toFixed(0) }}%)
-          </span>
-          <template v-if="cargoCapacity">
-            <span class="mx-2 text-medium-emphasis">|</span>
-            <span class="text-caption text-medium-emphasis">Trips:</span>
-            <v-chip
-              :color="tripsNeeded > 1 ? 'warning' : 'success'"
-              size="small"
-              variant="tonal"
-              class="ml-1 font-weight-bold"
-            >
-              {{ tripsNeeded }}
-            </v-chip>
-          </template>
-        </div>
-        <div class="cargo-hold-spacer" />
-      </v-card-text>
-    </v-card>
-
     <!-- Calculator Table Card -->
-    <v-card class="calculator-card">
+    <v-card class="calculator-card mb-4">
       <v-card-text class="pa-4">
         <!-- Header -->
         <div class="calc-header d-flex align-center text-caption text-medium-emphasis mb-2">
@@ -192,20 +84,44 @@
             />
           </div>
           <div class="col-amount">
-            <v-text-field
-              :ref="el => setAmountRef(index, el as FocusableComponent | null)"
-              v-model.number="row.amount"
-              type="number"
-              min="0"
-              placeholder="0"
-              density="compact"
-              hide-details
-              variant="outlined"
-              class="amount-input"
-              @update:model-value="onAmountChange(index)"
-              @keydown.tab="onAmountTab($event, index)"
-              @focus="selectOnFocus"
-            />
+            <div class="d-flex align-center">
+              <v-text-field
+                :ref="el => setAmountRef(index, el as FocusableComponent | null)"
+                v-model.number="row.amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                density="compact"
+                hide-details
+                variant="outlined"
+                class="amount-input"
+                @update:model-value="onAmountChange(index)"
+                @keydown.tab="onAmountTab($event, index)"
+                @focus="selectOnFocus"
+              />
+              <v-tooltip
+                v-if="cargoCapacity && row.commodityTicker"
+                :text="isRowLocked(row) ? 'Unlock from balance' : 'Lock amount during balance'"
+                location="top"
+              >
+                <template #activator="{ props: tooltipProps }">
+                  <v-btn
+                    v-bind="tooltipProps"
+                    icon
+                    size="x-small"
+                    variant="text"
+                    :color="isRowLocked(row) ? 'primary' : undefined"
+                    class="ml-1 lock-btn"
+                    @click="toggleRowLock(row)"
+                  >
+                    <v-icon size="small">
+                      {{ isRowLocked(row) ? 'mdi-lock' : 'mdi-lock-open-variant-outline' }}
+                    </v-icon>
+                  </v-btn>
+                </template>
+              </v-tooltip>
+              <div v-else-if="cargoCapacity" class="lock-btn-spacer" />
+            </div>
           </div>
           <div class="col-wt text-right">
             <span v-if="getRowWeight(row) !== null" class="text-caption">
@@ -221,7 +137,7 @@
             <v-text-field
               v-if="row.commodityTicker"
               :ref="el => setRatioRef(index, el as FocusableComponent | null)"
-              :model-value="getRowRatio(row)?.toFixed(1) ?? ''"
+              :model-value="getRatioDisplayValue(row, index)"
               type="number"
               min="0"
               max="100"
@@ -231,9 +147,11 @@
               hide-details
               variant="outlined"
               class="ratio-input"
-              @update:model-value="onRatioChange(index, $event)"
+              @update:model-value="onRatioInput(index, $event)"
+              @focus="onRatioFocus($event, index)"
+              @blur="onRatioBlur(index)"
               @keydown.tab="onRatioTab($event, index)"
-              @focus="selectOnFocus"
+              @keydown.enter="onRatioBlur(index)"
             />
           </div>
           <div class="col-price text-right">
@@ -351,6 +269,130 @@
           Send to Market
         </v-btn>
       </v-card-actions>
+    </v-card>
+
+    <!-- Cargo Hold Card -->
+    <v-card class="calculator-card mb-4">
+      <v-card-text class="cargo-hold-bar">
+        <div class="cargo-hold-select">
+          <v-select
+            v-model="selectedShip"
+            :items="shipOptions"
+            item-title="title"
+            item-value="value"
+            :label="selectedShip ? undefined : 'Cargo Bay'"
+            :placeholder="selectedShip ? undefined : 'Cargo Bay'"
+            density="compact"
+            hide-details
+            clearable
+            @update:menu="
+              (open: boolean) => {
+                if (!open) hoveredShip = null
+              }
+            "
+          >
+            <template #item="{ item, props: itemProps }">
+              <v-list-item
+                v-bind="itemProps"
+                :title="undefined"
+                @mouseenter="hoveredShip = item.raw.value === 'CUSTOM' ? null : item.raw.value"
+                @mouseleave="hoveredShip = null"
+              >
+                <template #prepend>
+                  <CommodityIcon
+                    v-if="item.raw.icon"
+                    :commodity="item.raw.icon"
+                    class="cargo-icon mr-2"
+                  />
+                </template>
+                <v-list-item-title>{{ item.title }}</v-list-item-title>
+              </v-list-item>
+            </template>
+            <template #selection="{ item }">
+              <div class="d-flex align-center">
+                <CommodityIcon
+                  v-if="item.raw.icon"
+                  :commodity="item.raw.icon"
+                  class="cargo-icon-sm mr-2"
+                />
+                <span>{{ item.title }}</span>
+              </div>
+            </template>
+          </v-select>
+        </div>
+        <div class="cargo-hold-capacity">
+          <v-text-field
+            v-model.number="displayWeight"
+            type="number"
+            min="1"
+            label="Wt (t)"
+            density="compact"
+            hide-details
+            variant="outlined"
+            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
+            :disabled="!isCustomEditable && !isHoverPreview"
+            :readonly="isHoverPreview"
+            @update:model-value="onCustomWeightChange"
+          />
+        </div>
+        <div class="cargo-hold-capacity">
+          <v-text-field
+            v-model.number="displayVolume"
+            type="number"
+            min="1"
+            label="Vol (m³)"
+            density="compact"
+            hide-details
+            variant="outlined"
+            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
+            :disabled="!isCustomEditable && !isHoverPreview"
+            :readonly="isHoverPreview"
+            @update:model-value="onCustomVolumeChange"
+          />
+        </div>
+        <div v-if="hasFilledRows" class="cargo-hold-stats">
+          <span class="text-caption text-medium-emphasis">Wt:</span>
+          <span class="font-weight-medium">{{ totalWeight.toFixed(1) }}t</span>
+          <span v-if="cargoCapacity" class="font-weight-medium" :class="weightFillColor">
+            ({{ weightFillPercent.toFixed(0) }}%)
+          </span>
+          <span class="mx-2 text-medium-emphasis">|</span>
+          <span class="text-caption text-medium-emphasis">Vol:</span>
+          <span class="font-weight-medium">{{ totalVolume.toFixed(1) }}m3</span>
+          <span v-if="cargoCapacity" class="font-weight-medium" :class="volumeFillColor">
+            ({{ volumeFillPercent.toFixed(0) }}%)
+          </span>
+          <template v-if="cargoCapacity">
+            <span class="mx-2 text-medium-emphasis">|</span>
+            <span class="text-caption text-medium-emphasis">Trips:</span>
+            <v-chip
+              :color="tripsNeeded > 1 ? 'warning' : 'success'"
+              size="small"
+              variant="tonal"
+              class="ml-1 font-weight-bold"
+            >
+              {{ tripsNeeded }}
+            </v-chip>
+          </template>
+        </div>
+        <div class="cargo-hold-spacer" />
+        <div v-if="cargoCapacity" class="cargo-hold-actions">
+          <v-tooltip text="Evenly distribute unlocked rows across remaining capacity" location="top">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                :color="autoBalance ? 'primary' : undefined"
+                :variant="autoBalance ? 'tonal' : 'outlined'"
+                size="small"
+                prepend-icon="mdi-scale-balance"
+                @click="toggleAutoBalance"
+              >
+                Balance
+              </v-btn>
+            </template>
+          </v-tooltip>
+        </div>
+      </v-card-text>
     </v-card>
 
     <!-- Import dialogs -->
@@ -502,6 +544,37 @@ const selectOnFocus = (event: FocusEvent) => {
   input?.select?.()
 }
 
+// Ratio editing state: prevent computed value from fighting user input
+const editingRatioIndex = ref<number | null>(null)
+const editingRatioValue = ref<string>('')
+
+const getRatioDisplayValue = (row: CalculatorRow, index: number): string => {
+  if (editingRatioIndex.value === index) return editingRatioValue.value
+  return getRowRatio(row)?.toFixed(1) ?? ''
+}
+
+const onRatioFocus = (event: FocusEvent, index: number) => {
+  const row = rows.value[index]
+  editingRatioIndex.value = index
+  editingRatioValue.value = getRowRatio(row)?.toFixed(1) ?? ''
+  selectOnFocus(event)
+}
+
+const onRatioInput = (_index: number, value: string | number | null) => {
+  editingRatioValue.value = String(value ?? '')
+}
+
+const onRatioBlur = (index: number) => {
+  if (editingRatioIndex.value === index) {
+    const value = editingRatioValue.value
+    if (value) {
+      onRatioChange(index, value)
+    }
+    editingRatioIndex.value = null
+    editingRatioValue.value = ''
+  }
+}
+
 // Computed values
 const priceListOptions = computed(() =>
   priceLists.value.map(pl => ({
@@ -573,6 +646,10 @@ const hasFilledRows = computed(() =>
 const {
   selectedShip,
   hoveredShip,
+  autoBalance,
+  toggleAutoBalance,
+  isRowLocked,
+  toggleRowLock,
   isCustomEditable,
   isHoverPreview,
   shipOptions,
@@ -596,6 +673,7 @@ const {
 
 // Ratio input: back-calculate quantity from a target ratio %
 const onRatioChange = (index: number, value: string | number | null) => {
+  autoBalance.value = false
   const row = rows.value[index]
   const ratio = typeof value === 'string' ? parseFloat(value) : value
   if (!row.commodityTicker || !ratio || ratio <= 0) return
@@ -716,6 +794,7 @@ const onMaterialChange = (index: number) => {
 }
 
 const onAmountChange = (index: number) => {
+  autoBalance.value = false
   if (index === rows.value.length - 1) {
     ensureEmptyLastRow()
   }
@@ -772,6 +851,7 @@ const onAmountTab = (event: globalThis.KeyboardEvent, index: number) => {
 const onRatioTab = (event: globalThis.KeyboardEvent, index: number) => {
   if (!event.shiftKey) {
     event.preventDefault()
+    onRatioBlur(index)
     focusNextRowMaterial(index)
   }
 }
@@ -913,7 +993,7 @@ onMounted(async () => {
 }
 
 .col-amount {
-  flex: 0 0 10rem;
+  flex: 0 0 8rem;
 }
 
 .col-wt,
@@ -922,7 +1002,7 @@ onMounted(async () => {
 }
 
 .col-ratio {
-  flex: 0 0 5rem;
+  flex: 0 0 6.5rem;
 }
 
 .col-price,
@@ -935,6 +1015,16 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Lock button sizing */
+.lock-btn {
+  flex: 0 0 auto;
+}
+
+.lock-btn-spacer {
+  width: 24px;
+  flex: 0 0 24px;
 }
 
 /* Icon styling */
@@ -971,6 +1061,10 @@ onMounted(async () => {
 
 .cargo-hold-spacer {
   flex: 1 1 auto;
+}
+
+.cargo-hold-actions {
+  flex: 0 0 auto;
 }
 
 .cargo-hold-ratio {

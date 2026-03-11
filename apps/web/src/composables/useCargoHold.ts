@@ -1,10 +1,11 @@
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import { commodityService } from '../services/commodityService'
 import { useSettingsStore } from '../stores/settings'
 
 export interface CargoHoldRow {
   commodityTicker: string | null
   amount: number | null
+  locked?: boolean
 }
 
 export interface ShipCargoBay {
@@ -171,8 +172,13 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
   }
 
   // Ratio input: back-calculate quantity from a target ratio %
-  const calculateAmountFromRatio = (ticker: string, ratio: number): number | null => {
-    const cap = cargoCapacity.value
+  // Optional capacityOverride lets rebalance pass remaining capacity after locked rows
+  const calculateAmountFromRatio = (
+    ticker: string,
+    ratio: number,
+    capacityOverride?: CargoCapacity
+  ): number | null => {
+    const cap = capacityOverride ?? cargoCapacity.value
     if (!cap || ratio <= 0) return null
 
     const unitWeight = commodityService.getCommodityWeight(ticker)
@@ -190,6 +196,69 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
         : Infinity
     return Math.min(maxByWeight, maxByVolume)
   }
+
+  // Auto-balance mode: evenly distribute cargo across all rows with commodities
+  const autoBalance = ref(false)
+
+  const rebalance = () => {
+    const cap = cargoCapacity.value
+    if (!cap) return
+    const filledRows = rows.value.filter(r => r.commodityTicker)
+    if (filledRows.length === 0) return
+
+    const lockedRows = filledRows.filter(r => r.locked)
+    const unlocked = filledRows.filter(r => !r.locked)
+    if (unlocked.length === 0) return
+
+    // Subtract locked rows' weight/volume from total capacity
+    let usedWeight = 0
+    let usedVolume = 0
+    for (const row of lockedRows) {
+      usedWeight += getRowWeight(row) ?? 0
+      usedVolume += getRowVolume(row) ?? 0
+    }
+
+    const remainingCap: CargoCapacity = {
+      weightCapacity: Math.max(0, cap.weightCapacity - usedWeight),
+      volumeCapacity: Math.max(0, cap.volumeCapacity - usedVolume),
+    }
+
+    // Distribute remaining capacity evenly among unlocked rows
+    const ratioPerRow = 100 / unlocked.length
+    for (const row of unlocked) {
+      const amount = calculateAmountFromRatio(row.commodityTicker!, ratioPerRow, remainingCap)
+      if (amount !== null) row.amount = amount
+    }
+  }
+
+  const toggleAutoBalance = () => {
+    autoBalance.value = !autoBalance.value
+    if (autoBalance.value) rebalance()
+  }
+
+  const isRowLocked = (row: CargoHoldRow): boolean => !!row.locked
+
+  const toggleRowLock = (row: CargoHoldRow) => {
+    row.locked = !row.locked
+    autoBalance.value = false
+  }
+
+  // Re-run balance when the commodity list or lock state changes while auto-balance is on
+  const balanceKey = computed(() =>
+    rows.value
+      .filter(r => r.commodityTicker)
+      .map(r => `${r.commodityTicker}:${r.locked ? 'L' : 'U'}`)
+      .join(',')
+  )
+
+  watch(balanceKey, () => {
+    if (autoBalance.value) rebalance()
+  })
+
+  // Turn off auto-balance when cargo bay is cleared
+  watch(selectedShip, newShip => {
+    if (!newShip) autoBalance.value = false
+  })
 
   // Ship fill percentages
   const weightFillPercent = computed(() => {
@@ -221,6 +290,10 @@ export function useCargoHold(rows: Ref<CargoHoldRow[]>) {
   return {
     selectedShip,
     hoveredShip,
+    autoBalance,
+    toggleAutoBalance,
+    isRowLocked,
+    toggleRowLock,
     isCustomEditable,
     isHoverPreview,
     shipOptions,

@@ -26,10 +26,7 @@
     <ShoppingListPreferenceDialog v-model="showPreferenceDialog" @choice="onPreferenceChoice" />
 
     <!-- Contract Breakdown Dialog (shown after single invoice submission) -->
-    <InvoiceDetailDialog
-      v-model="showContractBreakdown"
-      :invoice="submittedInvoice"
-    />
+    <InvoiceDetailDialog v-model="showContractBreakdown" :invoice="submittedInvoice" />
 
     <!-- Submit All Results Dialog -->
     <v-dialog v-model="showSubmitAllResults" max-width="500">
@@ -42,11 +39,7 @@
 
         <v-card-text class="pa-0">
           <v-list density="compact">
-            <v-list-item
-              v-for="result in submitAllResults"
-              :key="result.invoiceId"
-              class="px-4"
-            >
+            <v-list-item v-for="result in submitAllResults" :key="result.invoiceId" class="px-4">
               <template #prepend>
                 <v-icon color="success" size="small">mdi-check-circle</v-icon>
               </template>
@@ -1464,7 +1457,7 @@ const onInvoiceSubmitted = (invoiceId: number, invoicedQuantities: Record<string
 // Handle Submit All results
 const onAllInvoicesSubmitted = (
   results: { invoiceId: number; counterpartyName: string }[],
-  invoicedQuantities: Record<string, number>,
+  invoicedQuantities: Record<string, number>
 ) => {
   showSnackbar(`${results.length} invoice${results.length === 1 ? '' : 's'} submitted!`, 'success')
   loadMarketItems()

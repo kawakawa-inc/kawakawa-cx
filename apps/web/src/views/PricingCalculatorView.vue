@@ -42,6 +42,114 @@
       </v-card-text>
     </v-card>
 
+    <!-- Cargo Hold Card -->
+    <v-card class="calculator-card mb-4">
+      <v-card-text class="cargo-hold-bar">
+        <div class="cargo-hold-select">
+          <v-select
+            v-model="selectedShip"
+            :items="shipOptions"
+            item-title="title"
+            item-value="value"
+            :label="selectedShip ? undefined : 'Cargo Bay'"
+            :placeholder="selectedShip ? undefined : 'Cargo Bay'"
+            density="compact"
+            hide-details
+            clearable
+            @update:menu="
+              (open: boolean) => {
+                if (!open) hoveredShip = null
+              }
+            "
+          >
+            <template #item="{ item, props: itemProps }">
+              <v-list-item
+                v-bind="itemProps"
+                :title="undefined"
+                @mouseenter="hoveredShip = item.raw.value === 'CUSTOM' ? null : item.raw.value"
+                @mouseleave="hoveredShip = null"
+              >
+                <template #prepend>
+                  <CommodityIcon
+                    v-if="item.raw.icon"
+                    :commodity="item.raw.icon"
+                    class="cargo-icon mr-2"
+                  />
+                </template>
+                <v-list-item-title>{{ item.title }}</v-list-item-title>
+              </v-list-item>
+            </template>
+            <template #selection="{ item }">
+              <div class="d-flex align-center">
+                <CommodityIcon
+                  v-if="item.raw.icon"
+                  :commodity="item.raw.icon"
+                  class="cargo-icon-sm mr-2"
+                />
+                <span>{{ item.title }}</span>
+              </div>
+            </template>
+          </v-select>
+        </div>
+        <div class="cargo-hold-capacity">
+          <v-text-field
+            v-model.number="displayWeight"
+            type="number"
+            min="1"
+            label="Wt (t)"
+            density="compact"
+            hide-details
+            variant="outlined"
+            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
+            :disabled="!isCustomEditable && !isHoverPreview"
+            :readonly="isHoverPreview"
+            @update:model-value="onCustomWeightChange"
+          />
+        </div>
+        <div class="cargo-hold-capacity">
+          <v-text-field
+            v-model.number="displayVolume"
+            type="number"
+            min="1"
+            label="Vol (m³)"
+            density="compact"
+            hide-details
+            variant="outlined"
+            :class="['capacity-input', { 'capacity-preview': isHoverPreview }]"
+            :disabled="!isCustomEditable && !isHoverPreview"
+            :readonly="isHoverPreview"
+            @update:model-value="onCustomVolumeChange"
+          />
+        </div>
+        <div v-if="hasFilledRows" class="cargo-hold-stats">
+          <span class="text-caption text-medium-emphasis">Wt:</span>
+          <span class="font-weight-medium">{{ totalWeight.toFixed(1) }}t</span>
+          <span v-if="cargoCapacity" class="font-weight-medium" :class="weightFillColor">
+            ({{ weightFillPercent.toFixed(0) }}%)
+          </span>
+          <span class="mx-2 text-medium-emphasis">|</span>
+          <span class="text-caption text-medium-emphasis">Vol:</span>
+          <span class="font-weight-medium">{{ totalVolume.toFixed(1) }}m3</span>
+          <span v-if="cargoCapacity" class="font-weight-medium" :class="volumeFillColor">
+            ({{ volumeFillPercent.toFixed(0) }}%)
+          </span>
+          <template v-if="cargoCapacity">
+            <span class="mx-2 text-medium-emphasis">|</span>
+            <span class="text-caption text-medium-emphasis">Trips:</span>
+            <v-chip
+              :color="tripsNeeded > 1 ? 'warning' : 'success'"
+              size="small"
+              variant="tonal"
+              class="ml-1 font-weight-bold"
+            >
+              {{ tripsNeeded }}
+            </v-chip>
+          </template>
+        </div>
+        <div class="cargo-hold-spacer" />
+      </v-card-text>
+    </v-card>
+
     <!-- Calculator Table Card -->
     <v-card class="calculator-card">
       <v-card-text class="pa-4">
@@ -50,6 +158,9 @@
           <div class="col-icon"></div>
           <div class="col-material">Material</div>
           <div class="col-amount text-right">Amount</div>
+          <div class="col-wt text-right">Wt</div>
+          <div class="col-vol text-right">Vol</div>
+          <div v-if="cargoCapacity" class="col-ratio text-right">Ratio</div>
           <div class="col-price text-right">Unit Price</div>
           <div class="col-total text-right">Total</div>
           <div class="col-actions"></div>
@@ -93,6 +204,36 @@
               class="amount-input"
               @update:model-value="onAmountChange(index)"
               @keydown.tab="onAmountTab($event, index)"
+              @focus="selectOnFocus"
+            />
+          </div>
+          <div class="col-wt text-right">
+            <span v-if="getRowWeight(row) !== null" class="text-caption">
+              {{ getRowWeight(row)!.toFixed(2) }}t
+            </span>
+          </div>
+          <div class="col-vol text-right">
+            <span v-if="getRowVolume(row) !== null" class="text-caption">
+              {{ getRowVolume(row)!.toFixed(2) }}m3
+            </span>
+          </div>
+          <div v-if="cargoCapacity" class="col-ratio text-right">
+            <v-text-field
+              v-if="row.commodityTicker"
+              :ref="el => setRatioRef(index, el as FocusableComponent | null)"
+              :model-value="getRowRatio(row)?.toFixed(1) ?? ''"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              suffix="%"
+              density="compact"
+              hide-details
+              variant="outlined"
+              class="ratio-input"
+              @update:model-value="onRatioChange(index, $event)"
+              @keydown.tab="onRatioTab($event, index)"
+              @focus="selectOnFocus"
             />
           </div>
           <div class="col-price text-right">
@@ -188,14 +329,13 @@ import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
-import { useSnackbar, useDisplayHelpers } from '../composables'
+import { useSnackbar, useDisplayHelpers, useCargoHold } from '../composables'
+import type { CargoHoldRow } from '../composables'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 import CommodityIcon from '../components/CommodityIcon.vue'
 
-interface CalculatorRow {
+interface CalculatorRow extends CargoHoldRow {
   id: number
-  commodityTicker: string | null
-  amount: number | null
 }
 
 interface PriceListOption {
@@ -276,6 +416,7 @@ interface FocusableComponent {
 }
 const materialRefs = ref<Record<number, FocusableComponent | null>>({})
 const amountRefs = ref<Record<number, FocusableComponent | null>>({})
+const ratioRefs = ref<Record<number, FocusableComponent | null>>({})
 
 const setMaterialRef = (index: number, el: FocusableComponent | null) => {
   materialRefs.value[index] = el
@@ -283,6 +424,16 @@ const setMaterialRef = (index: number, el: FocusableComponent | null) => {
 
 const setAmountRef = (index: number, el: FocusableComponent | null) => {
   amountRefs.value[index] = el
+}
+
+const setRatioRef = (index: number, el: FocusableComponent | null) => {
+  ratioRefs.value[index] = el
+}
+
+// Select input value on focus for easy type-over
+const selectOnFocus = (event: FocusEvent) => {
+  const input = (event.target as HTMLElement)?.querySelector?.('input') ?? (event.target as HTMLInputElement)
+  input?.select?.()
 }
 
 // Computed values
@@ -351,6 +502,41 @@ const grandTotal = computed(() => {
 const hasFilledRows = computed(() =>
   rows.value.some(r => r.commodityTicker && r.amount && r.amount > 0)
 )
+
+// Cargo hold composable
+const {
+  selectedShip,
+  hoveredShip,
+  isCustomEditable,
+  isHoverPreview,
+  shipOptions,
+  displayWeight,
+  displayVolume,
+  onCustomWeightChange,
+  onCustomVolumeChange,
+  cargoCapacity,
+  getRowWeight,
+  getRowVolume,
+  getRowRatio,
+  calculateAmountFromRatio,
+  totalWeight,
+  totalVolume,
+  weightFillPercent,
+  volumeFillPercent,
+  weightFillColor,
+  volumeFillColor,
+  tripsNeeded,
+} = useCargoHold(rows)
+
+// Ratio input: back-calculate quantity from a target ratio %
+const onRatioChange = (index: number, value: string | number | null) => {
+  const row = rows.value[index]
+  const ratio = typeof value === 'string' ? parseFloat(value) : value
+  if (!row.commodityTicker || !ratio || ratio <= 0) return
+  const amount = calculateAmountFromRatio(row.commodityTicker, ratio)
+  if (amount !== null) row.amount = amount
+  if (index === rows.value.length - 1) ensureEmptyLastRow()
+}
 
 // Load price lists
 const loadPriceLists = async () => {
@@ -469,6 +655,28 @@ const onAmountChange = (index: number) => {
   }
 }
 
+// Focus material field in next row, or wrap to top if last row is empty
+const focusNextRowMaterial = (currentIndex: number) => {
+  const nextIndex = currentIndex + 1
+  const lastRow = rows.value[rows.value.length - 1]
+  const lastRowIsEmpty = !lastRow.commodityTicker && (!lastRow.amount || lastRow.amount <= 0)
+
+  if (nextIndex >= rows.value.length) {
+    if (lastRowIsEmpty) {
+      // Wrap to the first row
+      nextTick(() => {
+        materialRefs.value[0]?.focus?.()
+      })
+    } else {
+      addRow()
+    }
+  } else {
+    nextTick(() => {
+      materialRefs.value[nextIndex]?.focus?.()
+    })
+  }
+}
+
 const onMaterialTab = (event: globalThis.KeyboardEvent, index: number) => {
   if (!event.shiftKey) {
     // Forward tab: focus amount field in same row
@@ -481,17 +689,24 @@ const onMaterialTab = (event: globalThis.KeyboardEvent, index: number) => {
 
 const onAmountTab = (event: globalThis.KeyboardEvent, index: number) => {
   if (!event.shiftKey) {
-    // Forward tab: focus material field in next row
-    event.preventDefault()
-    const nextIndex = index + 1
-    if (nextIndex >= rows.value.length) {
-      // Add new row if we're on the last one
-      addRow()
-    } else {
+    const row = rows.value[index]
+    // If ratio field is visible for this row, tab into it
+    if (cargoCapacity.value && row.commodityTicker) {
+      event.preventDefault()
       nextTick(() => {
-        materialRefs.value[nextIndex]?.focus?.()
+        ratioRefs.value[index]?.focus?.()
       })
+      return
     }
+    event.preventDefault()
+    focusNextRowMaterial(index)
+  }
+}
+
+const onRatioTab = (event: globalThis.KeyboardEvent, index: number) => {
+  if (!event.shiftKey) {
+    event.preventDefault()
+    focusNextRowMaterial(index)
   }
 }
 
@@ -616,6 +831,15 @@ onMounted(async () => {
   flex: 0 0 10rem;
 }
 
+.col-wt,
+.col-vol {
+  flex: 0 0 5rem;
+}
+
+.col-ratio {
+  flex: 0 0 5rem;
+}
+
 .col-price,
 .col-total {
   flex: 0 0 10rem;
@@ -634,25 +858,96 @@ onMounted(async () => {
   height: 28px;
 }
 
+/* Cargo Hold bar layout */
+.cargo-hold-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem !important;
+}
+
+.cargo-hold-select {
+  flex: 0 0 22rem;
+  min-width: 14rem;
+}
+
+.cargo-hold-capacity {
+  flex: 0 0 6rem;
+}
+
+.cargo-hold-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.cargo-hold-spacer {
+  flex: 1 1 auto;
+}
+
+.cargo-hold-ratio {
+  flex: 0 0 auto;
+}
+
+.cargo-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.cargo-icon-sm {
+  width: 20px;
+  height: 20px;
+}
+
+/* Capacity inputs */
+.capacity-input :deep(.v-field__input) {
+  text-align: right;
+  font-size: 0.85rem;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* Hover preview: subtle highlight to indicate values are temporary */
+.capacity-preview :deep(.v-field) {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+}
+
+.capacity-preview :deep(.v-field__input) {
+  color: rgb(var(--v-theme-primary));
+}
+
 /* Input styling */
-.amount-input :deep(.v-field__input) {
+.amount-input :deep(.v-field__input),
+.ratio-input :deep(.v-field__input) {
   text-align: right;
 }
 
 /* Remove number input spinners */
-.amount-input :deep(input[type='number']) {
+.amount-input :deep(input[type='number']),
+.ratio-input :deep(input[type='number']),
+.capacity-input :deep(input[type='number']) {
   -moz-appearance: textfield;
 }
 
 .amount-input :deep(input[type='number']::-webkit-outer-spin-button),
-.amount-input :deep(input[type='number']::-webkit-inner-spin-button) {
+.amount-input :deep(input[type='number']::-webkit-inner-spin-button),
+.ratio-input :deep(input[type='number']::-webkit-outer-spin-button),
+.ratio-input :deep(input[type='number']::-webkit-inner-spin-button),
+.capacity-input :deep(input[type='number']::-webkit-outer-spin-button),
+.capacity-input :deep(input[type='number']::-webkit-inner-spin-button) {
   -webkit-appearance: none;
   margin: 0;
 }
 
 /* Responsive adjustments */
 @media (max-width: 600px) {
-  .col-price {
+  .col-price,
+  .col-wt,
+  .col-vol,
+  .col-ratio {
     display: none;
   }
 

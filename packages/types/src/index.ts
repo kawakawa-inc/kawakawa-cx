@@ -29,6 +29,8 @@ export interface Commodity {
   ticker: string
   name: string
   category?: string
+  weight?: number | null
+  volume?: number | null
 }
 
 export interface Location {

@@ -80,6 +80,14 @@ export const useShoppingListStore = () => {
     saveToStorage()
   }
 
+  // Link working list to an existing saved list (for update-on-save behavior)
+  const setSavedListId = (id: number): void => {
+    if (workingList.value) {
+      workingList.value.savedListId = id
+      saveToStorage()
+    }
+  }
+
   // Clear the working list
   const clearList = (): void => {
     workingList.value = null
@@ -241,6 +249,7 @@ export const useShoppingListStore = () => {
 
     // Actions
     setMaterials,
+    setSavedListId,
     clearList,
     loadSavedLists,
     openList,

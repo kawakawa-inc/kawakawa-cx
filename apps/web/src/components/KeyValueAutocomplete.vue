@@ -25,6 +25,15 @@
         {{ item.title }}
       </v-chip>
     </template>
+    <template v-if="isFiltered" #prepend-item>
+      <div class="filtered-tip d-flex align-center justify-space-between px-4 py-2">
+        <span class="text-caption text-medium-emphasis">Results are filtered</span>
+        <v-btn variant="text" size="x-small" color="primary" @click.stop="clearFilter">
+          Clear
+        </v-btn>
+      </div>
+      <v-divider />
+    </template>
     <template
       v-if="showFavoriteStars || showIcons || hasLocationTypes"
       #item="{ item, props: itemProps }"
@@ -140,6 +149,19 @@ const autocompleteRef = ref<InstanceType<typeof import('vuetify/components').VAu
 // Internal state for search text
 const searchText = ref('')
 
+// Show "Results are filtered" tip when search text is present but a value is already selected
+const isFiltered = computed(() => {
+  const hasSearch = searchText.value.trim().length > 0
+  const hasSelection = props.multiple
+    ? Array.isArray(props.modelValue) && props.modelValue.length > 0
+    : !!props.modelValue
+  return hasSearch && hasSelection
+})
+
+const clearFilter = () => {
+  searchText.value = ''
+}
+
 // Create a Set for efficient favorite lookups
 const favoritesSet = computed(() => new Set(props.favorites ?? []))
 
@@ -214,6 +236,7 @@ const onFocus = () => {
   searchText.value = ''
 }
 
+
 // Handle keydown events - process Tab locally and forward all events to parent
 const onKeydown = (event: Event) => {
   const keyEvent = event as globalThis.KeyboardEvent
@@ -266,6 +289,8 @@ const onKeydown = (event: Event) => {
 // (only for single-select mode, multiple mode should stay open for more selections)
 const onSelect = () => {
   if (!props.multiple) {
+    // Clear search text so the dropdown isn't filtered on next open
+    searchText.value = ''
     nextTick(() => {
       autocompleteRef.value?.blur()
     })
@@ -481,6 +506,10 @@ defineExpose({ focus })
 
 .chip-spacing {
   margin: 2px;
+}
+
+.filtered-tip {
+  background: rgba(var(--v-theme-primary), 0.04);
 }
 </style>
 

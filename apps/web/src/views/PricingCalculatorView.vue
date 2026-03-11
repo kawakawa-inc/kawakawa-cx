@@ -298,6 +298,23 @@
         >
           Clear
         </v-btn>
+        <v-menu>
+          <template #activator="{ props: menuProps }">
+            <v-btn variant="outlined" prepend-icon="mdi-import" v-bind="menuProps"> Import </v-btn>
+          </template>
+          <v-list density="compact">
+            <v-list-item
+              prepend-icon="mdi-clipboard-list"
+              title="From Shopping List"
+              @click="showListPickerDialog = true"
+            />
+            <v-list-item
+              prepend-icon="mdi-clipboard-text"
+              title="From Clipboard"
+              @click="showPasteDialog = true"
+            />
+          </v-list>
+        </v-menu>
         <v-spacer />
         <v-btn
           variant="tonal"
@@ -316,23 +333,71 @@
         >
           Copy All
         </v-btn>
+        <v-btn
+          variant="tonal"
+          prepend-icon="mdi-content-save"
+          :disabled="!hasFilledRows"
+          @click="showSaveDialog = true"
+        >
+          Save as List
+        </v-btn>
+        <v-btn
+          color="primary"
+          variant="elevated"
+          prepend-icon="mdi-send"
+          :disabled="!hasFilledRows"
+          @click="sendToMarket"
+        >
+          Send to Market
+        </v-btn>
       </v-card-actions>
     </v-card>
+
+    <!-- Import dialogs -->
+    <ImportPasteDialog v-model="showPasteDialog" @import="handleImportFromPaste" />
+    <ImportFromListDialog v-model="showListPickerDialog" @import="handleImportFromList" />
+
+    <!-- Save as shopping list dialog -->
+    <SaveListDialog
+      v-model="showSaveDialog"
+      :current-name="importedListName"
+      :is-update="!!importedListId"
+      @save="handleSaveAsList"
+    />
+
+    <!-- Replace confirmation dialog -->
+    <v-dialog v-model="showReplaceConfirm" max-width="350">
+      <v-card>
+        <v-card-title>Replace existing rows?</v-card-title>
+        <v-card-text>
+          This will replace your {{ filledRowCount }} existing rows with the imported materials.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="cancelImport">Cancel</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmImport">Replace</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import type { Currency } from '@kawakawa/types'
 import { api, type EffectivePrice } from '../services/api'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
-import { useSnackbar, useDisplayHelpers, useCargoHold } from '../composables'
+import { useSnackbar, useDisplayHelpers, useCargoHold, useCalculatorImport } from '../composables'
 import type { CargoHoldRow } from '../composables'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 import CommodityIcon from '../components/CommodityIcon.vue'
+import ImportPasteDialog from '../components/ImportPasteDialog.vue'
+import ImportFromListDialog from '../components/ImportFromListDialog.vue'
+import SaveListDialog from '../components/SaveListDialog.vue'
 
 interface CalculatorRow extends CargoHoldRow {
   id: number
@@ -345,6 +410,7 @@ interface PriceListOption {
   defaultLocationId: string | null
 }
 
+const router = useRouter()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 const { snackbar, showSnackbar } = useSnackbar()
@@ -382,7 +448,7 @@ const effectivePrices = ref<EffectivePrice[]>([])
 const STORAGE_KEY = 'kawakawa-calculator-rows'
 
 // Calculator rows
-let nextRowId = 1
+const nextRowId = { value: 1 }
 const rows = ref<CalculatorRow[]>(loadRowsFromStorage())
 
 function loadRowsFromStorage(): CalculatorRow[] {
@@ -392,14 +458,14 @@ function loadRowsFromStorage(): CalculatorRow[] {
       const parsed = JSON.parse(stored) as CalculatorRow[]
       if (Array.isArray(parsed) && parsed.length > 0) {
         // Update nextRowId to be higher than any existing id
-        nextRowId = Math.max(...parsed.map(r => r.id)) + 1
+        nextRowId.value = Math.max(...parsed.map(r => r.id)) + 1
         return parsed
       }
     }
   } catch {
     // Ignore parse errors
   }
-  return [{ id: nextRowId++, commodityTicker: null, amount: null }]
+  return [{ id: nextRowId.value++, commodityTicker: null, amount: null }]
 }
 
 function saveRowsToStorage() {
@@ -620,7 +686,7 @@ const loadEffectivePrices = async () => {
 
 // Row management
 const addRow = () => {
-  rows.value.push({ id: nextRowId++, commodityTicker: null, amount: null })
+  rows.value.push({ id: nextRowId.value++, commodityTicker: null, amount: null })
   // Focus the new row's material field
   nextTick(() => {
     const newIndex = rows.value.length - 1
@@ -635,7 +701,7 @@ const removeRow = (index: number) => {
 const ensureEmptyLastRow = () => {
   const lastRow = rows.value[rows.value.length - 1]
   if (lastRow.commodityTicker || (lastRow.amount && lastRow.amount > 0)) {
-    rows.value.push({ id: nextRowId++, commodityTicker: null, amount: null })
+    rows.value.push({ id: nextRowId.value++, commodityTicker: null, amount: null })
   }
 }
 
@@ -747,9 +813,28 @@ const copyAll = async () => {
 
 // Clear all rows
 const clearAll = () => {
-  rows.value = [{ id: nextRowId++, commodityTicker: null, amount: null }]
+  rows.value = [{ id: nextRowId.value++, commodityTicker: null, amount: null }]
+  clearImportSource()
   saveRowsToStorage()
 }
+
+// Import/save composable
+const {
+  showPasteDialog,
+  showListPickerDialog,
+  showSaveDialog,
+  showReplaceConfirm,
+  importedListName,
+  importedListId,
+  filledRowCount,
+  handleImportFromPaste,
+  handleImportFromList,
+  confirmImport,
+  cancelImport,
+  handleSaveAsList,
+  sendToMarket,
+  clearImportSource,
+} = useCalculatorImport(rows, hasFilledRows, nextRowId, showSnackbar, router)
 
 // Watch for price list changes to update default location
 watch(selectedPriceList, newPriceList => {

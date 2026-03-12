@@ -377,7 +377,10 @@
         </div>
         <div class="cargo-hold-spacer" />
         <div v-if="cargoCapacity" class="cargo-hold-actions">
-          <v-tooltip text="Evenly distribute unlocked rows across remaining capacity" location="top">
+          <v-tooltip
+            text="Evenly distribute unlocked rows across remaining capacity"
+            location="top"
+          >
             <template #activator="{ props: tooltipProps }">
               <v-btn
                 v-bind="tooltipProps"
@@ -539,8 +542,9 @@ const setRatioRef = (index: number, el: FocusableComponent | null) => {
 }
 
 // Select input value on focus for easy type-over
-const selectOnFocus = (event: FocusEvent) => {
-  const input = (event.target as HTMLElement)?.querySelector?.('input') ?? (event.target as HTMLInputElement)
+const selectOnFocus = (event: Event) => {
+  const input =
+    (event.target as HTMLElement)?.querySelector?.('input') ?? (event.target as HTMLInputElement)
   input?.select?.()
 }
 
@@ -553,7 +557,7 @@ const getRatioDisplayValue = (row: CalculatorRow, index: number): string => {
   return getRowRatio(row)?.toFixed(1) ?? ''
 }
 
-const onRatioFocus = (event: FocusEvent, index: number) => {
+const onRatioFocus = (event: Event, index: number) => {
   const row = rows.value[index]
   editingRatioIndex.value = index
   editingRatioValue.value = getRowRatio(row)?.toFixed(1) ?? ''

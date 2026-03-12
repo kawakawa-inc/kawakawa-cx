@@ -103,93 +103,95 @@
       </v-card>
     </v-dialog>
 
+    <!-- Saved Filter Dialogs -->
+    <SaveFilterDialog
+      v-model="showSaveFilterDialog"
+      :filter-data="getCurrentFilterData()"
+      :existing-filter="currentSavedFilter"
+      @saved="onFilterSaved"
+    />
+    <PublicFiltersBrowser
+      v-model="showPublicFiltersBrowser"
+      @apply="applySavedFilter"
+      @copy-link="copyFilterLink"
+    />
+
+    <!-- Pinned Filters Bar -->
+    <PinnedFiltersBar
+      v-if="pinnedFilters.length > 0"
+      :pinned-filters="pinnedFilters"
+      class="mb-2"
+      @apply="applySavedFilter"
+    />
+
     <!-- Filters Card -->
     <v-card class="mb-4">
       <v-card-text class="py-2">
-        <!-- Active Filters Display - always visible when filters active -->
-        <div v-if="hasActiveFilters || hasSearchChips" class="d-flex flex-wrap ga-2 mb-3">
-          <!-- Note: XIT and search-based filters are shown in the TokenSearchInput above -->
+        <!-- Active Filters Display -->
+        <div
+          v-if="currentSavedFilter || (!filtersExpanded && hasActiveFilters)"
+          class="d-flex flex-wrap ga-2 mb-3"
+        >
+          <!-- Active saved filter banner -->
           <v-chip
-            v-if="filters.itemType && !hasSearchChips"
-            closable
+            v-if="currentSavedFilter"
             size="small"
-            :color="filters.itemType === 'sell' ? 'success' : 'warning'"
-            @click:close="filters.itemType = null"
+            color="purple"
+            prepend-icon="mdi-bookmark"
+            closable
+            @click:close="currentSavedFilter = null"
           >
-            {{ filters.itemType === 'sell' ? 'Sell' : 'Buy' }}
+            {{ currentSavedFilter.name }}
+            <template #append>
+              <v-icon
+                size="small"
+                class="ml-1"
+                title="Copy shareable link"
+                @click.stop="copyFilterLink(currentSavedFilter!.id)"
+              >
+                mdi-link-variant
+              </v-icon>
+            </template>
           </v-chip>
-          <!-- Commodity chips (only show if not from search input) -->
-          <template v-if="!hasSearchChips">
+          <!-- Panel-only filter chips — only shown when panel is collapsed -->
+          <template v-if="!filtersExpanded">
             <v-chip
-              v-for="ticker in filters.commodity"
-              :key="`commodity-${ticker}`"
+              v-if="filters.category"
               closable
               size="small"
-              color="primary"
-              @click:close="filters.commodity = filters.commodity.filter(t => t !== ticker)"
+              color="secondary"
+              @click:close="filters.category = null"
             >
-              {{ getCommodityDisplay(ticker) }}
+              Category: {{ localizeMaterialCategory(filters.category as CommodityCategory) }}
             </v-chip>
-          </template>
-          <v-chip
-            v-if="filters.category"
-            closable
-            size="small"
-            color="secondary"
-            @click:close="filters.category = null"
-          >
-            Category: {{ localizeMaterialCategory(filters.category as CommodityCategory) }}
-          </v-chip>
-          <!-- Location chips (only show if not from search input) -->
-          <template v-if="!hasSearchChips">
             <v-chip
-              v-for="locId in filters.location"
-              :key="`location-${locId}`"
+              v-if="filters.orderType"
               closable
               size="small"
-              color="info"
-              @click:close="filters.location = filters.location.filter(l => l !== locId)"
+              :color="filters.orderType === 'partner' ? 'primary' : 'default'"
+              @click:close="filters.orderType = null"
             >
-              {{ getLocationDisplay(locId) }}
+              {{ filters.orderType === 'partner' ? 'Partner' : 'Internal' }}
+            </v-chip>
+            <v-chip
+              v-if="filters.pricing"
+              closable
+              size="small"
+              :color="filters.pricing === 'custom' ? 'default' : 'info'"
+              @click:close="filters.pricing = null"
+            >
+              {{ filters.pricing === 'custom' ? 'Custom Pricing' : filters.pricing }}
             </v-chip>
           </template>
-          <v-chip
-            v-if="filters.orderType"
-            closable
-            size="small"
-            :color="filters.orderType === 'partner' ? 'primary' : 'default'"
-            @click:close="filters.orderType = null"
-          >
-            {{ filters.orderType === 'partner' ? 'Partner' : 'Internal' }}
-          </v-chip>
-          <v-chip
-            v-if="filters.pricing"
-            closable
-            size="small"
-            :color="filters.pricing === 'custom' ? 'default' : 'info'"
-            @click:close="filters.pricing = null"
-          >
-            {{ filters.pricing === 'custom' ? 'Custom Pricing' : filters.pricing }}
-          </v-chip>
-          <!-- User chips (always show when filtered) -->
-          <v-chip
-            v-for="name in filters.userName"
-            :key="`user-${name}`"
-            closable
-            size="small"
-            color="secondary"
-            @click:close="filters.userName = filters.userName.filter(n => n !== name)"
-          >
-            User: {{ name }}
-          </v-chip>
         </div>
 
         <!-- Collapsible filter dropdowns -->
         <v-expand-transition>
           <v-row v-if="filtersExpanded" dense class="mb-2 filter-row">
             <v-col cols="6" sm="4" lg="2">
+              <!-- Proxies itemType through chip system -->
               <v-select
-                v-model="filters.itemType"
+                v-model="panelItemTypeModel"
                 :items="itemTypeOptions"
                 item-title="title"
                 item-value="value"
@@ -200,8 +202,9 @@
               />
             </v-col>
             <v-col cols="6" sm="4" lg="2">
+              <!-- Proxies commodity through chip system -->
               <KeyValueAutocomplete
-                v-model="filters.commodity"
+                v-model="panelCommodityModel"
                 :items="commodityOptions"
                 :favorites="settingsStore.favoritedCommodities.value"
                 :show-icons="hasIcons"
@@ -226,8 +229,9 @@
               />
             </v-col>
             <v-col cols="6" sm="4" lg="2">
+              <!-- Proxies location through chip system -->
               <KeyValueAutocomplete
-                v-model="filters.location"
+                v-model="panelLocationModel"
                 :items="locationOptions"
                 :favorites="settingsStore.favoritedLocations.value"
                 label="Location"
@@ -263,8 +267,9 @@
               />
             </v-col>
             <v-col cols="6" sm="4" lg="2">
+              <!-- Proxies user through chip system -->
               <v-select
-                v-model="filters.userName"
+                v-model="panelUserModel"
                 :items="userNameOptions"
                 item-title="title"
                 item-value="value"
@@ -281,7 +286,7 @@
 
         <!-- Always visible buttons row -->
         <v-row dense align="center">
-          <v-col cols="auto" class="d-flex ga-2">
+          <v-col cols="auto" class="d-flex ga-2 flex-wrap">
             <v-btn
               variant="outlined"
               size="small"
@@ -298,6 +303,29 @@
               @click="clearFiltersWithList"
             >
               Clear Filters
+            </v-btn>
+            <v-btn
+              variant="text"
+              size="small"
+              prepend-icon="mdi-bookmark-outline"
+              @click="showSaveFilterDialog = true"
+            >
+              Save Filter
+            </v-btn>
+            <SavedFiltersMenu
+              :current-filter-data="getCurrentFilterData()"
+              :can-pin="canPinFilters"
+              @apply="applySavedFilter"
+              @copy-link="copyFilterLink"
+              @saved="onFilterSaved"
+            />
+            <v-btn
+              variant="text"
+              size="small"
+              prepend-icon="mdi-earth"
+              @click="showPublicFiltersBrowser = true"
+            >
+              Browse
             </v-btn>
           </v-col>
           <v-spacer />
@@ -439,7 +467,7 @@
             size="small"
             variant="flat"
             class="clickable-chip"
-            @click.stop="setFilter('itemType', item.itemType)"
+            @click.stop="addFilterChip('itemType', item.itemType)"
           >
             {{ item.itemType === 'sell' ? 'SELL' : 'BUY' }}
           </v-chip>
@@ -449,7 +477,7 @@
           <a
             href="#"
             class="font-weight-medium filter-link"
-            @click.stop.prevent="setFilter('commodity', item.commodityTicker)"
+            @click.stop.prevent="addFilterChip('commodity', item.commodityTicker)"
           >
             <CommodityDisplay :ticker="item.commodityTicker" />
           </a>
@@ -474,16 +502,20 @@
           <a
             href="#"
             class="font-weight-medium filter-link"
-            @click.stop.prevent="setFilter('location', item.locationId)"
+            @click.stop.prevent="addFilterChip('location', item.locationId)"
           >
             {{ getLocationDisplay(item.locationId) }}
           </a>
         </template>
 
         <template #item.userName="{ item }">
-          <span :class="{ 'font-weight-medium': item.isOwn }">
-            {{ item.userName }}
-          </span>
+          <a
+            href="#"
+            class="filter-link"
+            :class="{ 'font-weight-medium': item.isOwn }"
+            @click.stop.prevent="addFilterChip('userName', item.userName)"
+            >{{ item.userName }}</a
+          >
         </template>
 
         <template #item.fioUploadedAt="{ item }">
@@ -952,7 +984,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { PERMISSIONS, type Currency, type OrderType, type Invoice } from '@kawakawa/types'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  PERMISSIONS,
+  type Currency,
+  type OrderType,
+  type Invoice,
+  type SavedMarketFilter,
+} from '@kawakawa/types'
 import type { XitMaterials } from '@kawakawa/types/xit'
 import { api, type EffectivePrice } from '../services/api'
 import { useUserStore } from '../stores/user'
@@ -986,6 +1025,10 @@ import ShoppingListPanel, {
   type ListItemStatus as ShoppingListStatus,
 } from '../components/ShoppingListPanel.vue'
 import ShoppingListPreferenceDialog from '../components/ShoppingListPreferenceDialog.vue'
+import SaveFilterDialog from '../components/SaveFilterDialog.vue'
+import SavedFiltersMenu from '../components/SavedFiltersMenu.vue'
+import PinnedFiltersBar from '../components/PinnedFiltersBar.vue'
+import PublicFiltersBrowser from '../components/PublicFiltersBrowser.vue'
 import { localizeMaterialCategory } from '../utils/materials'
 import { useShoppingListStore } from '../stores/shoppingList'
 import { locationService } from '../services/locationService'
@@ -996,6 +1039,8 @@ const userStore = useUserStore()
 const invoicesStore = useInvoicesStore()
 const settingsStore = useSettingsStore()
 const shoppingListStore = useShoppingListStore()
+const route = useRoute()
+const router = useRouter()
 const { snackbar, showSnackbar } = useSnackbar()
 const { getLocationDisplay, getCommodityDisplay, getCommodityCategory, getCommodityName } =
   useDisplayHelpers()
@@ -1077,6 +1122,16 @@ const headers = [
 // Token search input ref and state
 const tokenSearchRef = ref<InstanceType<typeof TokenSearchInput> | null>(null)
 const searchChips = ref<SearchChip[]>([])
+
+// Saved filters state
+const pinnedFilters = ref<SavedMarketFilter[]>([])
+const currentSavedFilter = ref<SavedMarketFilter | null>(null)
+const showSaveFilterDialog = ref(false)
+
+const showPublicFiltersBrowser = ref(false)
+
+// Check if user can pin filters
+const canPinFilters = computed(() => userStore.hasPermission(PERMISSIONS.FILTERS_PIN))
 
 const orderDialog = ref(false)
 const orderDialogTab = ref<'buy' | 'sell'>('buy')
@@ -1294,6 +1349,86 @@ const itemTypeOptions = [
   { title: 'Buy', value: 'buy' as MarketItemType },
 ]
 
+// Panel computed models that proxy chip state (panel writes chips, chips are source of truth)
+const panelItemTypeModel = computed({
+  get: () => searchChips.value.find(c => c.type === 'itemType')?.value ?? null,
+  set: (value: string | null) => {
+    if (value) {
+      tokenSearchRef.value?.addChip({
+        type: 'itemType',
+        value,
+        display: value === 'buy' ? 'Buy' : 'Sell',
+      })
+    } else {
+      tokenSearchRef.value?.removeChipByTypeValue('itemType', 'buy')
+      tokenSearchRef.value?.removeChipByTypeValue('itemType', 'sell')
+    }
+  },
+})
+
+const panelCommodityModel = computed({
+  get: () => searchChips.value.filter(c => c.type === 'commodity').map(c => c.value),
+  set: (newValues: string[]) => {
+    const current = searchChips.value.filter(c => c.type === 'commodity').map(c => c.value)
+    for (const v of newValues) {
+      if (!current.includes(v)) {
+        tokenSearchRef.value?.addChip({
+          type: 'commodity',
+          value: v,
+          display: getCommodityDisplay(v),
+        })
+      }
+    }
+    for (const v of current) {
+      if (!newValues.includes(v)) {
+        tokenSearchRef.value?.removeChipByTypeValue('commodity', v)
+      }
+    }
+  },
+})
+
+const panelLocationModel = computed({
+  get: () => searchChips.value.filter(c => c.type === 'location').map(c => c.value),
+  set: (newValues: string[]) => {
+    const current = searchChips.value.filter(c => c.type === 'location').map(c => c.value)
+    for (const v of newValues) {
+      if (!current.includes(v)) {
+        tokenSearchRef.value?.addChip({
+          type: 'location',
+          value: v,
+          display: getLocationDisplay(v),
+        })
+      }
+    }
+    for (const v of current) {
+      if (!newValues.includes(v)) {
+        tokenSearchRef.value?.removeChipByTypeValue('location', v)
+      }
+    }
+  },
+})
+
+const panelUserModel = computed({
+  get: () => searchChips.value.filter(c => c.type === 'user').map(c => c.value),
+  set: (newValues: string[]) => {
+    const current = searchChips.value.filter(c => c.type === 'user').map(c => c.value)
+    for (const v of newValues) {
+      if (!current.includes(v)) {
+        tokenSearchRef.value?.addChip({
+          type: 'user',
+          value: v,
+          display: v,
+        })
+      }
+    }
+    for (const v of current) {
+      if (!newValues.includes(v)) {
+        tokenSearchRef.value?.removeChipByTypeValue('user', v)
+      }
+    }
+  },
+})
+
 const commodityOptions = computed((): KeyValueItem[] => {
   const tickers = new Set(marketItems.value.map(l => l.commodityTicker))
   return Array.from(tickers).map(ticker => ({
@@ -1496,10 +1631,7 @@ const openContractForResult = async (invoiceId: number) => {
 
 // Handle filter add from invoice panel (adds userName to filter)
 const onFilterAdd = (userName: string) => {
-  const current = filters.value.userName
-  if (!current.includes(userName)) {
-    setFilter('userName', [...current, userName])
-  }
+  addFilterChip('userName', userName)
 }
 
 // Handle add-invoice from empty state - open counterparty selection dialog
@@ -1718,9 +1850,10 @@ const hasSearchChips = computed(() => searchChips.value.length > 0)
 const onChipsUpdate = (chips: SearchChip[]) => {
   searchChips.value = chips
 
-  // Extract filter values from chips
+  // Extract filter values from chips for URL sync
   const commodities: string[] = []
   const locations: string[] = []
+  const userNames: string[] = []
   let itemType: MarketItemType | null = null
   let listData: { materials: Record<string, number>; name?: string } | null = null
 
@@ -1731,6 +1864,9 @@ const onChipsUpdate = (chips: SearchChip[]) => {
         break
       case 'location':
         locations.push(chip.value)
+        break
+      case 'user':
+        userNames.push(chip.value)
         break
       case 'itemType':
         itemType = chip.value as MarketItemType
@@ -1747,10 +1883,14 @@ const onChipsUpdate = (chips: SearchChip[]) => {
     }
   }
 
-  // Update filters
+  // Sync to URL filter params (chips are the source of truth for filtering)
   filters.value.commodity = commodities
   filters.value.location = locations
   filters.value.itemType = itemType
+  filters.value.userName = userNames
+
+  // Clear saved filter ref if user is modifying chips manually
+  onFilterModified()
 
   // Update shopping list state - sync to store
   listQuantities.value = listData?.materials ?? null
@@ -1769,6 +1909,7 @@ const clearFiltersWithList = () => {
   listQuantities.value = null
   listName.value = undefined
   shoppingListStore.clearList()
+  currentSavedFilter.value = null
 }
 
 const visibilityOptions = [
@@ -1789,13 +1930,47 @@ const pricingOptions = computed(() => {
 
 // hasActiveFilters, clearFilters, and setFilter are provided by useUrlFilters
 
+// Route chip-based filter clicks through the chip system instead of filters.value
+const addFilterChip = (key: string, value: string) => {
+  if (key === 'location') {
+    tokenSearchRef.value?.addChip({ type: 'location', value, display: getLocationDisplay(value) })
+  } else if (key === 'commodity') {
+    tokenSearchRef.value?.addChip({ type: 'commodity', value, display: getCommodityDisplay(value) })
+  } else if (key === 'itemType') {
+    tokenSearchRef.value?.addChip({
+      type: 'itemType',
+      value,
+      display: value === 'sell' ? 'Sell' : 'Buy',
+    })
+  } else if (key === 'userName') {
+    tokenSearchRef.value?.addChip({ type: 'user', value, display: value })
+  } else {
+    setFilter(key, value)
+  }
+}
+
 const filteredItems = computed(() => {
   let result = marketItems.value
 
-  // Apply string filters (single-select)
-  if (filters.value.itemType) {
-    result = result.filter(l => l.itemType === filters.value.itemType)
+  // Chip-based filters (commodity, location, itemType, user — chips are source of truth)
+  const chipItemType = searchChips.value.find(c => c.type === 'itemType')?.value
+  if (chipItemType) {
+    result = result.filter(l => l.itemType === chipItemType)
   }
+  const chipCommodities = searchChips.value.filter(c => c.type === 'commodity').map(c => c.value)
+  if (chipCommodities.length > 0) {
+    result = result.filter(l => chipCommodities.includes(l.commodityTicker))
+  }
+  const chipLocations = searchChips.value.filter(c => c.type === 'location').map(c => c.value)
+  if (chipLocations.length > 0) {
+    result = result.filter(l => chipLocations.includes(l.locationId))
+  }
+  const chipUsers = searchChips.value.filter(c => c.type === 'user').map(c => c.value)
+  if (chipUsers.length > 0) {
+    result = result.filter(l => chipUsers.includes(l.userName))
+  }
+
+  // Panel-only filters (category, orderType, pricing — no chip types for these)
   if (filters.value.category) {
     result = result.filter(l => getCommodityCategory(l.commodityTicker) === filters.value.category)
   }
@@ -1810,32 +1985,19 @@ const filteredItems = computed(() => {
     }
   }
 
-  // Apply array filters (multi-select)
-  if (filters.value.commodity.length > 0) {
-    result = result.filter(l => filters.value.commodity.includes(l.commodityTicker))
-  }
-  if (filters.value.location.length > 0) {
-    result = result.filter(l => filters.value.location.includes(l.locationId))
-  }
-  if (filters.value.userName.length > 0) {
-    result = result.filter(l => filters.value.userName.includes(l.userName))
-  }
-
-  // Note: Free text filtering removed - autocomplete shows suggestions,
-  // filtering only happens when user selects a chip
-
   return result
 })
 
 // Compute which filtered commodities have no matching orders
 const notFoundCommodities = computed(() => {
-  if (filters.value.commodity.length === 0) return []
+  const chipCommodities = searchChips.value.filter(c => c.type === 'commodity').map(c => c.value)
+  if (chipCommodities.length === 0) return []
 
   // Get all commodity tickers that appear in the filtered results
   const foundTickers = new Set(filteredItems.value.map(item => item.commodityTicker))
 
   // Return filtered commodities that have no matching orders
-  return filters.value.commodity.filter(ticker => !foundTickers.has(ticker))
+  return chipCommodities.filter(ticker => !foundTickers.has(ticker))
 })
 
 const openOrderDialog = () => {
@@ -2065,9 +2227,162 @@ const handleGlobalKeydown = (event: globalThis.KeyboardEvent) => {
   }
 }
 
+// Clear saved filter reference when user modifies filters manually
+// (chips is the reactive source for commodity/location/itemType/user)
+// We don't watch filters.value directly since onChipsUpdate writes there too
+
+const onFilterModified = () => {
+  if (currentSavedFilter.value) {
+    currentSavedFilter.value = null
+  }
+}
+
+// Saved filters functions
+
+const loadPinnedFilters = async () => {
+  try {
+    pinnedFilters.value = await api.savedFilters.getPinned()
+  } catch {
+    // Silently ignore — pinned filters are non-critical
+  }
+}
+
+const applyFilterData = (filterData: SavedMarketFilter['filterData']) => {
+  // Apply chip-based fields by adding chips
+  if (filterData.itemType) {
+    tokenSearchRef.value?.addChip({
+      type: 'itemType',
+      value: filterData.itemType,
+      display: filterData.itemType === 'buy' ? 'Buy' : 'Sell',
+    })
+  }
+  for (const ticker of filterData.commodity ?? []) {
+    tokenSearchRef.value?.addChip({
+      type: 'commodity',
+      value: ticker,
+      display: getCommodityDisplay(ticker),
+    })
+  }
+  for (const locId of filterData.location ?? []) {
+    tokenSearchRef.value?.addChip({
+      type: 'location',
+      value: locId,
+      display: getLocationDisplay(locId),
+    })
+  }
+  for (const user of filterData.userName ?? []) {
+    tokenSearchRef.value?.addChip({
+      type: 'user',
+      value: user,
+      display: user,
+    })
+  }
+  // Apply panel-only fields
+  if (filterData.category) filters.value.category = filterData.category
+  if (filterData.orderType) filters.value.orderType = filterData.orderType
+  if (filterData.pricing) filters.value.pricing = filterData.pricing
+}
+
+const applySavedFilter = (savedFilter: SavedMarketFilter) => {
+  // Clear current state first
+  clearFiltersWithList()
+  nextTick(() => {
+    applyFilterData(savedFilter.filterData)
+    currentSavedFilter.value = savedFilter
+  })
+}
+
+const loadSavedFilterFromUrl = async (id: number) => {
+  try {
+    const saved = await api.savedFilters.get(id)
+    // Remove the ?filter=ID param from URL (replace with actual filter params)
+    const query = { ...route.query }
+    delete query.filter
+    router.replace({ query })
+    // Apply the saved filter
+    applyFilterData(saved.filterData)
+    currentSavedFilter.value = saved
+  } catch {
+    showSnackbar('Saved filter not found or not accessible', 'error')
+  }
+}
+
+const getCurrentFilterData = (): SavedMarketFilter['filterData'] => {
+  return {
+    itemType:
+      (searchChips.value.find(c => c.type === 'itemType')?.value as 'sell' | 'buy') || undefined,
+    commodity: searchChips.value.filter(c => c.type === 'commodity').map(c => c.value),
+    location: searchChips.value.filter(c => c.type === 'location').map(c => c.value),
+    userName: searchChips.value.filter(c => c.type === 'user').map(c => c.value),
+    category: filters.value.category ?? undefined,
+    orderType: filters.value.orderType ?? undefined,
+    pricing: filters.value.pricing ?? undefined,
+  }
+}
+
+const onFilterSaved = (savedFilter: SavedMarketFilter) => {
+  currentSavedFilter.value = savedFilter
+  loadPinnedFilters()
+}
+
+const copyFilterLink = (filterId: number) => {
+  const url = `${window.location.origin}/market?filter=${filterId}`
+  navigator.clipboard.writeText(url).then(() => {
+    showSnackbar('Filter link copied to clipboard', 'success')
+  })
+}
+
 onMounted(() => {
   loadMarketItems()
+  loadPinnedFilters()
   document.addEventListener('keydown', handleGlobalKeydown)
+
+  // Initialize chips from URL filter params (for existing bookmark deep links)
+  nextTick(() => {
+    // Load saved filter from ?filter=ID URL param
+    const filterId = route.query.filter
+    if (filterId) {
+      loadSavedFilterFromUrl(Number(filterId))
+      return
+    }
+
+    // Convert URL filter params to chips (for commodity/location/itemType/userName).
+    // Capture all values up-front — each addChip() triggers onChipsUpdate() which
+    // overwrites filters.value, so reading lazily would lose later entries.
+    const initialItemType = filters.value.itemType
+    const initialCommodities = [...filters.value.commodity]
+    const initialLocations = [...filters.value.location]
+    const initialUserNames = [...filters.value.userName]
+
+    if (initialItemType) {
+      tokenSearchRef.value?.addChip({
+        type: 'itemType',
+        value: initialItemType,
+        display: initialItemType === 'buy' ? 'Buy' : 'Sell',
+      })
+    }
+    for (const ticker of initialCommodities) {
+      tokenSearchRef.value?.addChip({
+        type: 'commodity',
+        value: ticker,
+        display: getCommodityDisplay(ticker),
+      })
+    }
+    for (const locId of initialLocations) {
+      tokenSearchRef.value?.addChip({
+        type: 'location',
+        value: locId,
+        display: getLocationDisplay(locId),
+      })
+    }
+    for (const userName of initialUserNames) {
+      tokenSearchRef.value?.addChip({
+        type: 'user',
+        value: userName,
+        display: userName,
+      })
+    }
+  })
 })
 
 onUnmounted(() => {

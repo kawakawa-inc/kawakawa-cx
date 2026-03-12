@@ -236,7 +236,6 @@ const onFocus = () => {
   searchText.value = ''
 }
 
-
 // Handle keydown events - process Tab locally and forward all events to parent
 const onKeydown = (event: Event) => {
   const keyEvent = event as globalThis.KeyboardEvent

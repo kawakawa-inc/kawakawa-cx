@@ -27,41 +27,51 @@
           <div class="list-title">
             <v-icon size="small" class="mr-1">mdi-cart</v-icon>
             {{ listName }}
-            <v-btn
-              v-if="sortedListStatus.length > 0"
-              icon
-              size="x-small"
-              variant="text"
-              color="primary"
-              title="Filter market by list items"
-              class="filter-btn"
-              @click="emit('filter-by-list')"
-            >
-              <v-icon size="small">mdi-filter</v-icon>
-            </v-btn>
+            <v-tooltip v-if="sortedListStatus.length > 0" location="top">
+              <template #activator="{ props: tooltipProps }">
+                <v-btn
+                  v-bind="tooltipProps"
+                  icon
+                  size="x-small"
+                  variant="text"
+                  :color="syncFilterEnabled ? 'primary' : 'grey'"
+                  class="filter-btn"
+                  @click="onFilterToggle"
+                >
+                  <v-icon size="small">mdi-filter</v-icon>
+                </v-btn>
+              </template>
+              {{
+                syncFilterEnabled
+                  ? 'Filtering by list — click to disable'
+                  : 'Filter market by list items'
+              }}
+            </v-tooltip>
           </div>
-          <!-- Auto-update toggle (lock/unlock icon) -->
-          <v-tooltip v-if="isLoggedIn" location="top">
-            <template #activator="{ props: tooltipProps }">
-              <v-btn
-                v-bind="tooltipProps"
-                icon
-                size="x-small"
-                variant="text"
-                :color="autoUpdateEnabled ? 'primary' : 'grey'"
-                @click="autoUpdateEnabled = !autoUpdateEnabled"
-              >
-                <v-icon size="small">
-                  {{ autoUpdateEnabled ? 'mdi-lock-open-variant' : 'mdi-lock' }}
-                </v-icon>
-              </v-btn>
-            </template>
-            {{
-              autoUpdateEnabled
-                ? 'List auto-updates on invoice submit'
-                : 'List locked (no auto-updates)'
-            }}
-          </v-tooltip>
+          <div class="d-flex align-center">
+            <!-- Auto-update toggle (lock/unlock icon) -->
+            <v-tooltip v-if="isLoggedIn" location="top">
+              <template #activator="{ props: tooltipProps }">
+                <v-btn
+                  v-bind="tooltipProps"
+                  icon
+                  size="x-small"
+                  variant="text"
+                  :color="autoUpdateEnabled ? 'primary' : 'grey'"
+                  @click="autoUpdateEnabled = !autoUpdateEnabled"
+                >
+                  <v-icon size="small">
+                    {{ autoUpdateEnabled ? 'mdi-lock-open-variant' : 'mdi-lock' }}
+                  </v-icon>
+                </v-btn>
+              </template>
+              {{
+                autoUpdateEnabled
+                  ? 'List auto-updates on invoice submit'
+                  : 'List locked (no auto-updates)'
+              }}
+            </v-tooltip>
+          </div>
         </div>
         <div class="list-meta-row">
           <div class="list-meta text-caption">
@@ -382,7 +392,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   (e: 'clear'): void
   (e: 'add', ticker: string, quantity: number): void
-  (e: 'filter-by-list'): void
+  (e: 'filter-by-list', enabled: boolean): void
 }>()
 
 const shoppingListStore = useShoppingListStore()
@@ -456,6 +466,18 @@ const autoUpdateEnabled = computed({
   get: () => settingsStore.getSetting<boolean | null>('market.updateShoppingList') ?? false,
   set: value => settingsStore.updateSetting('market.updateShoppingList', value),
 })
+
+// Sync search filter with shopping list fulfillment
+const syncFilterEnabled = computed({
+  get: () => settingsStore.getSetting<boolean | null>('market.syncFilterWithShoppingList') ?? false,
+  set: value => settingsStore.updateSetting('market.syncFilterWithShoppingList', value),
+})
+
+const onFilterToggle = () => {
+  const newValue = !syncFilterEnabled.value
+  syncFilterEnabled.value = newValue
+  emit('filter-by-list', newValue)
+}
 
 // Sort items based on effective status (considering own orders when enabled)
 // Unfulfilled first (unavailable, partial, available), then fulfilled/own-order-satisfied

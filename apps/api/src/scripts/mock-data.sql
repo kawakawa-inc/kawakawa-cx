@@ -3,6 +3,9 @@
 -- Password for all users: password123 (bcrypt hash with 12 rounds)
 
 -- Clear existing mock data (including admin for full mock reset)
+DELETE FROM invoice_line_items;
+DELETE FROM invoices;
+DELETE FROM shopping_lists;
 DELETE FROM order_reservations;
 DELETE FROM notifications;
 DELETE FROM buy_orders;
@@ -28,6 +31,9 @@ SELECT setval(pg_get_serial_sequence('sell_orders', 'id'), COALESCE((SELECT MAX(
 SELECT setval(pg_get_serial_sequence('buy_orders', 'id'), COALESCE((SELECT MAX(id) FROM buy_orders), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('order_reservations', 'id'), COALESCE((SELECT MAX(id) FROM order_reservations), 0) + 1, false);
 SELECT setval(pg_get_serial_sequence('notifications', 'id'), COALESCE((SELECT MAX(id) FROM notifications), 0) + 1, false);
+SELECT setval(pg_get_serial_sequence('invoices', 'id'), COALESCE((SELECT MAX(id) FROM invoices), 0) + 1, false);
+SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), COALESCE((SELECT MAX(id) FROM invoice_line_items), 0) + 1, false);
+SELECT setval(pg_get_serial_sequence('shopping_lists', 'id'), COALESCE((SELECT MAX(id) FROM shopping_lists), 0) + 1, false);
 
 -- ==================== USERS ====================
 -- Password: password123 (bcrypt hash with $2b$ prefix from bcryptjs)
@@ -621,6 +627,57 @@ INSERT INTO price_adjustments (price_list_code, commodity_ticker, location_id, a
   ('TEST', 'AU', NULL, 'percentage', '5.00', 'Additional 5% for gold', 10, true),
   ('TEST', 'AUO', NULL, 'percentage', '5.00', 'Additional 5% for gold ore', 10, true);
 
+-- ==================== SHOPPING LISTS ====================
+-- Saved shopping lists for members (materials: ticker -> quantity)
+INSERT INTO shopping_lists (id, user_id, name, materials, notes) VALUES
+  -- Alice's production run list
+  (1, 2, 'Production Run Alpha', '{"H2O": 5000, "RAT": 2000, "COF": 500, "DW": 1000}'::jsonb, 'Monthly base consumables'),
+  -- Bob's restocking list
+  (2, 3, 'Q2 Restocking', '{"H2O": 8000, "RAT": 4000, "DW": 2000, "OVE": 1000}'::jsonb, NULL),
+  -- Charlie's base expansion materials
+  (3, 4, 'Base Expansion', '{"PE": 3000, "PG": 2500, "EPO": 1000, "SOI": 6000}'::jsonb, 'ZV-759i expansion phase 2'),
+  -- Diana's smelting inputs
+  (4, 5, 'Smelting Inputs', '{"C": 5000, "SI": 3000, "CU": 2000}'::jsonb, NULL);
+
+SELECT setval(pg_get_serial_sequence('shopping_lists', 'id'), 4, true);
+
+-- ==================== INVOICES ====================
+-- Invoices grouping trades between pairs of users; submitted_at null = draft
+INSERT INTO invoices (id, user_id, counterparty_user_id, status, name, submitted_at) VALUES
+  -- Alice bought CU + TI from Charlie (fulfilled 5 days ago)
+  (1, 2, 4, 'fulfilled', 'CU + TI from HUB', NOW() - INTERVAL '5 days'),
+  -- Bob buying H2O + RAT from Alice (confirmed, awaiting fulfilment)
+  (2, 3, 2, 'confirmed', 'BEN Essentials', NOW() - INTERVAL '2 days'),
+  -- Ethan submitted a buy from Diana (pending her confirmation)
+  (3, 6, 5, 'pending', NULL, NOW() - INTERVAL '1 day'),
+  -- Fiona drafting a buy from Ivan (not yet submitted)
+  (4, 7, 10, 'draft', 'ARC Industrials', NULL),
+  -- Alice bought FE + AL from trade partner Nora (fulfilled 10 days ago)
+  (5, 2, 15, 'fulfilled', 'Partner FE/AL Order', NOW() - INTERVAL '10 days');
+
+SELECT setval(pg_get_serial_sequence('invoices', 'id'), 5, true);
+
+-- ==================== INVOICE LINE ITEMS ====================
+-- commodity_ticker, location_id, quantity, unit_price, currency are snapshots at time of adding
+INSERT INTO invoice_line_items (id, invoice_id, sell_order_id, buy_order_id, commodity_ticker, location_id, quantity, unit_price, currency) VALUES
+  -- Invoice 1: Alice bought CU + TI from Charlie (sell orders 14, 15)
+  (1,  1, 14, NULL, 'CU', 'HUB',   1000,   450.00, 'CIS'),
+  (2,  1, 15, NULL, 'TI', 'HUB',    500,  3200.00, 'CIS'),
+  -- Invoice 2: Bob buying H2O + RAT from Alice (sell orders 1, 2; buy orders 5, 6)
+  (3,  2,  1,    5, 'H2O', 'BEN',  2000,    50.00, 'CIS'),
+  (4,  2,  2,    6, 'RAT', 'BEN',  1000,    95.00, 'CIS'),
+  -- Invoice 3: Ethan buying COT + GRN from Diana (sell orders 18, 20)
+  (5,  3, 18, NULL, 'COT', 'BEN',  1500,    78.00, 'CIS'),
+  (6,  3, 20, NULL, 'GRN', 'BEN',  2000,    42.00, 'CIS'),
+  -- Invoice 4: Fiona drafting SOI + HOP from Ivan (sell orders 36, 37; buy order 85)
+  (7,  4, 36,   85, 'SOI', 'ARC',  3000,    38.00, 'CIS'),
+  (8,  4, 37, NULL, 'HOP', 'ARC',  1000,   125.00, 'ICA'),
+  -- Invoice 5: Alice bought FE + AL from Nora (sell orders 42, 43; buy orders 1, 2)
+  (9,  5, 42,    1, 'FE',  'BEN',  3000,    82.00, 'CIS'),
+  (10, 5, 43,    2, 'AL',  'BEN',  2000,   215.00, 'NCC');
+
+SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), 10, true);
+
 -- Summary
 SELECT 'Mock data loaded successfully!' as status;
 SELECT 'Users: ' || COUNT(*) FROM users WHERE id > 1;
@@ -630,3 +687,6 @@ SELECT 'Reservations: ' || COUNT(*) FROM order_reservations;
 SELECT 'Inventory Items: ' || COUNT(*) FROM fio_inventory;
 SELECT 'Notifications: ' || COUNT(*) FROM notifications;
 SELECT 'Test Prices: ' || COUNT(*) FROM prices WHERE price_list_code = 'TEST';
+SELECT 'Shopping Lists: ' || COUNT(*) FROM shopping_lists;
+SELECT 'Invoices: ' || COUNT(*) FROM invoices;
+SELECT 'Invoice Line Items: ' || COUNT(*) FROM invoice_line_items;

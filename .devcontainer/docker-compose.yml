@@ -9,7 +9,7 @@ services:
       - ..:/workspace:rw
       - node-home:/home/node:rw
     command: sleep infinity
-    network_mode: service:db
+    network_mode: host
     environment:
       - DATABASE_URL=postgresql://kawa:kawa_dev_password@localhost:5432/kawa_market
       - NODE_ENV=development

@@ -83,7 +83,7 @@
                   <div class="text-subtitle-1 font-weight-bold mb-3">Account Information</div>
 
                   <v-text-field
-                    v-model="account.profileName"
+                    v-model="account.username"
                     label="Username"
                     prepend-icon="mdi-account"
                     readonly
@@ -528,6 +528,29 @@
                     <v-tooltip
                       location="top"
                       text="Automatically update shopping list when invoices are submitted (remove fulfilled items, reduce partial quantities)"
+                    >
+                      <template #activator="{ props }">
+                        <v-icon v-bind="props" size="small">mdi-help-circle-outline</v-icon>
+                      </template>
+                    </v-tooltip>
+                  </template>
+                </v-switch>
+
+                <v-switch
+                  :model-value="settingsStore.syncFilterWithShoppingList.value ?? false"
+                  label="Sync Search Filter with List"
+                  color="primary"
+                  hide-details
+                  class="mb-2"
+                  @update:model-value="autoSaveSetting('market.syncFilterWithShoppingList', $event)"
+                >
+                  <template #prepend>
+                    <v-icon>mdi-link</v-icon>
+                  </template>
+                  <template #append>
+                    <v-tooltip
+                      location="top"
+                      text="When a shopping list item is fully fulfilled, automatically remove its commodity chip from the search filter"
                     >
                       <template #activator="{ props }">
                         <v-icon v-bind="props" size="small">mdi-help-circle-outline</v-icon>
@@ -1215,12 +1238,12 @@ const activeTab = useUrlTab({
 // Profile data (from API)
 // Note: FIO credentials (fioUsername, fioApiKey) are now in user settings, not profile
 const account = ref<{
-  profileName: string
+  username: string
   displayName: string
   email: string | null
   roles: Role[]
 }>({
-  profileName: '',
+  username: '',
   displayName: '',
   email: null,
   roles: [],
@@ -1562,7 +1585,7 @@ onMounted(async () => {
     // Load profile data from API
     const profile = await api.account.getProfile()
     account.value = {
-      profileName: profile.profileName,
+      username: profile.username,
       displayName: profile.displayName,
       email: profile.email ?? null,
       roles: profile.roles,
@@ -1588,7 +1611,7 @@ onMounted(async () => {
     const cachedUser = userStore.getUser()
     if (cachedUser) {
       account.value = {
-        profileName: cachedUser.profileName,
+        username: cachedUser.username,
         displayName: cachedUser.displayName,
         email: cachedUser.email ?? null,
         roles: cachedUser.roles,

@@ -46,12 +46,12 @@ import type {
 } from '@kawakawa/types'
 
 interface LoginRequest {
-  profileName: string
+  username: string
   password: string
 }
 
 interface RegisterRequest {
-  profileName: string
+  username: string
   password: string
 }
 
@@ -794,7 +794,7 @@ const realApi = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        username: request.profileName, // Map profileName to username
+        username: request.username,
         password: request.password,
       }),
     })
@@ -807,9 +807,9 @@ const realApi = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        username: request.profileName, // Map profileName to username
+        username: request.username,
         password: request.password,
-        displayName: request.profileName,
+        displayName: request.username,
       }),
     })
   },

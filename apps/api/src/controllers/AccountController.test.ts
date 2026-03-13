@@ -96,7 +96,7 @@ describe('AccountController', () => {
 
       // FIO credentials are now in user settings, not in profile response
       expect(result).toEqual({
-        profileName: 'testuser',
+        username: 'testuser',
         displayName: 'Test User',
         email: 'test@example.com',
         roles: [
@@ -124,7 +124,7 @@ describe('AccountController', () => {
       const result = await controller.getProfile(request)
 
       expect(result).toEqual({
-        profileName: 'newuser',
+        username: 'newuser',
         displayName: 'New User',
         email: null,
         roles: [],
@@ -188,7 +188,7 @@ describe('AccountController', () => {
 
       const result = await controller.updateProfile(body, request)
 
-      expect(result.profileName).toBe('testuser')
+      expect(result.username).toBe('testuser')
       expect(result.displayName).toBe('Updated Name')
     })
   })

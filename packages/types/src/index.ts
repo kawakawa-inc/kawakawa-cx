@@ -91,7 +91,7 @@ export interface Role {
 }
 
 export interface User {
-  profileName: string
+  username: string
   displayName: string
   email: string | null
   roles: Role[] // One user to many roles

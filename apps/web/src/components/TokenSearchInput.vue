@@ -1,7 +1,7 @@
 <template>
   <div ref="wrapperRef" class="token-search-wrapper">
     <div class="token-search-container" :class="{ focused: isFocused }" @click="focusInput">
-      <v-icon class="search-icon" size="small">mdi-magnify</v-icon>
+      <kbd class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
 
       <!-- Chips for parsed tokens -->
       <v-chip
@@ -800,9 +800,26 @@ defineExpose({
 }
 
 .search-icon {
-  color: rgba(var(--v-theme-on-surface), 0.5);
-  margin-right: 4px;
+  margin-right: 6px;
   flex-shrink: 0;
+}
+
+.search-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  background: rgba(var(--v-theme-on-surface), 0.07);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
+  border-radius: 4px;
+  cursor: default;
+  user-select: none;
 }
 
 .token-chip {

@@ -165,7 +165,7 @@ const emit = defineEmits<{
 }>()
 
 const userStore = useUserStore()
-const currentUsername = computed(() => userStore.getUser()?.profileName ?? '')
+const currentUsername = computed(() => userStore.getUser()?.username ?? '')
 
 const menuOpen = ref(false)
 const loading = ref(false)

@@ -82,6 +82,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import CommodityIcon from './CommodityIcon.vue'
+import {
+  getLocationCategoryPriority,
+  getLocationPrimaryEmoji,
+  getLocationWarehouseEmoji,
+} from '../utils/locationUtils'
 
 /**
  * An item with a key (ID/ticker) and display text.
@@ -171,29 +176,11 @@ const showFavoriteStars = computed(() => !props.hideFavoriteStars && props.favor
 // Check if any items have storage types (for showing emoji in dropdown)
 const hasLocationTypes = computed(() => props.items.some(item => item.storageTypes?.length))
 
-// Get primary location emoji (first slot):
-// - Station → 🛰️
-// - Planet with base (STORE) → 🏠
-// - Planet without base → 🌍
-const getPrimaryLocationEmoji = (item: KeyValueItem): string => {
-  const hasBase = item.storageTypes?.includes('STORE')
+const getPrimaryLocationEmoji = (item: KeyValueItem): string =>
+  getLocationPrimaryEmoji(item.locationType, item.storageTypes)
 
-  if (item.locationType === 'Station') {
-    return '🛰️'
-  }
-  if (item.locationType === 'Planet') {
-    return hasBase ? '🏠' : '🌍'
-  }
-  // Fallback for other types
-  return hasBase ? '🏠' : ''
-}
-
-// Get secondary location emoji (second slot):
-// - Only shows 🏭 if user has warehouse at this location
-const getSecondaryLocationEmoji = (item: KeyValueItem): string => {
-  const hasWarehouse = item.storageTypes?.includes('WAREHOUSE_STORE')
-  return hasWarehouse ? '🏭' : ''
-}
+const getSecondaryLocationEmoji = (item: KeyValueItem): string =>
+  getLocationWarehouseEmoji(item.storageTypes)
 
 // Toggle a favorite on/off
 const toggleFavorite = (key: string) => {
@@ -296,29 +283,13 @@ const onSelect = () => {
   }
 }
 
-// Get location category priority: Bases > CX Warehouses > Warehouses > Stations > Planets
-const getLocationCategoryPriority = (item: KeyValueItem): number => {
-  const hasBase = item.storageTypes?.includes('STORE')
-  const hasWarehouse = item.storageTypes?.includes('WAREHOUSE_STORE')
-
-  if (hasBase) return 0 // Bases first
-  if (hasWarehouse && item.locationType === 'Station') return 1 // CX Warehouses
-  if (hasWarehouse) return 2 // Other Warehouses
-  if (item.locationType === 'Station') return 3 // Non-warehouse Stations
-  return 4 // Planets and everything else
-}
-
-// Compare two items by location category (lower priority number = first)
-const compareByLocationCategory = (a: KeyValueItem, b: KeyValueItem): number => {
-  return getLocationCategoryPriority(a) - getLocationCategoryPriority(b)
-}
-
 // Sort items by location category first, then alphabetically
 const sortByLocationThenAlpha = (items: KeyValueItem[]): KeyValueItem[] => {
   return [...items].sort((a, b) => {
-    const categoryCompare = compareByLocationCategory(a, b)
-    if (categoryCompare !== 0) return categoryCompare
-    return a.display.localeCompare(b.display)
+    const diff =
+      getLocationCategoryPriority(a.locationType, a.storageTypes) -
+      getLocationCategoryPriority(b.locationType, b.storageTypes)
+    return diff !== 0 ? diff : a.display.localeCompare(b.display)
   })
 }
 
@@ -446,7 +417,9 @@ const sortedFilteredItems = computed(() => {
 
     // Same user location status - sort by location category if present
     if (hasLocationTypes) {
-      const categoryCompare = compareByLocationCategory(a, b)
+      const categoryCompare =
+        getLocationCategoryPriority(a.locationType, a.storageTypes) -
+        getLocationCategoryPriority(b.locationType, b.storageTypes)
       if (categoryCompare !== 0) return categoryCompare
     }
 

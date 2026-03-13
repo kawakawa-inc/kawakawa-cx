@@ -44,7 +44,7 @@ const getPermissionsForRoles = (roles: Role[]): string[] => {
 // Internal mock user type (includes password for mock auth)
 // Note: FIO credentials are now in user settings, not on the user profile
 interface MockUser {
-  profileName: string
+  username: string
   password: string
   displayName: string
   roles: Role[]
@@ -56,12 +56,12 @@ interface LoginResponse {
 }
 
 interface RegisterRequest {
-  profileName: string
+  username: string
   password: string
 }
 
 interface LoginRequest {
-  profileName: string
+  username: string
   password: string
 }
 
@@ -69,7 +69,7 @@ interface LoginRequest {
 // Note: Settings (preferredCurrency, FIO credentials, etc.) are now managed via user-settings API
 const users: MockUser[] = [
   {
-    profileName: 'demo',
+    username: 'demo',
     password: 'password',
     displayName: 'Demo User',
     roles: [MOCK_ROLES.member, MOCK_ROLES.administrator],
@@ -77,11 +77,11 @@ const users: MockUser[] = [
 ]
 
 // Helper to generate a mock JWT
-const generateMockJWT = (profileName: string): string => {
+const generateMockJWT = (username: string): string => {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const payload = btoa(
     JSON.stringify({
-      profileName,
+      username,
       exp: Date.now() + 3600000, // 1 hour
     })
   )
@@ -95,7 +95,7 @@ export const mockApi = {
   login: async (request: LoginRequest): Promise<Response> => {
     return new Promise(resolve => {
       setTimeout(() => {
-        const user = users.find(u => u.profileName === request.profileName)
+        const user = users.find(u => u.username === request.username)
 
         if (!user) {
           // Account doesn't exist
@@ -122,9 +122,9 @@ export const mockApi = {
         // Successful login
         // Note: Settings (including FIO credentials) are now managed via user-settings API
         const response: LoginResponse = {
-          token: generateMockJWT(user.profileName),
+          token: generateMockJWT(user.username),
           user: {
-            profileName: user.profileName,
+            username: user.username,
             displayName: user.displayName,
             email: null,
             roles: user.roles,
@@ -146,12 +146,12 @@ export const mockApi = {
   register: async (request: RegisterRequest): Promise<Response> => {
     return new Promise(resolve => {
       setTimeout(() => {
-        const existingUser = users.find(u => u.profileName === request.profileName)
+        const existingUser = users.find(u => u.username === request.username)
 
         if (existingUser) {
-          // Profile name already taken
+          // Username already taken
           resolve(
-            new Response(JSON.stringify({ message: 'Profile name already taken' }), {
+            new Response(JSON.stringify({ message: 'Username already taken' }), {
               status: 409,
               headers: { 'Content-Type': 'application/json' },
             })
@@ -159,11 +159,11 @@ export const mockApi = {
           return
         }
 
-        if (request.profileName.length < 3) {
+        if (request.username.length < 3) {
           // Validation error
           resolve(
             new Response(
-              JSON.stringify({ message: 'Profile name must be at least 3 characters' }),
+              JSON.stringify({ message: 'Username must be at least 3 characters' }),
               {
                 status: 400,
                 headers: { 'Content-Type': 'application/json' },
@@ -176,9 +176,9 @@ export const mockApi = {
         // Successful registration - new users get Applicant role by default
         // Note: Settings (including FIO credentials) are now managed via user-settings API
         const newUser: MockUser = {
-          profileName: request.profileName,
+          username: request.username,
           password: request.password,
-          displayName: request.profileName,
+          displayName: request.username,
           roles: [MOCK_ROLES.applicant],
         }
         users.push(newUser)

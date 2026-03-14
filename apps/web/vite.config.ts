@@ -27,6 +27,11 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['@kawakawa/types'],
+    exclude: [
+      '@kawakawa/types',
+      '@kawakawa/types/settings',
+      '@kawakawa/types/xit',
+      '@kawakawa/types/shopping-list',
+    ],
   },
 })

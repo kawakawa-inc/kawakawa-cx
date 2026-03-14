@@ -43,13 +43,13 @@
             <v-form @submit.prevent="handleDiscordRegister">
               <v-text-field
                 v-model="username"
-                label="Profile Name"
+                label="Username"
                 prepend-icon="mdi-account"
                 :disabled="loading"
                 hint="Your unique login identifier (can be edited)"
                 persistent-hint
                 class="mb-2"
-                :rules="[v => !!v || 'Profile name is required']"
+                :rules="[v => !!v || 'Username is required']"
                 :error-messages="usernameAvailable === false ? usernameMessage : ''"
                 :color="usernameAvailable === true ? 'success' : undefined"
               >
@@ -166,8 +166,8 @@
 
             <v-form @submit.prevent="handleRegister">
               <v-text-field
-                v-model="profileName"
-                label="Profile Name"
+                v-model="regUsername"
+                label="Username"
                 required
                 prepend-icon="mdi-account"
                 :disabled="loading || discordLoading"
@@ -232,7 +232,7 @@ const route = useRoute()
 const userStore = useUserStore()
 
 // Standard registration state
-const profileName = ref('')
+const regUsername = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const loading = ref(false)
@@ -255,7 +255,7 @@ let usernameCheckTimeout: ReturnType<typeof setTimeout> | null = null
 // Convert Discord auth user to full User type
 // Note: Settings (preferredCurrency, FIO credentials, etc.) are now managed via user-settings API
 const discordAuthUserToUser = (authUser: DiscordAuthUser): User => ({
-  profileName: authUser.username,
+  username: authUser.username,
   displayName: authUser.displayName,
   email: null,
   roles: authUser.roles,
@@ -339,7 +339,7 @@ const handleRegister = async () => {
 
   try {
     const response = await api.auth.register({
-      profileName: profileName.value,
+      username: regUsername.value,
       password: password.value,
     })
 
@@ -350,13 +350,13 @@ const handleRegister = async () => {
       }, 2000)
     } else if (response.status === 409) {
       // Profile name already exists
-      errorMessage.value = 'Profile name already taken. Please choose a different one.'
+      errorMessage.value = 'Username already taken. Please choose a different one.'
     } else if (response.status === 400) {
       const data = await response.json()
       // Check if it's a duplicate username error
       const msg = (data.message || '').toLowerCase()
       if (msg.includes('already exists') || msg.includes('already taken')) {
-        errorMessage.value = 'Profile name already taken. Please choose a different one.'
+        errorMessage.value = 'Username already taken. Please choose a different one.'
       } else {
         errorMessage.value = data.message || 'Invalid registration data. Please check your input.'
       }
@@ -365,7 +365,7 @@ const handleRegister = async () => {
       const data = await response.json()
       const msg = (data.message || '').toLowerCase()
       if (msg.includes('already exists') || msg.includes('already taken')) {
-        errorMessage.value = 'Profile name already taken. Please choose a different one.'
+        errorMessage.value = 'Username already taken. Please choose a different one.'
       } else if (data.message) {
         errorMessage.value = data.message
       } else {
@@ -406,7 +406,7 @@ const handleDiscordSignup = async () => {
 
 const handleDiscordRegister = async () => {
   if (!username.value.trim()) {
-    errorMessage.value = 'Profile name is required'
+    errorMessage.value = 'Username is required'
     return
   }
 

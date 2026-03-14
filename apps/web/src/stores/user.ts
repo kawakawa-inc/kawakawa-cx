@@ -4,7 +4,20 @@ import { ref } from 'vue'
 import type { User } from '../types'
 import { useSettingsStore } from './settings'
 
-const currentUser = ref<User | null>(null)
+// Eagerly initialize from localStorage so computeds that depend on permissions
+// can track currentUser.value from the first evaluation
+function loadUserFromStorage(): User | null {
+  const stored = localStorage.getItem('user')
+  if (!stored) return null
+  try {
+    return JSON.parse(stored)
+  } catch {
+    localStorage.removeItem('user')
+    return null
+  }
+}
+
+const currentUser = ref<User | null>(loadUserFromStorage())
 
 export const useUserStore = () => {
   const settingsStore = useSettingsStore()
@@ -19,23 +32,7 @@ export const useUserStore = () => {
   }
 
   const getUser = (): User | null => {
-    if (currentUser.value) {
-      return currentUser.value
-    }
-    // Try to load from localStorage
-    const stored = localStorage.getItem('user')
-    if (stored) {
-      try {
-        currentUser.value = JSON.parse(stored)
-      } catch {
-        localStorage.removeItem('user')
-        return null
-      }
-      // Also load settings from cache to ensure they're available immediately
-      settingsStore.loadFromCache()
-      return currentUser.value
-    }
-    return null
+    return currentUser.value
   }
 
   const clearUser = () => {
@@ -47,16 +44,16 @@ export const useUserStore = () => {
 
   // Check if user has a specific permission
   const hasPermission = (permissionId: string): boolean => {
-    const user = getUser()
-    if (!user?.permissions) return false
-    return user.permissions.includes(permissionId)
+    const permissions = currentUser.value?.permissions
+    if (!permissions) return false
+    return permissions.includes(permissionId)
   }
 
   // Check if user has any of the specified permissions
   const hasAnyPermission = (permissionIds: string[]): boolean => {
-    const user = getUser()
-    if (!user?.permissions) return false
-    return permissionIds.some(id => user.permissions.includes(id))
+    const permissions = currentUser.value?.permissions
+    if (!permissions) return false
+    return permissionIds.some(id => permissions.includes(id))
   }
 
   // ==================== DEPRECATED - Use settings store instead ====================

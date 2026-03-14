@@ -940,10 +940,14 @@ const props = withDefaults(
     modelValue: boolean
     initialTab?: OrderTab
     inventoryItem?: FioInventoryItem | null
+    initialCommodity?: string
+    initialLocation?: string
   }>(),
   {
     initialTab: 'buy',
     inventoryItem: null,
+    initialCommodity: undefined,
+    initialLocation: undefined,
   }
 )
 
@@ -1656,6 +1660,15 @@ watch(dialog, open => {
     suggestedPrice.value = null
     resetBuyForm()
     resetSellForm()
+    // Apply pre-fill values if provided
+    if (props.initialCommodity) {
+      buyForm.value.commodityTicker = props.initialCommodity
+      sellForm.value.commodityTicker = props.initialCommodity
+    }
+    if (props.initialLocation) {
+      buyForm.value.locationId = props.initialLocation
+      sellForm.value.locationId = props.initialLocation
+    }
     if (commodities.value.length === 0) {
       loadCommodities()
     }

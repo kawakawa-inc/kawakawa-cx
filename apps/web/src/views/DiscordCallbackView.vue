@@ -50,7 +50,7 @@ const infoMessage = ref('')
 // Convert Discord auth user to full User type
 // Note: Settings (preferredCurrency, FIO credentials, etc.) are now managed via user-settings API
 const discordAuthUserToUser = (authUser: DiscordAuthUser): User => ({
-  profileName: authUser.username,
+  username: authUser.username,
   displayName: authUser.displayName,
   email: null,
   roles: authUser.roles,

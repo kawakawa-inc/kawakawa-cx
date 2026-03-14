@@ -10,7 +10,7 @@ import { getPermissions } from '../utils/permissionService.js'
 // User profile returned by the account endpoint
 // Note: Display preferences (currency, display modes) and FIO credentials are in /user-settings
 interface UserProfile {
-  profileName: string
+  username: string
   displayName: string
   email: string | null
   roles: Role[]
@@ -77,7 +77,7 @@ export class AccountController extends Controller {
       .map(([id]) => id)
 
     return {
-      profileName: user.username,
+      username: user.username,
       displayName: user.displayName,
       email: user.email,
       roles: rolesArray,

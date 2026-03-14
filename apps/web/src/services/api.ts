@@ -40,15 +40,18 @@ import type {
   ShoppingListSummary,
   CreateShoppingListRequest,
   UpdateShoppingListRequest,
+  SavedMarketFilter,
+  CreateSavedFilterRequest,
+  UpdateSavedFilterRequest,
 } from '@kawakawa/types'
 
 interface LoginRequest {
-  profileName: string
+  username: string
   password: string
 }
 
 interface RegisterRequest {
-  profileName: string
+  username: string
   password: string
 }
 
@@ -791,7 +794,7 @@ const realApi = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        username: request.profileName, // Map profileName to username
+        username: request.username,
         password: request.password,
       }),
     })
@@ -804,9 +807,9 @@ const realApi = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        username: request.profileName, // Map profileName to username
+        username: request.username,
         password: request.password,
-        displayName: request.profileName,
+        displayName: request.username,
       }),
     })
   },
@@ -4201,6 +4204,168 @@ const realApi = {
       throw new Error(`Failed to delete shopping list: ${response.statusText}`)
     }
   },
+
+  // Saved Market Filters API
+  getSavedFilters: async (): Promise<SavedMarketFilter[]> => {
+    const response = await fetchWithLogging('/api/saved-filters', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      throw new Error(`Failed to get saved filters: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getPinnedFilters: async (): Promise<SavedMarketFilter[]> => {
+    const response = await fetchWithLogging('/api/saved-filters/pinned', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      throw new Error(`Failed to get pinned filters: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  browsePublicFilters: async (search?: string, page?: number): Promise<SavedMarketFilter[]> => {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (page) params.set('page', String(page))
+    const query = params.toString() ? `?${params.toString()}` : ''
+
+    const response = await fetchWithLogging(`/api/saved-filters/browse${query}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      throw new Error(`Failed to browse public filters: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getSavedFilter: async (id: number): Promise<SavedMarketFilter> => {
+    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Saved filter not found')
+      }
+      throw new Error(`Failed to get saved filter: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createSavedFilter: async (request: CreateSavedFilterRequest): Promise<SavedMarketFilter> => {
+    const response = await fetchWithLogging('/api/saved-filters', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      throw new Error(`Failed to create saved filter: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateSavedFilter: async (
+    id: number,
+    request: UpdateSavedFilterRequest
+  ): Promise<SavedMarketFilter> => {
+    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to update this filter')
+      }
+      if (response.status === 404) {
+        throw new Error('Saved filter not found')
+      }
+      throw new Error(`Failed to update saved filter: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteSavedFilter: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('You do not have permission to delete this filter')
+      }
+      if (response.status === 404) {
+        throw new Error('Saved filter not found')
+      }
+      throw new Error(`Failed to delete saved filter: ${response.statusText}`)
+    }
+  },
+
+  togglePinSavedFilter: async (id: number): Promise<SavedMarketFilter> => {
+    const response = await fetchWithLogging(`/api/saved-filters/${id}/pin`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only public filters can be pinned')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to pin filters')
+      }
+      if (response.status === 404) {
+        throw new Error('Saved filter not found')
+      }
+      throw new Error(`Failed to toggle pin: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
 }
 
 // Types for KAWA sheet preview and sync
@@ -4457,6 +4622,17 @@ export const api = {
   updateUserSettings: (settings: Record<string, unknown>) => realApi.updateUserSettings(settings),
   resetUserSetting: (key: string) => realApi.resetUserSetting(key),
   resetAllUserSettings: () => realApi.resetAllUserSettings(),
+  savedFilters: {
+    list: () => realApi.getSavedFilters(),
+    getPinned: () => realApi.getPinnedFilters(),
+    browse: (search?: string, page?: number) => realApi.browsePublicFilters(search, page),
+    get: (id: number) => realApi.getSavedFilter(id),
+    create: (request: CreateSavedFilterRequest) => realApi.createSavedFilter(request),
+    update: (id: number, request: UpdateSavedFilterRequest) =>
+      realApi.updateSavedFilter(id, request),
+    delete: (id: number) => realApi.deleteSavedFilter(id),
+    togglePin: (id: number) => realApi.togglePinSavedFilter(id),
+  },
 }
 
 // Export types for use in components
@@ -4529,4 +4705,8 @@ export type {
   PivotImportResult,
   KawaSheetPreviewResponse,
   KawaSheetSyncRequest,
+  // Saved filter types
+  SavedMarketFilter,
+  CreateSavedFilterRequest,
+  UpdateSavedFilterRequest,
 }

@@ -114,7 +114,7 @@ const linking = ref(false)
 const token = computed(() => route.query.token as string | undefined)
 const user = computed(() => userStore.getUser())
 const isLoggedIn = computed(() => !!user.value)
-const currentUsername = computed(() => user.value?.displayName || user.value?.profileName || '')
+const currentUsername = computed(() => user.value?.displayName || user.value?.username || '')
 
 // Build login redirect URL that preserves the token
 const loginRedirectUrl = computed(() => {

@@ -19,8 +19,8 @@
             </v-alert>
             <v-form @submit.prevent="handleLogin">
               <v-text-field
-                v-model="profileName"
-                label="Profile Name"
+                v-model="username"
+                label="Username"
                 required
                 prepend-icon="mdi-account"
                 :disabled="loading || discordLoading"
@@ -89,7 +89,7 @@ import KawaLogo from '../components/KawaLogo.vue'
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
-const profileName = ref('')
+const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const discordLoading = ref(false)
@@ -101,13 +101,12 @@ const handleLogin = async () => {
 
   try {
     const response = await api.auth.login({
-      profileName: profileName.value,
+      username: username.value,
       password: password.value,
     })
 
     if (response.ok) {
       const data = await response.json()
-      // Store JWT token and user data
       localStorage.setItem('jwt', data.token)
       userStore.setUser(data.user)
 
@@ -116,7 +115,7 @@ const handleLogin = async () => {
       router.push(redirectTo)
     } else if (response.status === 404) {
       // Account doesn't exist - we can indicate this
-      errorMessage.value = 'Account not found. Please check your profile name or register.'
+      errorMessage.value = 'Account not found. Please check your username or register.'
     } else if (response.status === 400 || response.status === 401) {
       // Bad credentials - don't indicate which part is wrong
       errorMessage.value = 'Invalid credentials. Please try again.'

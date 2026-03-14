@@ -1,7 +1,7 @@
 <template>
   <div ref="wrapperRef" class="token-search-wrapper">
     <div class="token-search-container" :class="{ focused: isFocused }" @click="focusInput">
-      <v-icon class="search-icon" size="small">mdi-magnify</v-icon>
+      <kbd class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
 
       <!-- Chips for parsed tokens -->
       <v-chip
@@ -77,7 +77,7 @@ export interface SearchChip {
   type: 'commodity' | 'location' | 'user' | 'itemType' | 'shoppingList'
   value: string // Actual value (ticker, location ID, username, 'sell'/'buy')
   display: string // Display text
-  color: string // Chip color
+  color?: string // Chip color — derived from type if not provided
   shoppingListData?: {
     materials: Record<string, number>
     name?: string
@@ -87,6 +87,22 @@ export interface SearchChip {
 
 // Initialize shopping list store
 const shoppingListStore = useShoppingListStore()
+
+// Canonical chip colors by type — single source of truth
+const chipColor = (type: SearchChip['type'], value?: string): string => {
+  switch (type) {
+    case 'commodity':
+      return 'primary'
+    case 'location':
+      return 'secondary'
+    case 'user':
+      return 'info'
+    case 'itemType':
+      return value === 'buy' ? 'warning' : 'success'
+    case 'shoppingList':
+      return 'purple'
+  }
+}
 
 interface Suggestion {
   type: 'commodity' | 'location' | 'user' | 'itemType'
@@ -224,7 +240,7 @@ const suggestions = computed((): Suggestion[] => {
             value: c.ticker,
             display: c.ticker,
             hint: props.getCommodityName(c.ticker),
-            color: 'primary',
+            color: chipColor('commodity'),
           })
           if (results.length >= 8) break
         }
@@ -245,7 +261,7 @@ const suggestions = computed((): Suggestion[] => {
             value: l.id,
             display: l.name,
             hint: l.id,
-            color: 'secondary',
+            color: chipColor('location'),
           })
           if (results.length >= 8) break
         }
@@ -264,7 +280,7 @@ const suggestions = computed((): Suggestion[] => {
             typeLabel: 'User',
             value: u,
             display: u,
-            color: 'info',
+            color: chipColor('user'),
           })
           if (results.length >= 8) break
         }
@@ -281,7 +297,7 @@ const suggestions = computed((): Suggestion[] => {
       value: 'buy',
       display: 'Buy',
       hint: 'Show buy orders',
-      color: 'warning',
+      color: chipColor('itemType', 'buy'),
     })
   }
   if ('sell'.startsWith(lowerWord)) {
@@ -291,7 +307,7 @@ const suggestions = computed((): Suggestion[] => {
       value: 'sell',
       display: 'Sell',
       hint: 'Show sell orders',
-      color: 'success',
+      color: chipColor('itemType', 'sell'),
     })
   }
 
@@ -307,7 +323,7 @@ const suggestions = computed((): Suggestion[] => {
       value: exactTickerMatch.ticker,
       display: exactTickerMatch.ticker,
       hint: props.getCommodityName(exactTickerMatch.ticker),
-      color: 'primary',
+      color: chipColor('commodity'),
     })
   }
 
@@ -329,7 +345,7 @@ const suggestions = computed((): Suggestion[] => {
           value: c.ticker,
           display: c.ticker,
           hint: props.getCommodityName(c.ticker),
-          color: 'primary',
+          color: chipColor('commodity'),
         })
       }
     }
@@ -352,7 +368,7 @@ const suggestions = computed((): Suggestion[] => {
           value: l.id,
           display: l.name,
           hint: l.id,
-          color: 'secondary',
+          color: chipColor('location'),
         })
       }
     }
@@ -368,7 +384,7 @@ const suggestions = computed((): Suggestion[] => {
           typeLabel: 'User',
           value: u,
           display: u,
-          color: 'info',
+          color: chipColor('user'),
         })
       }
     }
@@ -450,28 +466,28 @@ const createChipFromSuggestion = (suggestion: Suggestion): SearchChip | null => 
         type: 'commodity',
         value: suggestion.value,
         display: props.getCommodityDisplay(suggestion.value),
-        color: 'primary',
+        color: chipColor('commodity'),
       }
     case 'location':
       return {
         type: 'location',
         value: suggestion.value,
         display: props.getLocationDisplay(suggestion.value),
-        color: 'secondary',
+        color: chipColor('location'),
       }
     case 'user':
       return {
         type: 'user',
         value: suggestion.value,
         display: suggestion.value,
-        color: 'info',
+        color: chipColor('user'),
       }
     case 'itemType':
       return {
         type: 'itemType',
         value: suggestion.value,
         display: suggestion.value === 'buy' ? 'Buy' : 'Sell',
-        color: suggestion.value === 'buy' ? 'warning' : 'success',
+        color: chipColor('itemType', suggestion.value),
       }
   }
   return null
@@ -564,7 +580,7 @@ const tryParseShoppingList = (input: string): SearchChip[] => {
     type: 'shoppingList',
     value: 'shoppingList',
     display: displayText,
-    color: 'purple',
+    color: chipColor('shoppingList'),
     shoppingListData: {
       materials: result.materials,
       name: result.name,
@@ -581,7 +597,7 @@ const tryParseShoppingList = (input: string): SearchChip[] => {
       type: 'location',
       value: originLocationId,
       display: props.getLocationDisplay(originLocationId),
-      color: 'secondary',
+      color: chipColor('location'),
     })
   }
 
@@ -591,6 +607,11 @@ const tryParseShoppingList = (input: string): SearchChip[] => {
 // Handle input changes - check for shopping list (JSON or CSV/simple formats)
 const handleInput = () => {
   selectedIndex.value = 0
+  // Ensure suggestions dropdown updates on each keystroke
+  updateDropdownPosition()
+  if (getCurrentWord().length >= 1) {
+    showSuggestions.value = true
+  }
 
   // First check for XIT JSON (needs complete JSON object)
   const extracted = extractJsonToken(inputText.value)
@@ -737,6 +758,20 @@ defineExpose({
     chips.value = newChips
     emitChanges()
   },
+  addChip: (chip: SearchChip) => {
+    // Deduplicate: skip if same type+value already exists
+    if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
+    // Replace any existing itemType chip
+    if (chip.type === 'itemType') {
+      chips.value = chips.value.filter(c => c.type !== 'itemType')
+    }
+    chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
+    emitChanges()
+  },
+  removeChipByTypeValue: (type: SearchChip['type'], value: string) => {
+    chips.value = chips.value.filter(c => !(c.type === type && c.value === value))
+    emitChanges()
+  },
 })
 </script>
 
@@ -765,9 +800,26 @@ defineExpose({
 }
 
 .search-icon {
-  color: rgba(var(--v-theme-on-surface), 0.5);
-  margin-right: 4px;
+  margin-right: 6px;
   flex-shrink: 0;
+}
+
+.search-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  background: rgba(var(--v-theme-on-surface), 0.07);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
+  border-radius: 4px;
+  cursor: default;
+  user-select: none;
 }
 
 .token-chip {

@@ -122,6 +122,11 @@ async function runSeed() {
       name: 'Manage Import Configurations',
       description: 'Can manage saved import configurations for Google Sheets',
     },
+    {
+      id: 'filters.pin',
+      name: 'Pin Filters',
+      description: 'Can pin/unpin saved filters globally for all users',
+    },
   ]
 
   type PriceListType = 'fio' | 'custom'
@@ -221,6 +226,7 @@ async function runSeed() {
       'adjustments.view',
       'adjustments.manage',
       'import_configs.manage',
+      'filters.pin',
     ],
   }
 

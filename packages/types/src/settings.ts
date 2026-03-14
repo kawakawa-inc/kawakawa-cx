@@ -185,6 +185,16 @@ export const SETTING_DEFINITIONS = {
       'Automatically update the shopping list when submitting invoices (remove fulfilled items, reduce partial quantities)',
   } satisfies SettingDef<boolean | null, 'boolean'>,
 
+  'market.syncFilterWithShoppingList': {
+    key: 'market.syncFilterWithShoppingList',
+    type: 'boolean',
+    defaultValue: false,
+    category: SETTING_CATEGORIES.MARKET,
+    label: 'Sync Search Filter with Shopping List',
+    description:
+      'When a shopping list item is fully fulfilled, automatically remove its commodity chip from the search filter',
+  } satisfies SettingDef<boolean, 'boolean'>,
+
   // ==================== NOTIFICATION SETTINGS ====================
   'notifications.browserEnabled': {
     key: 'notifications.browserEnabled',

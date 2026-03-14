@@ -91,7 +91,7 @@ export interface Role {
 }
 
 export interface User {
-  profileName: string
+  username: string
   displayName: string
   email: string | null
   roles: Role[] // One user to many roles
@@ -116,6 +116,8 @@ export const PERMISSIONS = {
   ADJUSTMENTS_VIEW: 'adjustments.view',
   ADJUSTMENTS_MANAGE: 'adjustments.manage',
   IMPORT_CONFIGS_MANAGE: 'import_configs.manage',
+  // Filter management
+  FILTERS_PIN: 'filters.pin',
 } as const
 
 // FIO inventory synced from game
@@ -725,3 +727,40 @@ export * from './xit.js'
 // ==================== SHOPPING LISTS ====================
 
 export * from './shopping-list.js'
+
+// ==================== SAVED MARKET FILTERS ====================
+
+export type FilterPrivacy = 'private' | 'link' | 'public'
+
+export interface SavedFilterData {
+  itemType?: 'sell' | 'buy'
+  commodity?: string[]
+  location?: string[]
+  category?: string
+  orderType?: string
+  pricing?: string
+  userName?: string[]
+}
+
+export interface SavedMarketFilter {
+  id: number
+  userId: number
+  userName: string
+  name: string
+  filterData: SavedFilterData
+  privacy: FilterPrivacy
+  isPinned: boolean
+  createdAt: string
+}
+
+export interface CreateSavedFilterRequest {
+  name: string
+  filterData: SavedFilterData
+  privacy: FilterPrivacy
+}
+
+export interface UpdateSavedFilterRequest {
+  name?: string
+  filterData?: SavedFilterData
+  privacy?: FilterPrivacy
+}

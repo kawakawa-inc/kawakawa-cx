@@ -93,6 +93,12 @@ const PERMISSIONS_DATA = [
     name: 'Manage Import Configurations',
     description: 'Can manage saved import configurations for Google Sheets',
   },
+  // Filter management permissions
+  {
+    id: 'filters.pin',
+    name: 'Pin Filters',
+    description: 'Can pin saved market filters to appear globally for all users',
+  },
 ]
 
 // Default role permissions (roleId -> list of permissionIds that are allowed)
@@ -151,6 +157,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'adjustments.view',
     'adjustments.manage',
     'import_configs.manage',
+    'filters.pin',
   ],
 }
 

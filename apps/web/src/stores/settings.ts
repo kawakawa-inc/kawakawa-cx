@@ -197,6 +197,11 @@ export const useSettingsStore = () => {
     set: (value: boolean | null) => updateSetting('market.updateShoppingList', value),
   })
 
+  const syncFilterWithShoppingList = computed({
+    get: () => settingsValues.value['market.syncFilterWithShoppingList'] as boolean | null,
+    set: (value: boolean | null) => updateSetting('market.syncFilterWithShoppingList', value),
+  })
+
   // Notification settings
   const browserNotificationsEnabled = computed({
     get: () => settingsValues.value['notifications.browserEnabled'] as boolean,
@@ -302,6 +307,7 @@ export const useSettingsStore = () => {
     favoritedLocations,
     favoritedCommodities,
     updateShoppingList,
+    syncFilterWithShoppingList,
 
     // Typed computed properties - Notifications
     browserNotificationsEnabled,

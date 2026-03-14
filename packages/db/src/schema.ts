@@ -85,6 +85,8 @@ export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google
 
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
 
+export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'public'])
+
 // ==================== SETTINGS (Generic key-value with history) ====================
 export const settings = pgTable(
   'settings',
@@ -505,6 +507,29 @@ export const shoppingLists = pgTable(
   })
 )
 
+// ==================== SAVED MARKET FILTERS ====================
+// Users can save filter configurations for quick reuse and sharing
+export const savedMarketFilters = pgTable(
+  'saved_market_filters',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    filterData: jsonb('filter_data').notNull(), // SavedFilterData shape
+    privacy: filterPrivacyEnum('privacy').notNull().default('private'),
+    isPinned: boolean('is_pinned').notNull().default(false),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('saved_market_filters_user_idx').on(table.userId),
+    privacyIdx: index('saved_market_filters_privacy_idx').on(table.privacy),
+    pinnedIdx: index('saved_market_filters_pinned_idx').on(table.isPinned),
+  })
+)
+
 // ==================== INVOICE LINE ITEMS (Individual items within an invoice) ====================
 // Each line item represents a buy or sell action within the invoice
 // Before submission: stores intent (which order to reserve from / fill)
@@ -666,6 +691,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   reservations: many(orderReservations), // Reservations where user is the counterparty
   invoices: many(invoices), // Invoices created by this user
   shoppingLists: many(shoppingLists), // Shopping lists created by this user
+  savedMarketFilters: many(savedMarketFilters), // Saved market filters created by this user
   discordProfile: one(userDiscordProfiles, {
     fields: [users.id],
     references: [userDiscordProfiles.userId],
@@ -874,6 +900,15 @@ export const invoiceLineItemsRelations = relations(invoiceLineItems, ({ one }) =
 export const shoppingListsRelations = relations(shoppingLists, ({ one }) => ({
   user: one(users, {
     fields: [shoppingLists.userId],
+    references: [users.id],
+  }),
+}))
+
+// ==================== SAVED MARKET FILTER RELATIONS ====================
+
+export const savedMarketFiltersRelations = relations(savedMarketFilters, ({ one }) => ({
+  user: one(users, {
+    fields: [savedMarketFilters.userId],
     references: [users.id],
   }),
 }))

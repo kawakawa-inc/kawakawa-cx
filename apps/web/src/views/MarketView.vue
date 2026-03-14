@@ -176,6 +176,7 @@
           @apply="applySavedFilter"
           @copy-link="copyFilterLink"
           @saved="onFilterSaved"
+          @pinned="loadPinnedFilters"
         />
         <TokenSearchInput
           ref="tokenSearchRef"
@@ -754,6 +755,7 @@
       v-model="sidePanelOpen"
       location="right"
       width="370"
+      :scrim="false"
       class="side-panel-drawer"
     >
       <!-- Panel Header with close button (visible on smaller screens) -->

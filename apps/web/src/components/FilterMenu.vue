@@ -222,7 +222,7 @@
                   by {{ sf.userName }}
                 </v-list-item-subtitle>
                 <template #append>
-                  <div class="d-flex ga-1 align-center">
+                  <div class="d-flex ga-1 align-center" @click.stop @mousedown.stop>
                     <v-chip v-if="sf.isPinned" size="x-small" color="purple" variant="tonal">
                       pinned
                     </v-chip>
@@ -232,7 +232,7 @@
                       color="grey"
                       icon="mdi-link-variant"
                       title="Copy shareable link"
-                      @click.stop="$emit('copy-link', sf.id)"
+                      @click="$emit('copy-link', sf.id)"
                     />
                     <template v-if="sf.userName === currentUsername">
                       <v-btn
@@ -241,7 +241,7 @@
                         color="grey"
                         icon="mdi-pencil"
                         title="Edit"
-                        @click.stop="editFilter(sf)"
+                        @click="editFilter(sf)"
                       />
                       <v-btn
                         size="x-small"
@@ -249,7 +249,7 @@
                         color="error"
                         icon="mdi-delete"
                         title="Delete"
-                        @click.stop="openDeleteFilter(sf)"
+                        @click="openDeleteFilter(sf)"
                       />
                     </template>
                     <v-btn
@@ -259,7 +259,7 @@
                       :color="sf.isPinned ? 'purple' : 'grey'"
                       :icon="sf.isPinned ? 'mdi-pin' : 'mdi-pin-outline'"
                       :title="sf.isPinned ? 'Unpin' : 'Pin globally'"
-                      @click.stop="togglePin(sf)"
+                      @click="togglePin(sf)"
                     />
                   </div>
                 </template>
@@ -308,14 +308,14 @@
                     by {{ bf.userName }} &middot; {{ describeFilter(bf) }}
                   </v-list-item-subtitle>
                   <template #append>
-                    <div class="d-flex ga-1 align-center">
+                    <div class="d-flex ga-1 align-center" @click.stop @mousedown.stop>
                       <v-btn
                         size="x-small"
                         variant="text"
                         color="grey"
                         icon="mdi-link-variant"
                         title="Copy shareable link"
-                        @click.stop="$emit('copy-link', bf.id)"
+                        @click="$emit('copy-link', bf.id)"
                       />
                       <v-btn
                         v-if="canPin && bf.privacy === 'public'"
@@ -324,7 +324,7 @@
                         :color="bf.isPinned ? 'purple' : 'grey'"
                         :icon="bf.isPinned ? 'mdi-pin' : 'mdi-pin-outline'"
                         :title="bf.isPinned ? 'Unpin' : 'Pin globally'"
-                        @click.stop="toggleBrowsePin(bf)"
+                        @click="toggleBrowsePin(bf)"
                       />
                     </div>
                   </template>
@@ -410,6 +410,7 @@ const emit = defineEmits<{
   apply: [filter: SavedMarketFilter]
   'copy-link': [id: number]
   saved: [filter: SavedMarketFilter]
+  pinned: [filter: SavedMarketFilter]
 }>()
 
 const userStore = useUserStore()
@@ -508,7 +509,7 @@ const togglePin = async (filter: SavedMarketFilter) => {
     const updated = await api.savedFilters.togglePin(filter.id)
     const idx = savedFilters.value.findIndex(f => f.id === filter.id)
     if (idx !== -1) savedFilters.value[idx] = updated
-    emit('saved', updated)
+    emit('pinned', updated)
   } catch {
     // Silently ignore
   }
@@ -578,7 +579,7 @@ const toggleBrowsePin = async (filter: SavedMarketFilter) => {
     const updated = await api.savedFilters.togglePin(filter.id)
     const idx = browseFilters.value.findIndex(f => f.id === filter.id)
     if (idx !== -1) browseFilters.value[idx] = updated
-    emit('saved', updated)
+    emit('pinned', updated)
   } catch {
     // Silently ignore
   }

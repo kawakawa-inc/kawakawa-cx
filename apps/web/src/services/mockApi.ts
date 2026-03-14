@@ -162,13 +162,10 @@ export const mockApi = {
         if (request.username.length < 3) {
           // Validation error
           resolve(
-            new Response(
-              JSON.stringify({ message: 'Username must be at least 3 characters' }),
-              {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-              }
-            )
+            new Response(JSON.stringify({ message: 'Username must be at least 3 characters' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            })
           )
           return
         }

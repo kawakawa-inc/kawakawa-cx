@@ -372,6 +372,155 @@ export class FioClient {
   }
 
   /**
+   * Fetch user's planets from FIO RAIN API (JSON)
+   * Returns list of planets the user has bases on
+   * Requires API key authentication via Authorization header
+   */
+  async getUserPlanets<T>(apiKey: string, username: string): Promise<T> {
+    const url = new URL(`${this.baseUrl}/rain/userplanets/${encodeURIComponent(username)}`)
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: apiKey,
+    }
+
+    try {
+      const response = await fetch(url.toString(), { headers })
+
+      if (!response.ok) {
+        throw new FioApiError(
+          `FIO API request failed: ${response.statusText}`,
+          response.status,
+          await response.text()
+        )
+      }
+
+      return (await response.json()) as T
+    } catch (error) {
+      if (error instanceof FioApiError) {
+        throw error
+      }
+      throw new FioApiError(
+        `Failed to fetch user planets from FIO API: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
+  }
+
+  /**
+   * Fetch site data for a user's planet from FIO API (JSON)
+   * Returns building details including condition, repair/reclaimable materials
+   * Planet can be: PlanetId, PlanetNaturalId, or PlanetName
+   * Requires API key authentication via Authorization header
+   */
+  async getUserSiteData<T>(apiKey: string, username: string, planet: string): Promise<T> {
+    const url = new URL(
+      `${this.baseUrl}/sites/${encodeURIComponent(username)}/${encodeURIComponent(planet)}`
+    )
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: apiKey,
+    }
+
+    try {
+      const response = await fetch(url.toString(), { headers })
+
+      if (!response.ok) {
+        throw new FioApiError(
+          `FIO API request failed: ${response.statusText}`,
+          response.status,
+          await response.text()
+        )
+      }
+
+      return (await response.json()) as T
+    } catch (error) {
+      if (error instanceof FioApiError) {
+        throw error
+      }
+      throw new FioApiError(
+        `Failed to fetch site data from FIO API: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
+  }
+
+  /**
+   * Fetch workforce data for a user's planet from FIO API (JSON)
+   * Returns workforce types with population and consumable burn rates
+   * Planet can be: PlanetId, PlanetNaturalId, or PlanetName
+   * Requires API key authentication via Authorization header
+   */
+  async getUserWorkforce<T>(apiKey: string, username: string, planet: string): Promise<T> {
+    const url = new URL(
+      `${this.baseUrl}/workforce/${encodeURIComponent(username)}/${encodeURIComponent(planet)}`
+    )
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: apiKey,
+    }
+
+    try {
+      const response = await fetch(url.toString(), { headers })
+
+      if (!response.ok) {
+        throw new FioApiError(
+          `FIO API request failed: ${response.statusText}`,
+          response.status,
+          await response.text()
+        )
+      }
+
+      return (await response.json()) as T
+    } catch (error) {
+      if (error instanceof FioApiError) {
+        throw error
+      }
+      throw new FioApiError(
+        `Failed to fetch workforce data from FIO API: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
+  }
+
+  /**
+   * Fetch production data for a user's planet from FIO API (JSON)
+   * Returns production lines with orders, durations, and efficiency
+   * Planet can be: PlanetId, PlanetNaturalId, or PlanetName
+   * Requires API key authentication via Authorization header
+   */
+  async getUserProduction<T>(apiKey: string, username: string, planet: string): Promise<T> {
+    const url = new URL(
+      `${this.baseUrl}/production/${encodeURIComponent(username)}/${encodeURIComponent(planet)}`
+    )
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: apiKey,
+    }
+
+    try {
+      const response = await fetch(url.toString(), { headers })
+
+      if (!response.ok) {
+        throw new FioApiError(
+          `FIO API request failed: ${response.statusText}`,
+          response.status,
+          await response.text()
+        )
+      }
+
+      return (await response.json()) as T
+    } catch (error) {
+      if (error instanceof FioApiError) {
+        throw error
+      }
+      throw new FioApiError(
+        `Failed to fetch production data from FIO API: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
+  }
+
+  /**
    * Get the jump count (number of system jumps) between two locations
    * Locations can be: SystemId, PlanetId, PlanetNaturalId, or PlanetName
    * Results are cached since planetary distances don't change.

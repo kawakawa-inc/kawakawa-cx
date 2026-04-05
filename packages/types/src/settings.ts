@@ -20,6 +20,7 @@ export const SETTING_CATEGORIES = {
   NOTIFICATIONS: 'notifications',
   FIO: 'fio',
   DISCORD: 'discord',
+  SUPPLY: 'supply',
 } as const
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[keyof typeof SETTING_CATEGORIES]
@@ -52,6 +53,10 @@ export const SETTING_CATEGORY_INFO: Record<
   [SETTING_CATEGORIES.DISCORD]: {
     label: 'Discord',
     description: 'Discord bot preferences',
+  },
+  [SETTING_CATEGORIES.SUPPLY]: {
+    label: 'Supply Planning',
+    description: 'Repair, burn, and production planning settings',
   },
 }
 
@@ -260,6 +265,54 @@ export const SETTING_DEFINITIONS = {
     label: 'Excluded Locations',
     description: 'Locations to exclude from FIO inventory sync (by ID or name)',
   } satisfies SettingDef<string[], 'string[]'>,
+
+  // ==================== SUPPLY PLANNING SETTINGS ====================
+  'supply.repairDays': {
+    key: 'supply.repairDays',
+    type: 'number',
+    defaultValue: 0,
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Repair Days',
+    description: 'Plan repairs N days ahead (0 = repair now)',
+  } satisfies SettingDef<number, 'number'>,
+
+  'supply.burnDays': {
+    key: 'supply.burnDays',
+    type: 'number',
+    defaultValue: 7,
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Burn Days',
+    description: 'Stock consumables for N days',
+  } satisfies SettingDef<number, 'number'>,
+
+  'supply.includeProduction': {
+    key: 'supply.includeProduction',
+    type: 'boolean',
+    defaultValue: false,
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Include Production Inputs',
+    description: 'Include production input materials in supply calculations',
+  } satisfies SettingDef<boolean, 'boolean'>,
+
+  'supply.excludedPlanets': {
+    key: 'supply.excludedPlanets',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Excluded Planets',
+    description:
+      'Planets to exclude from supply planning sync and calculations (by NaturalId or name)',
+  } satisfies SettingDef<string[], 'string[]'>,
+
+  'supply.planetOverrides': {
+    key: 'supply.planetOverrides',
+    type: 'string',
+    defaultValue: '{}',
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Planet Overrides',
+    description:
+      'Per-planet setting overrides as JSON: { "planetId": { "repairDays": N, "burnDays": N, "includeProduction": bool } }',
+  } satisfies SettingDef<string, 'string'>,
 
   // ==================== DISCORD SETTINGS ====================
   'discord.messageVisibility': {

@@ -148,13 +148,20 @@ pnpm format:check  # Check formatting without modifying
    - Always split large files over 1000 lines into more logical modules
    - Favor componentization over duplication
 
-4. **Run format, lint, and tests before committing**
+4. **Shared types and TSOA**
+   - Shared types live in `packages/types/` and are imported as `@kawakawa/types`
+   - TSOA resolves types from `@kawakawa/types` only if the package is **built** (`.d.ts` files in `dist/`)
+   - When adding new types to `packages/types/`, build it first: `pnpm --filter @kawakawa/types build`
+   - The `tsoa:generate` script does this automatically, but `tsc` alone does not
+   - Types can be used directly as TSOA controller return types — no need to redeclare them inline
+
+5. **Run format, lint, and tests before committing**
 
    ```bash
    make checkpoint
    ```
 
-5. **Test file naming**: `[filename].test.ts` alongside source files
+6. **Test file naming**: `[filename].test.ts` alongside source files
 
 See [apps/api/src/controllers/](apps/api/src/controllers/) for examples of well-tested controllers.
 

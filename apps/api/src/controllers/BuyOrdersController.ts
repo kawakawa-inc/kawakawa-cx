@@ -12,8 +12,23 @@ import {
   Request,
   SuccessResponse,
 } from 'tsoa'
-import type { Currency, OrderType, PricingMode } from '@kawakawa/types'
-import { db, buyOrders, fioCommodities, fioLocations, orderReservations } from '../db/index.js'
+import type {
+  Currency,
+  OrderType,
+  PricingMode,
+  BuyOrderSourceMode,
+  DemandSource,
+  LinkedPlanetInfo,
+} from '@kawakawa/types'
+import {
+  db,
+  buyOrders,
+  buyOrderPlanets,
+  fioUserPlanets,
+  fioCommodities,
+  fioLocations,
+  orderReservations,
+} from '../db/index.js'
 import { eq, and, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
@@ -22,6 +37,7 @@ import {
   calculateEffectivePriceWithFallback,
   calculateEffectivePriceBatch,
 } from '../services/price-calculator.js'
+import { recalculateSingleDemandOrder } from '../services/demand-calculator.js'
 
 interface BuyOrderResponse {
   id: number
@@ -30,17 +46,20 @@ interface BuyOrderResponse {
   quantity: number
   price: number
   currency: Currency
-  priceListCode: string | null // null = custom/fixed price, set = dynamic pricing from price list
+  priceListCode: string | null
   orderType: OrderType
-  activeReservationCount: number // count of pending/confirmed reservations
-  reservedQuantity: number // sum of quantities in active reservations
-  fulfilledQuantity: number // sum of quantities in fulfilled reservations
-  remainingQuantity: number // quantity - reservedQuantity - fulfilledQuantity
-  // Dynamic pricing fields
+  sourceMode: BuyOrderSourceMode
+  demandSource: DemandSource | null
+  targetDays: number | null
+  linkedPlanets: LinkedPlanetInfo[]
+  activeReservationCount: number
+  reservedQuantity: number
+  fulfilledQuantity: number
+  remainingQuantity: number
   pricingMode: PricingMode
-  effectivePrice: number | null // Calculated price from price list (null if not available)
-  isFallback: boolean // True if price came from price list's default location
-  priceLocationId: string | null // The location the price was fetched from (when isFallback)
+  effectivePrice: number | null
+  isFallback: boolean
+  priceLocationId: string | null
 }
 
 interface CreateBuyOrderRequest {
@@ -49,16 +68,22 @@ interface CreateBuyOrderRequest {
   quantity: number
   price: number
   currency: Currency
-  priceListCode?: string | null // null or undefined = custom/fixed price, set = dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
+  sourceMode?: BuyOrderSourceMode
+  demandSource?: DemandSource
+  targetDays?: number
+  planetIds?: string[] // Planet NaturalIds to link (for demand mode)
 }
 
 interface UpdateBuyOrderRequest {
   quantity?: number
   price?: number
   currency?: Currency
-  priceListCode?: string | null // null = switch to custom pricing, string = switch to dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
+  targetDays?: number
+  planetIds?: string[] // Replace linked planets
 }
 
 /**
@@ -73,6 +98,63 @@ function getPermissionForOrderType(orderType: OrderType): string {
  */
 function getOrderTypeDisplay(orderType: OrderType): string {
   return orderType === 'partner' ? 'partner' : 'internal'
+}
+
+/**
+ * Fetch linked planets for a list of buy order IDs
+ */
+async function getLinkedPlanetsForOrders(
+  orderIds: number[]
+): Promise<Map<number, LinkedPlanetInfo[]>> {
+  if (orderIds.length === 0) return new Map()
+
+  const links = await db
+    .select({
+      buyOrderId: buyOrderPlanets.buyOrderId,
+      userPlanetId: buyOrderPlanets.userPlanetId,
+      planetNaturalId: fioUserPlanets.planetNaturalId,
+      planetName: fioUserPlanets.planetName,
+    })
+    .from(buyOrderPlanets)
+    .innerJoin(fioUserPlanets, eq(buyOrderPlanets.userPlanetId, fioUserPlanets.id))
+
+  const map = new Map<number, LinkedPlanetInfo[]>()
+  for (const link of links) {
+    if (!orderIds.includes(link.buyOrderId)) continue
+    const planets = map.get(link.buyOrderId) ?? []
+    planets.push({
+      userPlanetId: link.userPlanetId,
+      planetNaturalId: link.planetNaturalId,
+      planetName: link.planetName,
+    })
+    map.set(link.buyOrderId, planets)
+  }
+  return map
+}
+
+/**
+ * Link a buy order to planets by NaturalId (resolves to userPlanetId for a user)
+ */
+async function linkOrderToPlanets(
+  buyOrderId: number,
+  userId: number,
+  planetNaturalIds: string[]
+): Promise<void> {
+  if (planetNaturalIds.length === 0) return
+
+  // Resolve NaturalIds to userPlanetIds
+  const userPlanets = await db
+    .select({ id: fioUserPlanets.id, planetNaturalId: fioUserPlanets.planetNaturalId })
+    .from(fioUserPlanets)
+    .where(eq(fioUserPlanets.userId, userId))
+
+  const planetMap = new Map(userPlanets.map(p => [p.planetNaturalId, p.id]))
+
+  for (const naturalId of planetNaturalIds) {
+    const userPlanetId = planetMap.get(naturalId)
+    if (!userPlanetId) continue // Skip planets not synced for this user
+    await db.insert(buyOrderPlanets).values({ buyOrderId, userPlanetId })
+  }
 }
 
 @Route('buy-orders')
@@ -119,6 +201,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -130,6 +215,9 @@ export class BuyOrdersController extends Controller {
     if (orders.length === 0) {
       return []
     }
+
+    // Fetch linked planets for all orders
+    const linkedPlanetsMap = await getLinkedPlanetsForOrders(orders.map(o => o.id))
 
     // Batch fetch all dynamic prices in 3 queries instead of 3-5 per order
     const priceRequests = orders
@@ -172,6 +260,10 @@ export class BuyOrdersController extends Controller {
         currency: order.currency,
         priceListCode: order.priceListCode,
         orderType: order.orderType,
+        sourceMode: order.sourceMode,
+        demandSource: order.demandSource,
+        targetDays: order.targetDays,
+        linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
         activeReservationCount: activeCount,
         reservedQuantity: reservedQty,
         fulfilledQuantity: fulfilledQty,
@@ -225,6 +317,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -242,6 +337,9 @@ export class BuyOrdersController extends Controller {
     const reservedQty = order.reservedQuantity ?? 0
     const fulfilledQty = order.fulfilledQuantity ?? 0
     const remainingQuantity = order.quantity - reservedQty - fulfilledQty
+
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForOrders([order.id])
 
     // Calculate effective price for dynamic pricing orders
     const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
@@ -272,6 +370,10 @@ export class BuyOrdersController extends Controller {
       currency: order.currency,
       priceListCode: order.priceListCode,
       orderType: order.orderType,
+      sourceMode: order.sourceMode,
+      demandSource: order.demandSource,
+      targetDays: order.targetDays,
+      linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,
@@ -306,8 +408,26 @@ export class BuyOrdersController extends Controller {
       )
     }
 
-    // Validate quantity
-    if (body.quantity <= 0) {
+    const sourceMode = body.sourceMode ?? 'manual'
+
+    // Validate demand mode requirements
+    if (sourceMode === 'demand') {
+      if (!body.demandSource) {
+        this.setStatus(400)
+        throw BadRequest('demandSource is required for demand orders (burn or repair)')
+      }
+      if (body.demandSource === 'burn' && (!body.targetDays || body.targetDays <= 0)) {
+        this.setStatus(400)
+        throw BadRequest('targetDays must be > 0 for burn demand orders')
+      }
+      if (!body.planetIds || body.planetIds.length === 0) {
+        this.setStatus(400)
+        throw BadRequest('At least one planet must be linked for demand orders')
+      }
+    }
+
+    // Validate quantity (demand orders can start at 0, recalculated after creation)
+    if (sourceMode === 'manual' && body.quantity <= 0) {
       this.setStatus(400)
       throw BadRequest('Quantity must be greater than 0')
     }
@@ -378,15 +498,37 @@ export class BuyOrdersController extends Controller {
         userId,
         commodityTicker: body.commodityTicker,
         locationId: body.locationId,
-        quantity: body.quantity,
+        quantity: sourceMode === 'demand' ? 0 : body.quantity,
         price: body.price.toString(),
         currency: body.currency,
         priceListCode,
         orderType,
+        sourceMode,
+        demandSource: sourceMode === 'demand' ? body.demandSource! : null,
+        targetDays: sourceMode === 'demand' ? (body.targetDays ?? null) : null,
       })
       .returning()
 
+    // Link planets for demand orders
+    if (sourceMode === 'demand' && body.planetIds) {
+      await linkOrderToPlanets(newOrder.id, userId, body.planetIds)
+    }
+
+    // Recalculate quantity for demand orders
+    if (sourceMode === 'demand') {
+      await recalculateSingleDemandOrder(newOrder.id)
+      // Re-fetch to get updated quantity
+      const [updated] = await db
+        .select({ quantity: buyOrders.quantity })
+        .from(buyOrders)
+        .where(eq(buyOrders.id, newOrder.id))
+      if (updated) newOrder.quantity = updated.quantity
+    }
+
     this.setStatus(201)
+
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForOrders([newOrder.id])
 
     // Calculate effective price for dynamic pricing orders
     const pricingMode: PricingMode = newOrder.priceListCode ? 'dynamic' : 'fixed'
@@ -417,7 +559,11 @@ export class BuyOrdersController extends Controller {
       currency: newOrder.currency,
       priceListCode: newOrder.priceListCode,
       orderType: newOrder.orderType,
-      activeReservationCount: 0, // New order has no reservations
+      sourceMode: newOrder.sourceMode,
+      demandSource: newOrder.demandSource,
+      targetDays: newOrder.targetDays,
+      linkedPlanets: linkedPlanetsMap.get(newOrder.id) ?? [],
+      activeReservationCount: 0,
       reservedQuantity: 0,
       fulfilledQuantity: 0,
       remainingQuantity: newOrder.quantity,
@@ -463,12 +609,6 @@ export class BuyOrdersController extends Controller {
       }
     }
 
-    // Validate quantity if provided
-    if (body.quantity !== undefined && body.quantity <= 0) {
-      this.setStatus(400)
-      throw BadRequest('Quantity must be greater than 0')
-    }
-
     // Determine final priceListCode (use existing if not provided)
     const finalPriceListCode =
       body.priceListCode !== undefined ? body.priceListCode : existing.priceListCode
@@ -490,18 +630,43 @@ export class BuyOrdersController extends Controller {
       }
     }
 
+    // Validate quantity — demand orders skip manual quantity validation
+    if (body.quantity !== undefined && existing.sourceMode === 'manual' && body.quantity <= 0) {
+      this.setStatus(400)
+      throw BadRequest('Quantity must be greater than 0')
+    }
+
     // Build update object
     const updateData: Partial<typeof buyOrders.$inferInsert> = {
       updatedAt: new Date(),
     }
-    if (body.quantity !== undefined) updateData.quantity = body.quantity
+    if (body.quantity !== undefined && existing.sourceMode === 'manual') {
+      updateData.quantity = body.quantity
+    }
     if (body.price !== undefined) updateData.price = body.price.toString()
     if (body.currency !== undefined) updateData.currency = body.currency
     if (body.priceListCode !== undefined) updateData.priceListCode = body.priceListCode
     if (body.orderType !== undefined) updateData.orderType = body.orderType
+    if (body.targetDays !== undefined && existing.sourceMode === 'demand') {
+      updateData.targetDays = body.targetDays
+    }
 
     // Update
     await db.update(buyOrders).set(updateData).where(eq(buyOrders.id, id))
+
+    // Update linked planets if provided (demand orders only)
+    if (body.planetIds !== undefined && existing.sourceMode === 'demand') {
+      await db.delete(buyOrderPlanets).where(eq(buyOrderPlanets.buyOrderId, id))
+      await linkOrderToPlanets(id, userId, body.planetIds)
+    }
+
+    // Recalculate if demand order and relevant fields changed
+    if (
+      existing.sourceMode === 'demand' &&
+      (body.targetDays !== undefined || body.planetIds !== undefined)
+    ) {
+      await recalculateSingleDemandOrder(id)
+    }
 
     // Fetch updated order with reservation stats via JOIN
     const reservationStats = db
@@ -534,6 +699,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -546,6 +714,9 @@ export class BuyOrdersController extends Controller {
     const reservedQty = updated.reservedQuantity ?? 0
     const fulfilledQty = updated.fulfilledQuantity ?? 0
     const remainingQuantity = updated.quantity - reservedQty - fulfilledQty
+
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForOrders([updated.id])
 
     // Calculate effective price for dynamic pricing orders
     const pricingMode: PricingMode = updated.priceListCode ? 'dynamic' : 'fixed'
@@ -576,6 +747,10 @@ export class BuyOrdersController extends Controller {
       currency: updated.currency,
       priceListCode: updated.priceListCode,
       orderType: updated.orderType,
+      sourceMode: updated.sourceMode,
+      demandSource: updated.demandSource,
+      targetDays: updated.targetDays,
+      linkedPlanets: linkedPlanetsMap.get(updated.id) ?? [],
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,
@@ -610,5 +785,35 @@ export class BuyOrdersController extends Controller {
 
     await db.delete(buyOrders).where(eq(buyOrders.id, id))
     this.setStatus(204)
+  }
+
+  /**
+   * Manually recalculate a demand buy order's quantity
+   */
+  @Post('{id}/recalculate')
+  public async recalculateOrder(
+    @Path() id: number,
+    @Request() request: { user: JwtPayload }
+  ): Promise<{ quantity: number }> {
+    const userId = request.user.userId
+
+    const [existing] = await db
+      .select({ id: buyOrders.id, sourceMode: buyOrders.sourceMode })
+      .from(buyOrders)
+      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId)))
+
+    if (!existing) {
+      this.setStatus(404)
+      throw NotFound('Buy order not found')
+    }
+
+    if (existing.sourceMode !== 'demand') {
+      this.setStatus(400)
+      throw BadRequest('Only demand orders can be recalculated')
+    }
+
+    const newQuantity = await recalculateSingleDemandOrder(id)
+
+    return { quantity: newQuantity ?? 0 }
   }
 }

@@ -8,6 +8,8 @@ export { syncLocations } from './sync-locations.js'
 export { syncStations } from './sync-stations.js'
 export { syncUserInventory, getUserFioInventory } from './sync-user-inventory.js'
 export type { UserInventorySyncResult } from './sync-user-inventory.js'
+export { syncUserPlanets, getUserPlanetData } from './sync-user-planets.js'
+export type { PlanetSyncResult } from './sync-user-planets.js'
 export {
   syncFioExchangePrices,
   getLastSyncTime,

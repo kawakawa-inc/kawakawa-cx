@@ -1,4 +1,5 @@
 // Shared types for Kawakawa CX
+export * from './supply.js'
 
 export type Currency = 'ICA' | 'CIS' | 'AIC' | 'NCC'
 

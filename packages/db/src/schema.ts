@@ -87,6 +87,10 @@ export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'
 
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'public'])
 
+export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
+export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
+export const demandSourceEnum = pgEnum('demand_source', ['burn', 'repair'])
+
 // ==================== SETTINGS (Generic key-value with history) ====================
 export const settings = pgTable(
   'settings',
@@ -342,6 +346,87 @@ export const fioInventory = pgTable(
   })
 )
 
+// ==================== FIO USER PLANETS (Planet base data for supply planning) ====================
+export const fioUserPlanets = pgTable(
+  'fio_user_planets',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    planetNaturalId: varchar('planet_natural_id', { length: 20 }).notNull(),
+    planetName: varchar('planet_name', { length: 100 }).notNull(),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniqueUserPlanet: uniqueIndex('fio_user_planets_user_planet_idx').on(
+      table.userId,
+      table.planetNaturalId
+    ),
+  })
+)
+
+// ==================== FIO PLANET BUILDINGS (Building data from /sites endpoint) ====================
+export const fioPlanetBuildings = pgTable(
+  'fio_planet_buildings',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    buildingId: varchar('building_id', { length: 40 }).notNull(),
+    buildingTicker: varchar('building_ticker', { length: 10 }).notNull(),
+    buildingCreated: timestamp('building_created').notNull(), // from epoch ms
+    buildingLastRepair: timestamp('building_last_repair'), // null = never repaired
+    condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
+    repairMaterials: jsonb('repair_materials').notNull(), // FioSiteMaterial[]
+    reclaimableMaterials: jsonb('reclaimable_materials').notNull(), // FioSiteMaterial[]
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_buildings_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== FIO PLANET WORKFORCE (Workforce burn from /workforce endpoint) ====================
+export const fioPlanetWorkforce = pgTable(
+  'fio_planet_workforce',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    workforceType: varchar('workforce_type', { length: 30 }).notNull(), // PIONEER, SETTLER, etc.
+    population: integer('population').notNull(),
+    required: integer('required').notNull(),
+    needs: jsonb('needs').notNull(), // FioWorkforceNeed[]
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_workforce_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== FIO PLANET PRODUCTION (Production from /production endpoint) ====================
+export const fioPlanetProduction = pgTable(
+  'fio_planet_production',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    lineType: varchar('line_type', { length: 40 }).notNull(),
+    condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
+    efficiency: decimal('efficiency', { precision: 6, scale: 4 }).notNull(),
+    orders: jsonb('orders').notNull(), // FioProductionOrder[]
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_production_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
 // ==================== SELL ORDERS ====================
 export const sellOrders = pgTable(
   'sell_orders',
@@ -362,6 +447,9 @@ export const sellOrders = pgTable(
     orderType: orderTypeEnum('order_type').notNull().default('internal'), // internal = members only, partner = trade partners
     limitMode: sellOrderLimitModeEnum('limit_mode').notNull().default('none'),
     limitQuantity: integer('limit_quantity'), // Only used when limitMode is 'max_sell' or 'reserve'
+    reserveSource: reserveSourceEnum('reserve_source').notNull().default('manual'), // manual = fixed limitQuantity, demand = auto-calculated from burn
+    reserveDemandSource: demandSourceEnum('reserve_demand_source'), // null for manual, 'burn' for demand (repair not applicable to reserves)
+    reserveTargetDays: integer('reserve_target_days'), // days of burn to reserve (demand only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -392,6 +480,9 @@ export const buyOrders = pgTable(
     currency: currencyEnum('currency').notNull(),
     priceListCode: varchar('price_list_code', { length: 20 }), // null = custom/fixed price, set = dynamic pricing from price list
     orderType: orderTypeEnum('order_type').notNull().default('internal'), // internal = members only, partner = trade partners
+    sourceMode: buyOrderSourceModeEnum('source_mode').notNull().default('manual'), // manual = fixed qty, demand = auto-calculated
+    demandSource: demandSourceEnum('demand_source'), // null for manual, 'burn' or 'repair' for demand
+    targetDays: integer('target_days'), // days of stock to maintain (burn only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -400,6 +491,50 @@ export const buyOrders = pgTable(
     uniqueUserCommodityLocationTypeCurrency: uniqueIndex(
       'buy_orders_user_commodity_location_type_currency_idx'
     ).on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency),
+  })
+)
+
+// ==================== BUY ORDER PLANET LINKS (for demand orders) ====================
+export const buyOrderPlanets = pgTable(
+  'buy_order_planets',
+  {
+    id: serial('id').primaryKey(),
+    buyOrderId: integer('buy_order_id')
+      .notNull()
+      .references(() => buyOrders.id, { onDelete: 'cascade' }),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    buyOrderIdx: index('buy_order_planets_buy_order_idx').on(table.buyOrderId),
+    uniqueBuyOrderPlanet: uniqueIndex('buy_order_planets_unique_idx').on(
+      table.buyOrderId,
+      table.userPlanetId
+    ),
+  })
+)
+
+// ==================== SELL ORDER PLANET LINKS (for demand reserves) ====================
+export const sellOrderPlanets = pgTable(
+  'sell_order_planets',
+  {
+    id: serial('id').primaryKey(),
+    sellOrderId: integer('sell_order_id')
+      .notNull()
+      .references(() => sellOrders.id, { onDelete: 'cascade' }),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    sellOrderIdx: index('sell_order_planets_sell_order_idx').on(table.sellOrderId),
+    uniqueSellOrderPlanet: uniqueIndex('sell_order_planets_unique_idx').on(
+      table.sellOrderId,
+      table.userPlanetId
+    ),
   })
 )
 
@@ -685,6 +820,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   userRoles: many(userRoles),
   passwordResetTokens: many(passwordResetTokens),
   fioUserStorage: many(fioUserStorage),
+  fioUserPlanets: many(fioUserPlanets),
   sellOrders: many(sellOrders),
   buyOrders: many(buyOrders),
   notifications: many(notifications),
@@ -783,6 +919,39 @@ export const fioInventoryRelations = relations(fioInventory, ({ one }) => ({
   }),
 }))
 
+export const fioUserPlanetsRelations = relations(fioUserPlanets, ({ one, many }) => ({
+  user: one(users, {
+    fields: [fioUserPlanets.userId],
+    references: [users.id],
+  }),
+  buildings: many(fioPlanetBuildings),
+  workforce: many(fioPlanetWorkforce),
+  production: many(fioPlanetProduction),
+  buyOrderLinks: many(buyOrderPlanets),
+  sellOrderLinks: many(sellOrderPlanets),
+}))
+
+export const fioPlanetBuildingsRelations = relations(fioPlanetBuildings, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetBuildings.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const fioPlanetWorkforceRelations = relations(fioPlanetWorkforce, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetWorkforce.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const fioPlanetProductionRelations = relations(fioPlanetProduction, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetProduction.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
 export const sellOrdersRelations = relations(sellOrders, ({ one, many }) => ({
   user: one(users, {
     fields: [sellOrders.userId],
@@ -797,6 +966,18 @@ export const sellOrdersRelations = relations(sellOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
+  linkedPlanets: many(sellOrderPlanets),
+}))
+
+export const sellOrderPlanetsRelations = relations(sellOrderPlanets, ({ one }) => ({
+  sellOrder: one(sellOrders, {
+    fields: [sellOrderPlanets.sellOrderId],
+    references: [sellOrders.id],
+  }),
+  userPlanet: one(fioUserPlanets, {
+    fields: [sellOrderPlanets.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
 }))
 
 export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
@@ -813,6 +994,18 @@ export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
+  linkedPlanets: many(buyOrderPlanets),
+}))
+
+export const buyOrderPlanetsRelations = relations(buyOrderPlanets, ({ one }) => ({
+  buyOrder: one(buyOrders, {
+    fields: [buyOrderPlanets.buyOrderId],
+    references: [buyOrders.id],
+  }),
+  userPlanet: one(fioUserPlanets, {
+    fields: [buyOrderPlanets.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
 }))
 
 // ==================== DISCORD & SETTINGS RELATIONS ====================

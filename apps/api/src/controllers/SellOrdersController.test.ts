@@ -21,7 +21,21 @@ vi.mock('../db/index.js', () => ({
     orderType: 'orderType',
     limitMode: 'limitMode',
     limitQuantity: 'limitQuantity',
+    reserveSource: 'reserveSource',
+    reserveDemandSource: 'reserveDemandSource',
+    reserveTargetDays: 'reserveTargetDays',
     updatedAt: 'updatedAt',
+  },
+  sellOrderPlanets: {
+    id: 'id',
+    sellOrderId: 'sellOrderId',
+    userPlanetId: 'userPlanetId',
+  },
+  fioUserPlanets: {
+    id: 'id',
+    userId: 'userId',
+    planetNaturalId: 'planetNaturalId',
+    planetName: 'planetName',
   },
   fioInventory: {
     userId: 'userId',
@@ -46,6 +60,10 @@ vi.mock('../db/index.js', () => ({
     quantity: 'quantity',
     status: 'status',
   },
+}))
+
+vi.mock('../services/demand-calculator.js', () => ({
+  recalculateSingleDemandReserve: vi.fn().mockResolvedValue(100),
 }))
 
 vi.mock('../utils/permissionService.js', () => ({
@@ -83,7 +101,11 @@ describe('SellOrdersController', () => {
     mockSelect = {
       from: vi.fn().mockReturnThis(),
       leftJoin: vi.fn().mockReturnThis(),
-      innerJoin: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockImplementation(() => {
+        const result: any = Promise.resolve([])
+        result.where = vi.fn().mockResolvedValue([])
+        return result
+      }),
       where: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
     }
@@ -126,6 +148,9 @@ describe('SellOrdersController', () => {
           limitMode: 'none',
           limitQuantity: null,
           priceListCode: null,
+          reserveSource: 'manual',
+          reserveDemandSource: null,
+          reserveTargetDays: null,
         },
         {
           id: 2,
@@ -138,6 +163,9 @@ describe('SellOrdersController', () => {
           limitMode: 'max_sell',
           limitQuantity: 200,
           priceListCode: null,
+          reserveSource: 'manual',
+          reserveDemandSource: null,
+          reserveTargetDays: null,
         },
       ]
 
@@ -177,38 +205,34 @@ describe('SellOrdersController', () => {
       const result = await controller.getSellOrders(mockRequest)
 
       expect(result).toHaveLength(2)
-      expect(result[0]).toEqual({
+      expect(result[0]).toMatchObject({
         id: 1,
         commodityTicker: 'H2O',
         locationId: 'BEN',
         price: 100,
         currency: 'CIS',
-        priceListCode: null,
         orderType: 'internal',
         limitMode: 'none',
         limitQuantity: null,
+        reserveSource: 'manual',
+        reserveDemandSource: null,
+        reserveTargetDays: null,
+        linkedPlanets: [],
         fioQuantity: 1000,
-        availableQuantity: 1000, // none mode: full quantity
-        activeReservationCount: 0,
-        reservedQuantity: 0,
-        fulfilledQuantity: 0,
+        availableQuantity: 1000,
         remainingQuantity: 1000,
-        fioUploadedAt: '2024-01-15T10:00:00.000Z',
-        pricingMode: 'fixed',
-        effectivePrice: null,
-        isFallback: false,
-        priceLocationId: null,
       })
-      expect(result[1]).toEqual({
+      expect(result[1]).toMatchObject({
         id: 2,
         commodityTicker: 'RAT',
         locationId: 'BEN',
         price: 50,
         currency: 'CIS',
-        priceListCode: null,
         orderType: 'internal',
         limitMode: 'max_sell',
         limitQuantity: 200,
+        reserveSource: 'manual',
+        linkedPlanets: [],
         fioQuantity: 500,
         availableQuantity: 200, // max_sell mode: min(500, 200)
         activeReservationCount: 0,

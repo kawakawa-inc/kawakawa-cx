@@ -1,9 +1,10 @@
 #!/usr/bin/env tsx
-// CLI script to sync FIO inventory for all users with auto-sync enabled
+// CLI script to sync FIO data for all users with auto-sync enabled
+// Syncs inventory + planet data + recalculates demand buy orders
 // Usage: pnpm fio:sync:users
 
 import { db, users, client } from '../db/index.js'
-import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
+import { syncUserAll } from '../services/fio/sync-user-all.js'
 import { createLogger } from '../utils/logger.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 
@@ -15,10 +16,11 @@ interface UserToSync {
   fioUsername: string
   fioApiKey: string
   excludedLocations: string[]
+  excludedPlanets: string[]
 }
 
 async function main() {
-  log.info('Starting FIO user inventory sync')
+  log.info('Starting FIO user data sync')
 
   try {
     // Get all active users
@@ -55,10 +57,15 @@ async function main() {
         continue
       }
 
-      // Get excluded locations
+      // Get exclusion settings
       const excludedLocations = (await userSettingsService.getSetting(
         user.userId,
         'fio.excludedLocations'
+      )) as string[]
+
+      const excludedPlanets = (await userSettingsService.getSetting(
+        user.userId,
+        'supply.excludedPlanets'
       )) as string[]
 
       usersToSync.push({
@@ -67,6 +74,7 @@ async function main() {
         fioUsername,
         fioApiKey,
         excludedLocations: excludedLocations ?? [],
+        excludedPlanets: excludedPlanets ?? [],
       })
     }
 
@@ -81,22 +89,21 @@ async function main() {
     let failCount = 0
 
     for (const user of usersToSync) {
-      log.info({ userId: user.userId }, 'Syncing user inventory')
+      log.info({ userId: user.userId }, 'Syncing user data')
 
       try {
-        const result = await syncUserInventory(user.userId, user.fioApiKey, user.fioUsername, {
+        const result = await syncUserAll(user.userId, user.fioApiKey, user.fioUsername, {
           excludedLocations: user.excludedLocations,
+          excludedPlanets: user.excludedPlanets,
         })
 
         if (result.success) {
           log.info(
             {
               userId: user.userId,
-              storageLocations: result.storageLocations,
-              inventoryItems: result.inserted,
-              skippedExcluded: result.skippedExcludedLocations || undefined,
-              skippedUnknownLocations: result.skippedUnknownLocations || undefined,
-              skippedUnknownCommodities: result.skippedUnknownCommodities || undefined,
+              inventoryItems: result.inventory.inserted,
+              planetsSynced: result.planets.planetsSynced,
+              demandOrdersUpdated: result.demandOrders.ordersUpdated,
             },
             'Sync completed for user'
           )
@@ -118,7 +125,7 @@ async function main() {
       }
     }
 
-    log.info({ successCount, failCount }, 'FIO user sync complete')
+    log.info({ successCount, failCount }, 'FIO user data sync complete')
 
     // Exit with error code if any syncs failed
     if (failCount > 0) {

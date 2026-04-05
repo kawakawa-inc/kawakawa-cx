@@ -285,6 +285,81 @@ export interface FioGroupHubCXWarehouse {
   PlayerCXWarehouses: FioGroupHubPlayerWarehouse[]
 }
 
+// ==================== Sites/Repair API Types ====================
+
+// Material entry from /sites endpoint (repair or reclaimable)
+export interface FioSiteMaterial {
+  MaterialTicker: string
+  MaterialAmount: number
+}
+
+// Building from /sites/{User}/{Planet} endpoint
+export interface FioSiteBuilding {
+  BuildingId: string
+  BuildingTicker: string
+  BuildingCreated: number // epoch ms
+  BuildingLastRepair: number | null // epoch ms, null if never repaired
+  Condition: number
+  RepairMaterials: FioSiteMaterial[]
+  ReclaimableMaterials: FioSiteMaterial[]
+}
+
+// Full response from /sites/{User}/{Planet}
+export interface FioSiteResponse {
+  PlanetId: string
+  Buildings: FioSiteBuilding[]
+}
+
+// ==================== Workforce API Types ====================
+
+// Workforce consumable need from /workforce endpoint
+export interface FioWorkforceNeed {
+  MaterialTicker: string
+  UnitsPerInterval: number // daily consumption rate
+  Essential: boolean
+}
+
+// Workforce type from /workforce/{User}/{Planet} endpoint
+export interface FioWorkforceType {
+  WorkforceTypeName: string // PIONEER, SETTLER, TECHNICIAN, ENGINEER, SCIENTIST
+  Population: number
+  Required: number
+  WorkforceNeeds: FioWorkforceNeed[]
+}
+
+// ==================== Production API Types ====================
+
+// Material entry in production order inputs/outputs
+export interface FioProductionMaterial {
+  MaterialTicker: string
+  MaterialAmount: number
+}
+
+// Production order from /production endpoint
+export interface FioProductionOrder {
+  Recurring: boolean
+  DurationMs: number // wall-clock time including all modifiers
+  Inputs: FioProductionMaterial[]
+  Outputs: FioProductionMaterial[]
+}
+
+// Production line from /production/{User}/{Planet} endpoint
+export interface FioProductionLine {
+  Type: string // e.g. "chemPlant", "smelter"
+  Condition: number // average condition of buildings of this type
+  Efficiency: number // combined non-condition multiplier (CoGC, experts, etc.)
+  Orders: FioProductionOrder[]
+}
+
+// ==================== Rain (User Planets) API Types ====================
+
+// Planet from /rain/userplanets/{User} endpoint
+export interface FioRainPlanet {
+  PlanetId: string
+  PlanetNaturalId: string
+  PlanetName: string
+}
+
 // Full GroupHub response
 export interface FioGroupHubResponse {
   GroupName: string | null

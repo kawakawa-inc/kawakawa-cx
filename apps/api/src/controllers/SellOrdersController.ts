@@ -12,8 +12,23 @@ import {
   Request,
   SuccessResponse,
 } from 'tsoa'
-import type { Currency, OrderType, PricingMode, SellOrderLimitMode } from '@kawakawa/types'
-import { db, sellOrders, fioCommodities, fioLocations } from '../db/index.js'
+import type {
+  Currency,
+  OrderType,
+  PricingMode,
+  SellOrderLimitMode,
+  BuyOrderSourceMode,
+  DemandSource,
+  LinkedPlanetInfo,
+} from '@kawakawa/types'
+import {
+  db,
+  sellOrders,
+  sellOrderPlanets,
+  fioUserPlanets,
+  fioCommodities,
+  fioLocations,
+} from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
@@ -23,6 +38,7 @@ import {
   calculateEffectivePriceBatch,
 } from '../services/price-calculator.js'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
+import { recalculateSingleDemandReserve } from '../services/demand-calculator.js'
 
 // Sell order with calculated availability
 interface SellOrderResponse {
@@ -31,22 +47,25 @@ interface SellOrderResponse {
   locationId: string
   price: number
   currency: Currency
-  priceListCode: string | null // null = custom/fixed price, set = dynamic pricing from price list
+  priceListCode: string | null
   orderType: OrderType
   limitMode: SellOrderLimitMode
   limitQuantity: number | null
+  reserveSource: BuyOrderSourceMode
+  reserveDemandSource: DemandSource | null
+  reserveTargetDays: number | null
+  linkedPlanets: LinkedPlanetInfo[]
   fioQuantity: number
   availableQuantity: number
-  activeReservationCount: number // count of pending/confirmed reservations
-  reservedQuantity: number // sum of quantities in active reservations
-  fulfilledQuantity: number // sum of quantities in fulfilled reservations
-  remainingQuantity: number // availableQuantity - reservedQuantity - fulfilledQuantity
-  fioUploadedAt: string | null // When seller's FIO inventory was last synced from game
-  // Dynamic pricing fields
+  activeReservationCount: number
+  reservedQuantity: number
+  fulfilledQuantity: number
+  remainingQuantity: number
+  fioUploadedAt: string | null
   pricingMode: PricingMode
-  effectivePrice: number | null // Calculated price from price list (null if not available)
-  isFallback: boolean // True if price came from price list's default location
-  priceLocationId: string | null // The location the price was fetched from (when isFallback)
+  effectivePrice: number | null
+  isFallback: boolean
+  priceLocationId: string | null
 }
 
 interface CreateSellOrderRequest {
@@ -54,19 +73,25 @@ interface CreateSellOrderRequest {
   locationId: string
   price: number
   currency: Currency
-  priceListCode?: string | null // null or undefined = custom/fixed price, set = dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
+  reserveSource?: BuyOrderSourceMode
+  reserveDemandSource?: DemandSource
+  reserveTargetDays?: number
+  planetIds?: string[] // Planet NaturalIds to link (for demand reserve)
 }
 
 interface UpdateSellOrderRequest {
   price?: number
   currency?: Currency
-  priceListCode?: string | null // null = switch to custom pricing, string = switch to dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
+  reserveTargetDays?: number
+  planetIds?: string[] // Replace linked planets
 }
 
 /**
@@ -81,6 +106,62 @@ function getPermissionForOrderType(orderType: OrderType): string {
  */
 function getOrderTypeDisplay(orderType: OrderType): string {
   return orderType === 'partner' ? 'partner' : 'internal'
+}
+
+/**
+ * Fetch linked planets for a list of sell order IDs
+ */
+async function getLinkedPlanetsForSellOrders(
+  orderIds: number[]
+): Promise<Map<number, LinkedPlanetInfo[]>> {
+  if (orderIds.length === 0) return new Map()
+
+  const links = await db
+    .select({
+      sellOrderId: sellOrderPlanets.sellOrderId,
+      userPlanetId: sellOrderPlanets.userPlanetId,
+      planetNaturalId: fioUserPlanets.planetNaturalId,
+      planetName: fioUserPlanets.planetName,
+    })
+    .from(sellOrderPlanets)
+    .innerJoin(fioUserPlanets, eq(sellOrderPlanets.userPlanetId, fioUserPlanets.id))
+
+  const map = new Map<number, LinkedPlanetInfo[]>()
+  for (const link of links) {
+    if (!orderIds.includes(link.sellOrderId)) continue
+    const planets = map.get(link.sellOrderId) ?? []
+    planets.push({
+      userPlanetId: link.userPlanetId,
+      planetNaturalId: link.planetNaturalId,
+      planetName: link.planetName,
+    })
+    map.set(link.sellOrderId, planets)
+  }
+  return map
+}
+
+/**
+ * Link a sell order to planets by NaturalId
+ */
+async function linkSellOrderToPlanets(
+  sellOrderId: number,
+  userId: number,
+  planetNaturalIds: string[]
+): Promise<void> {
+  if (planetNaturalIds.length === 0) return
+
+  const userPlanets = await db
+    .select({ id: fioUserPlanets.id, planetNaturalId: fioUserPlanets.planetNaturalId })
+    .from(fioUserPlanets)
+    .where(eq(fioUserPlanets.userId, userId))
+
+  const planetMap = new Map(userPlanets.map(p => [p.planetNaturalId, p.id]))
+
+  for (const naturalId of planetNaturalIds) {
+    const userPlanetId = planetMap.get(naturalId)
+    if (!userPlanetId) continue
+    await db.insert(sellOrderPlanets).values({ sellOrderId, userPlanetId })
+  }
 }
 
 @Route('sell-orders')
@@ -114,6 +195,9 @@ export class SellOrdersController extends Controller {
         limitQuantity: o.limitQuantity,
       }))
     )
+
+    // Fetch linked planets for all orders
+    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders(orders.map(o => o.id))
 
     // Batch fetch all dynamic prices in 3 queries instead of 3-5 per order
     const priceRequests = orders
@@ -162,6 +246,10 @@ export class SellOrdersController extends Controller {
         orderType: order.orderType,
         limitMode: order.limitMode,
         limitQuantity: order.limitQuantity,
+        reserveSource: order.reserveSource,
+        reserveDemandSource: order.reserveDemandSource,
+        reserveTargetDays: order.reserveTargetDays,
+        linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
         fioQuantity: quantityInfo.fioQuantity,
         availableQuantity: quantityInfo.availableQuantity,
         activeReservationCount: quantityInfo.activeReservationCount,
@@ -219,6 +307,9 @@ export class SellOrdersController extends Controller {
       fioUploadedAt: null,
     }
 
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([order.id])
+
     // Calculate effective price for dynamic pricing orders
     const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
     let effectivePrice: number | null = null
@@ -249,6 +340,10 @@ export class SellOrdersController extends Controller {
       orderType: order.orderType,
       limitMode: order.limitMode,
       limitQuantity: order.limitQuantity,
+      reserveSource: order.reserveSource,
+      reserveDemandSource: order.reserveDemandSource,
+      reserveTargetDays: order.reserveTargetDays,
+      linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -284,6 +379,23 @@ export class SellOrdersController extends Controller {
       throw Forbidden(
         `You do not have permission to create ${getOrderTypeDisplay(orderType)} orders`
       )
+    }
+
+    const reserveSource = body.reserveSource ?? 'manual'
+
+    // Validate demand reserve requirements
+    if (reserveSource === 'demand') {
+      if (!body.planetIds || body.planetIds.length === 0) {
+        this.setStatus(400)
+        throw BadRequest('At least one planet must be linked for demand reserve orders')
+      }
+      if (
+        body.reserveDemandSource === 'burn' &&
+        (!body.reserveTargetDays || body.reserveTargetDays <= 0)
+      ) {
+        this.setStatus(400)
+        throw BadRequest('reserveTargetDays must be > 0 for burn demand reserves')
+      }
     }
 
     // Validate commodity exists
@@ -356,10 +468,32 @@ export class SellOrdersController extends Controller {
         currency: body.currency,
         priceListCode,
         orderType,
-        limitMode: body.limitMode ?? 'none',
+        limitMode: reserveSource === 'demand' ? 'reserve' : (body.limitMode ?? 'none'),
         limitQuantity: body.limitQuantity ?? null,
+        reserveSource,
+        reserveDemandSource:
+          reserveSource === 'demand' ? (body.reserveDemandSource ?? 'burn') : null,
+        reserveTargetDays: reserveSource === 'demand' ? (body.reserveTargetDays ?? null) : null,
       })
       .returning()
+
+    // Link planets for demand reserve
+    if (reserveSource === 'demand' && body.planetIds) {
+      await linkSellOrderToPlanets(newOrder.id, userId, body.planetIds)
+    }
+
+    // Recalculate reserve quantity for demand orders
+    if (reserveSource === 'demand') {
+      await recalculateSingleDemandReserve(newOrder.id)
+      const [refreshed] = await db
+        .select({ limitQuantity: sellOrders.limitQuantity })
+        .from(sellOrders)
+        .where(eq(sellOrders.id, newOrder.id))
+      if (refreshed) newOrder.limitQuantity = refreshed.limitQuantity
+    }
+
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([newOrder.id])
 
     this.setStatus(201)
 
@@ -415,6 +549,10 @@ export class SellOrdersController extends Controller {
       orderType: newOrder.orderType,
       limitMode: newOrder.limitMode,
       limitQuantity: newOrder.limitQuantity,
+      reserveSource: newOrder.reserveSource,
+      reserveDemandSource: newOrder.reserveDemandSource,
+      reserveTargetDays: newOrder.reserveTargetDays,
+      linkedPlanets: linkedPlanetsMap.get(newOrder.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -494,7 +632,12 @@ export class SellOrdersController extends Controller {
     if (body.priceListCode !== undefined) updateData.priceListCode = body.priceListCode
     if (body.orderType !== undefined) updateData.orderType = body.orderType
     if (body.limitMode !== undefined) updateData.limitMode = body.limitMode
-    if (body.limitQuantity !== undefined) updateData.limitQuantity = body.limitQuantity
+    if (body.limitQuantity !== undefined && existing.reserveSource === 'manual') {
+      updateData.limitQuantity = body.limitQuantity
+    }
+    if (body.reserveTargetDays !== undefined && existing.reserveSource === 'demand') {
+      updateData.reserveTargetDays = body.reserveTargetDays
+    }
 
     // Update
     const [updated] = await db
@@ -502,6 +645,28 @@ export class SellOrdersController extends Controller {
       .set(updateData)
       .where(eq(sellOrders.id, id))
       .returning()
+
+    // Update linked planets if provided (demand reserve only)
+    if (body.planetIds !== undefined && existing.reserveSource === 'demand') {
+      await db.delete(sellOrderPlanets).where(eq(sellOrderPlanets.sellOrderId, id))
+      await linkSellOrderToPlanets(id, userId, body.planetIds)
+    }
+
+    // Recalculate if demand reserve and relevant fields changed
+    if (
+      existing.reserveSource === 'demand' &&
+      (body.reserveTargetDays !== undefined || body.planetIds !== undefined)
+    ) {
+      await recalculateSingleDemandReserve(id)
+      const [refreshed] = await db
+        .select({ limitQuantity: sellOrders.limitQuantity })
+        .from(sellOrders)
+        .where(eq(sellOrders.id, id))
+      if (refreshed) updated.limitQuantity = refreshed.limitQuantity
+    }
+
+    // Fetch linked planets
+    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([updated.id])
 
     // Use centralized function to get quantity info with proper expiration logic
     const quantityMap = await enrichSellOrdersWithQuantities([
@@ -555,6 +720,10 @@ export class SellOrdersController extends Controller {
       orderType: updated.orderType,
       limitMode: updated.limitMode,
       limitQuantity: updated.limitQuantity,
+      reserveSource: updated.reserveSource,
+      reserveDemandSource: updated.reserveDemandSource,
+      reserveTargetDays: updated.reserveTargetDays,
+      linkedPlanets: linkedPlanetsMap.get(updated.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -592,5 +761,35 @@ export class SellOrdersController extends Controller {
 
     await db.delete(sellOrders).where(eq(sellOrders.id, id))
     this.setStatus(204)
+  }
+
+  /**
+   * Manually recalculate a demand reserve sell order's limitQuantity
+   */
+  @Post('{id}/recalculate')
+  public async recalculateReserve(
+    @Path() id: number,
+    @Request() request: { user: JwtPayload }
+  ): Promise<{ limitQuantity: number }> {
+    const userId = request.user.userId
+
+    const [existing] = await db
+      .select({ id: sellOrders.id, reserveSource: sellOrders.reserveSource })
+      .from(sellOrders)
+      .where(and(eq(sellOrders.id, id), eq(sellOrders.userId, userId)))
+
+    if (!existing) {
+      this.setStatus(404)
+      throw NotFound('Sell order not found')
+    }
+
+    if (existing.reserveSource !== 'demand') {
+      this.setStatus(400)
+      throw BadRequest('Only demand reserve orders can be recalculated')
+    }
+
+    const newQuantity = await recalculateSingleDemandReserve(id)
+
+    return { limitQuantity: newQuantity ?? 0 }
   }
 }

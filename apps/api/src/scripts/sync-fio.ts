@@ -5,7 +5,7 @@ import { syncCommodities } from '../services/fio/sync-commodities.js'
 import { syncLocations } from '../services/fio/sync-locations.js'
 import { syncStations } from '../services/fio/sync-stations.js'
 import { syncFioExchangePrices, type FioPriceField } from '../services/fio/sync-exchange-prices.js'
-import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
+import { syncUserAll } from '../services/fio/sync-user-all.js'
 import { db, users, client } from '../db/index.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 import { createLogger } from '../utils/logger.js'
@@ -103,7 +103,7 @@ async function main() {
     }
 
     if (syncType === 'users' || syncType === 'all') {
-      log.info('Syncing user inventories')
+      log.info('Syncing user data (inventory + planets + demand orders)')
 
       // Get all active users
       const allUsers = await db
@@ -120,6 +120,7 @@ async function main() {
         fioUsername: string
         fioApiKey: string
         excludedLocations: string[]
+        excludedPlanets: string[]
       }> = []
 
       for (const user of allUsers) {
@@ -143,12 +144,18 @@ async function main() {
           'fio.excludedLocations'
         )) as string[]
 
+        const excludedPlanets = (await userSettingsService.getSetting(
+          user.userId,
+          'supply.excludedPlanets'
+        )) as string[]
+
         usersToSync.push({
           userId: user.userId,
           username: user.username,
           fioUsername,
           fioApiKey,
           excludedLocations: excludedLocations ?? [],
+          excludedPlanets: excludedPlanets ?? [],
         })
       }
 
@@ -161,22 +168,21 @@ async function main() {
         let failCount = 0
 
         for (const user of usersToSync) {
-          log.info({ userId: user.userId }, 'Syncing user inventory')
+          log.info({ userId: user.userId }, 'Syncing user data')
 
           try {
-            const result = await syncUserInventory(user.userId, user.fioApiKey, user.fioUsername, {
+            const result = await syncUserAll(user.userId, user.fioApiKey, user.fioUsername, {
               excludedLocations: user.excludedLocations,
+              excludedPlanets: user.excludedPlanets,
             })
 
             if (result.success) {
               log.info(
                 {
                   userId: user.userId,
-                  storageLocations: result.storageLocations,
-                  inventoryItems: result.inserted,
-                  skippedExcluded: result.skippedExcludedLocations || undefined,
-                  skippedUnknownLocations: result.skippedUnknownLocations || undefined,
-                  skippedUnknownCommodities: result.skippedUnknownCommodities || undefined,
+                  inventoryItems: result.inventory.inserted,
+                  planetsSynced: result.planets.planetsSynced,
+                  demandOrdersUpdated: result.demandOrders.ordersUpdated,
                 },
                 'Sync completed for user'
               )
@@ -198,7 +204,7 @@ async function main() {
           }
         }
 
-        log.info({ successCount, failCount }, 'User inventory sync completed')
+        log.info({ successCount, failCount }, 'User data sync completed')
       }
     }
 

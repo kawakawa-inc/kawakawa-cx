@@ -63,6 +63,22 @@ export function redactObject(
     return obj
   }
 
+  // Serialize Error objects (properties are non-enumerable)
+  if (obj instanceof Error) {
+    const errorObj: Record<string, unknown> = {
+      message: obj.message,
+      name: obj.name,
+    }
+    if (obj.stack) {
+      errorObj.stack = obj.stack
+    }
+    // Include any additional enumerable properties (e.g., statusCode)
+    for (const [key, value] of Object.entries(obj)) {
+      errorObj[key] = redactObject(value, seen, depth + 1)
+    }
+    return errorObj
+  }
+
   // Handle circular references
   if (seen.has(obj)) {
     return '[Circular]'

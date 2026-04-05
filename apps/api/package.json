@@ -11,7 +11,7 @@
     "dev:debug": "tsx watch --inspect --env-file-if-exists=.env src/index.ts",
     "build": "tsoa spec-and-routes && tsc",
     "start": "node dist/index.js",
-    "tsoa:generate": "tsoa spec-and-routes",
+    "tsoa:generate": "pnpm --filter @kawakawa/types build && tsoa spec-and-routes",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",

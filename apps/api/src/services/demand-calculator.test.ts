@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
-  getStockAtLocation,
-  calculateBurnNeed,
-  calculateRepairNeed,
+  getFilteredStock,
+  calculateLineDemand,
+  calculateDeficit,
   recalculateSingleDemandOrder,
   recalculateDemandOrders,
+  recalculateSingleDemandReserve,
+  recalculateDemandReserves,
 } from './demand-calculator.js'
 
 // Mock DB
@@ -31,15 +33,34 @@ vi.mock('../db/index.js', () => ({
     })),
   },
   buyOrders: { id: 'id', userId: 'userId', sourceMode: 'sourceMode', quantity: 'quantity' },
-  buyOrderPlanets: { buyOrderId: 'buyOrderId', userPlanetId: 'userPlanetId' },
+  sellOrders: {
+    id: 'id',
+    userId: 'userId',
+    reserveSource: 'reserveSource',
+    limitQuantity: 'limitQuantity',
+  },
+  supplyChainLines: {
+    id: 'id',
+    userId: 'userId',
+    commodityTicker: 'commodityTicker',
+    sourceLocationId: 'sourceLocationId',
+    mode: 'mode',
+    demandSource: 'demandSource',
+    demand: 'demand',
+    destinationPlanetId: 'destinationPlanetId',
+    sourceStorageTypes: 'sourceStorageTypes',
+    destinationStorageTypes: 'destinationStorageTypes',
+  },
+  fioUserPlanets: { id: 'id', userId: 'userId', planetNaturalId: 'planetNaturalId' },
   fioPlanetWorkforce: { userPlanetId: 'userPlanetId', needs: 'needs' },
   fioPlanetBuildings: { userPlanetId: 'userPlanetId', repairMaterials: 'repairMaterials' },
+  fioPlanetProduction: { userPlanetId: 'userPlanetId', condition: 'condition', orders: 'orders' },
   fioInventory: {
     userStorageId: 'userStorageId',
     commodityTicker: 'commodityTicker',
     quantity: 'quantity',
   },
-  fioUserStorage: { id: 'id', userId: 'userId', locationId: 'locationId' },
+  fioUserStorage: { id: 'id', userId: 'userId', locationId: 'locationId', type: 'type' },
 }))
 
 describe('demand-calculator', () => {
@@ -55,79 +76,87 @@ describe('demand-calculator', () => {
     mockUpdateWhere.mockResolvedValue(undefined)
   })
 
-  describe('getStockAtLocation', () => {
-    it('should sum inventory across storage types', async () => {
-      mockSelectWhere.mockResolvedValue([{ quantity: 100 }, { quantity: 50 }])
+  describe('getFilteredStock', () => {
+    it('should sum inventory filtered by storage types', async () => {
+      mockSelectWhere.mockResolvedValue([
+        { quantity: 100, storageType: 'STORE' },
+        { quantity: 50, storageType: 'WAREHOUSE_STORE' },
+        { quantity: 200, storageType: 'STORE' },
+      ])
 
-      const stock = await getStockAtLocation(1, 'CAF', 'BEN')
+      const stock = await getFilteredStock(1, 'CAF', 'BEN', ['STORE'])
+      expect(stock).toBe(300) // Only STORE types
+    })
+
+    it('should include all specified storage types', async () => {
+      mockSelectWhere.mockResolvedValue([
+        { quantity: 100, storageType: 'STORE' },
+        { quantity: 50, storageType: 'WAREHOUSE_STORE' },
+      ])
+
+      const stock = await getFilteredStock(1, 'CAF', 'BEN', ['STORE', 'WAREHOUSE_STORE'])
       expect(stock).toBe(150)
     })
 
     it('should return 0 when no inventory', async () => {
       mockSelectWhere.mockResolvedValue([])
 
-      const stock = await getStockAtLocation(1, 'CAF', 'BEN')
+      const stock = await getFilteredStock(1, 'CAF', 'BEN', ['STORE'])
       expect(stock).toBe(0)
     })
   })
 
-  describe('calculateBurnNeed', () => {
-    it('should sum burn rates across planets and multiply by days', async () => {
-      // Two workforce entries across linked planets
-      mockSelectWhere.mockResolvedValue([
+  describe('calculateLineDemand', () => {
+    it('should return fixed demand when set', async () => {
+      const demand = await calculateLineDemand(
+        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', demandSource: null, demand: 500 },
+        1,
+        30
+      )
+      expect(demand).toBe(500)
+    })
+
+    it('should return 0 when no demandSource and no demand', async () => {
+      const demand = await calculateLineDemand(
+        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', demandSource: null, demand: null },
+        1,
+        30
+      )
+      expect(demand).toBe(0)
+    })
+
+    it('should calculate consumables burn', async () => {
+      // Planet lookup
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      // Workforce data
+      mockSelectWhere.mockResolvedValueOnce([
         {
           needs: [
             { MaterialTicker: 'CAF', UnitsPerInterval: 72.15, Essential: false },
             { MaterialTicker: 'RAT', UnitsPerInterval: 30.0, Essential: true },
           ],
         },
-        {
-          needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: 72.15, Essential: false }],
-        },
       ])
 
-      const need = await calculateBurnNeed('CAF', [1, 2], 30)
-      // ceil((72.15 + 72.15) * 30) = ceil(4329) = 4329
-      expect(need).toBe(4329)
-    })
-
-    it('should return 0 for empty planet list', async () => {
-      const need = await calculateBurnNeed('CAF', [], 30)
-      expect(need).toBe(0)
-    })
-
-    it('should return 0 for 0 target days', async () => {
-      const need = await calculateBurnNeed('CAF', [1], 0)
-      expect(need).toBe(0)
-    })
-
-    it('should return 0 when commodity not in burn data', async () => {
-      mockSelectWhere.mockResolvedValue([
+      const demand = await calculateLineDemand(
         {
-          needs: [{ MaterialTicker: 'RAT', UnitsPerInterval: 30.0, Essential: true }],
+          commodityTicker: 'CAF',
+          destinationPlanetId: 'UV-351a',
+          demandSource: 'consumables',
+          demand: null,
         },
-      ])
-
-      const need = await calculateBurnNeed('CAF', [1], 30)
-      expect(need).toBe(0)
+        1,
+        30
+      )
+      // ceil(72.15 * 30) = ceil(2164.5) = 2165
+      expect(demand).toBe(2165)
     })
 
-    it('should ceil fractional results', async () => {
-      mockSelectWhere.mockResolvedValue([
-        {
-          needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: 0.1, Essential: false }],
-        },
-      ])
-
-      const need = await calculateBurnNeed('CAF', [1], 7)
-      // ceil(0.1 * 7) = ceil(0.7) = 1
-      expect(need).toBe(1)
-    })
-  })
-
-  describe('calculateRepairNeed', () => {
-    it('should sum repair materials across linked planets', async () => {
-      mockSelectWhere.mockResolvedValue([
+    it('should calculate repair need', async () => {
+      // Planet lookup
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      // Building data
+      mockSelectWhere.mockResolvedValueOnce([
         {
           repairMaterials: [
             { MaterialTicker: 'BBH', MaterialAmount: 50 },
@@ -139,109 +168,33 @@ describe('demand-calculator', () => {
         },
       ])
 
-      const need = await calculateRepairNeed('BBH', [1, 2])
-      expect(need).toBe(150)
-    })
-
-    it('should return 0 for empty planet list', async () => {
-      const need = await calculateRepairNeed('BBH', [])
-      expect(need).toBe(0)
-    })
-
-    it('should return 0 when commodity not in repair data', async () => {
-      mockSelectWhere.mockResolvedValue([
+      const demand = await calculateLineDemand(
         {
-          repairMaterials: [{ MaterialTicker: 'INS', MaterialAmount: 100 }],
+          commodityTicker: 'BBH',
+          destinationPlanetId: 'UV-351a',
+          demandSource: 'repair',
+          demand: null,
         },
-      ])
-
-      const need = await calculateRepairNeed('BBH', [1])
-      expect(need).toBe(0)
-    })
-  })
-
-  describe('recalculateSingleDemandOrder', () => {
-    it('should return null for manual orders', async () => {
-      mockSelectWhere.mockResolvedValueOnce([
-        { id: 1, sourceMode: 'manual', commodityTicker: 'CAF', locationId: 'BEN', userId: 1 },
-      ])
-
-      const result = await recalculateSingleDemandOrder(1)
-      expect(result).toBeNull()
+        1,
+        0
+      )
+      expect(demand).toBe(150)
     })
 
-    it('should return null for non-existent orders', async () => {
-      mockSelectWhere.mockResolvedValueOnce([])
+    it('should return 0 when planet not found', async () => {
+      mockSelectWhere.mockResolvedValueOnce([]) // planet not found
 
-      const result = await recalculateSingleDemandOrder(999)
-      expect(result).toBeNull()
-    })
-
-    it('should calculate burn demand and subtract stock', async () => {
-      // Order lookup
-      mockSelectWhere.mockResolvedValueOnce([
+      const demand = await calculateLineDemand(
         {
-          id: 1,
-          sourceMode: 'demand',
-          demandSource: 'burn',
-          targetDays: 30,
           commodityTicker: 'CAF',
-          locationId: 'BEN',
-          userId: 1,
-          quantity: 0,
+          destinationPlanetId: 'UNKNOWN',
+          demandSource: 'consumables',
+          demand: null,
         },
-      ])
-
-      // Linked planets
-      mockSelectWhere.mockResolvedValueOnce([{ userPlanetId: 10 }, { userPlanetId: 11 }])
-
-      // Burn data (from calculateBurnNeed)
-      mockSelectWhere.mockResolvedValueOnce([
-        {
-          needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: 72.15, Essential: false }],
-        },
-        {
-          needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: 72.15, Essential: false }],
-        },
-      ])
-
-      // Stock at location (from getStockAtLocation)
-      mockSelectWhere.mockResolvedValueOnce([{ quantity: 2000 }])
-
-      const result = await recalculateSingleDemandOrder(1)
-
-      // ceil((72.15 + 72.15) * 30) - 2000 = 4329 - 2000 = 2329
-      expect(result).toBe(2329)
-    })
-
-    it('should return 0 when stock exceeds need', async () => {
-      mockSelectWhere.mockResolvedValueOnce([
-        {
-          id: 1,
-          sourceMode: 'demand',
-          demandSource: 'burn',
-          targetDays: 7,
-          commodityTicker: 'CAF',
-          locationId: 'BEN',
-          userId: 1,
-          quantity: 100,
-        },
-      ])
-
-      mockSelectWhere.mockResolvedValueOnce([{ userPlanetId: 10 }])
-
-      // Small burn
-      mockSelectWhere.mockResolvedValueOnce([
-        { needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: 1.0, Essential: false }] },
-      ])
-
-      // Lots of stock
-      mockSelectWhere.mockResolvedValueOnce([{ quantity: 500 }])
-
-      const result = await recalculateSingleDemandOrder(1)
-
-      // ceil(1.0 * 7) - 500 = 7 - 500 = -493 → max(0, -493) = 0
-      expect(result).toBe(0)
+        1,
+        30
+      )
+      expect(demand).toBe(0)
     })
   })
 
@@ -250,6 +203,18 @@ describe('demand-calculator', () => {
       mockSelectWhere.mockResolvedValueOnce([]) // no demand orders
 
       const result = await recalculateDemandOrders(1)
+
+      expect(result.ordersProcessed).toBe(0)
+      expect(result.ordersUpdated).toBe(0)
+      expect(result.errors).toHaveLength(0)
+    })
+  })
+
+  describe('recalculateDemandReserves', () => {
+    it('should return empty result when user has no demand reserves', async () => {
+      mockSelectWhere.mockResolvedValueOnce([]) // no demand reserves
+
+      const result = await recalculateDemandReserves(1)
 
       expect(result.ordersProcessed).toBe(0)
       expect(result.ordersUpdated).toBe(0)

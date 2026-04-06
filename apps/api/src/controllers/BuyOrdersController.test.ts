@@ -33,17 +33,6 @@ vi.mock('../db/index.js', () => ({
     demandSource: 'demandSource',
     targetDays: 'targetDays',
   },
-  buyOrderPlanets: {
-    id: 'id',
-    buyOrderId: 'buyOrderId',
-    userPlanetId: 'userPlanetId',
-  },
-  fioUserPlanets: {
-    id: 'id',
-    userId: 'userId',
-    planetNaturalId: 'planetNaturalId',
-    planetName: 'planetName',
-  },
   fioCommodities: { ticker: 'ticker' },
   fioLocations: { naturalId: 'naturalId' },
   orderReservations: {
@@ -135,7 +124,6 @@ describe('BuyOrdersController', () => {
       expect(result.id).toBe(1)
       expect(result.sourceMode).toBe('manual')
       expect(result.demandSource).toBeNull()
-      expect(result.linkedPlanets).toEqual([])
       expect(result.quantity).toBe(100)
     })
 
@@ -166,29 +154,10 @@ describe('BuyOrdersController', () => {
             currency: 'ICA',
             sourceMode: 'demand',
             demandSource: 'burn',
-            planetIds: ['UV-351a'],
           },
           mockRequest
         )
       ).rejects.toThrow('targetDays must be > 0')
-    })
-
-    it('should reject demand order without planetIds', async () => {
-      await expect(
-        controller.createBuyOrder(
-          {
-            commodityTicker: 'CAF',
-            locationId: 'BEN',
-            quantity: 0,
-            price: 50,
-            currency: 'ICA',
-            sourceMode: 'demand',
-            demandSource: 'burn',
-            targetDays: 30,
-          },
-          mockRequest
-        )
-      ).rejects.toThrow('At least one planet must be linked')
     })
   })
 

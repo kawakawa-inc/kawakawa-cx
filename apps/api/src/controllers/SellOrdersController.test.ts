@@ -26,17 +26,6 @@ vi.mock('../db/index.js', () => ({
     reserveTargetDays: 'reserveTargetDays',
     updatedAt: 'updatedAt',
   },
-  sellOrderPlanets: {
-    id: 'id',
-    sellOrderId: 'sellOrderId',
-    userPlanetId: 'userPlanetId',
-  },
-  fioUserPlanets: {
-    id: 'id',
-    userId: 'userId',
-    planetNaturalId: 'planetNaturalId',
-    planetName: 'planetName',
-  },
   fioInventory: {
     userId: 'userId',
     userStorageId: 'userStorageId',
@@ -217,7 +206,7 @@ describe('SellOrdersController', () => {
         reserveSource: 'manual',
         reserveDemandSource: null,
         reserveTargetDays: null,
-        linkedPlanets: [],
+
         fioQuantity: 1000,
         availableQuantity: 1000,
         remainingQuantity: 1000,
@@ -232,7 +221,7 @@ describe('SellOrdersController', () => {
         limitMode: 'max_sell',
         limitQuantity: 200,
         reserveSource: 'manual',
-        linkedPlanets: [],
+
         fioQuantity: 500,
         availableQuantity: 200, // max_sell mode: min(500, 200)
         activeReservationCount: 0,

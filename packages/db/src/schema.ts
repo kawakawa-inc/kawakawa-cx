@@ -90,6 +90,12 @@ export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'p
 export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
 export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
 export const demandSourceEnum = pgEnum('demand_source', ['burn', 'repair'])
+export const supplyChainDemandSourceEnum = pgEnum('supply_chain_demand_source', [
+  'consumables',
+  'inputs',
+  'repair',
+])
+export const supplyChainModeEnum = pgEnum('supply_chain_mode', ['demand', 'reserve'])
 
 // ==================== SETTINGS (Generic key-value with history) ====================
 export const settings = pgTable(
@@ -494,47 +500,33 @@ export const buyOrders = pgTable(
   })
 )
 
-// ==================== BUY ORDER PLANET LINKS (for demand orders) ====================
-export const buyOrderPlanets = pgTable(
-  'buy_order_planets',
+// ==================== SUPPLY CHAIN LINES (material flow definitions) ====================
+export const supplyChainLines = pgTable(
+  'supply_chain_lines',
   {
     id: serial('id').primaryKey(),
-    buyOrderId: integer('buy_order_id')
+    userId: integer('user_id')
       .notNull()
-      .references(() => buyOrders.id, { onDelete: 'cascade' }),
-    userPlanetId: integer('user_planet_id')
+      .references(() => users.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 })
       .notNull()
-      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+      .references(() => fioCommodities.ticker),
+    sourceLocationId: varchar('source_location_id', { length: 20 })
+      .notNull()
+      .references(() => fioLocations.naturalId),
+    sourceStorageTypes: jsonb('source_storage_types').notNull(), // string[] e.g. ['STORE', 'WAREHOUSE_STORE']
+    destinationPlanetId: varchar('destination_planet_id', { length: 20 }).notNull(),
+    destinationStorageTypes: jsonb('destination_storage_types').notNull(), // string[]
+    mode: supplyChainModeEnum('mode').notNull(), // 'demand' or 'reserve'
+    demandSource: supplyChainDemandSourceEnum('demand_source'), // 'consumables' | 'inputs' | 'repair' | null
+    demand: integer('demand'), // fixed amount (overrides demandSource if set)
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    buyOrderIdx: index('buy_order_planets_buy_order_idx').on(table.buyOrderId),
-    uniqueBuyOrderPlanet: uniqueIndex('buy_order_planets_unique_idx').on(
-      table.buyOrderId,
-      table.userPlanetId
-    ),
-  })
-)
-
-// ==================== SELL ORDER PLANET LINKS (for demand reserves) ====================
-export const sellOrderPlanets = pgTable(
-  'sell_order_planets',
-  {
-    id: serial('id').primaryKey(),
-    sellOrderId: integer('sell_order_id')
-      .notNull()
-      .references(() => sellOrders.id, { onDelete: 'cascade' }),
-    userPlanetId: integer('user_planet_id')
-      .notNull()
-      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-  },
-  table => ({
-    sellOrderIdx: index('sell_order_planets_sell_order_idx').on(table.sellOrderId),
-    uniqueSellOrderPlanet: uniqueIndex('sell_order_planets_unique_idx').on(
-      table.sellOrderId,
-      table.userPlanetId
-    ),
+    userIdx: index('supply_chain_lines_user_idx').on(table.userId),
+    sourceIdx: index('supply_chain_lines_source_idx').on(table.userId, table.sourceLocationId),
+    destIdx: index('supply_chain_lines_dest_idx').on(table.userId, table.destinationPlanetId),
   })
 )
 
@@ -821,6 +813,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   passwordResetTokens: many(passwordResetTokens),
   fioUserStorage: many(fioUserStorage),
   fioUserPlanets: many(fioUserPlanets),
+  supplyChainLines: many(supplyChainLines),
   sellOrders: many(sellOrders),
   buyOrders: many(buyOrders),
   notifications: many(notifications),
@@ -927,8 +920,6 @@ export const fioUserPlanetsRelations = relations(fioUserPlanets, ({ one, many })
   buildings: many(fioPlanetBuildings),
   workforce: many(fioPlanetWorkforce),
   production: many(fioPlanetProduction),
-  buyOrderLinks: many(buyOrderPlanets),
-  sellOrderLinks: many(sellOrderPlanets),
 }))
 
 export const fioPlanetBuildingsRelations = relations(fioPlanetBuildings, ({ one }) => ({
@@ -966,18 +957,6 @@ export const sellOrdersRelations = relations(sellOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
-  linkedPlanets: many(sellOrderPlanets),
-}))
-
-export const sellOrderPlanetsRelations = relations(sellOrderPlanets, ({ one }) => ({
-  sellOrder: one(sellOrders, {
-    fields: [sellOrderPlanets.sellOrderId],
-    references: [sellOrders.id],
-  }),
-  userPlanet: one(fioUserPlanets, {
-    fields: [sellOrderPlanets.userPlanetId],
-    references: [fioUserPlanets.id],
-  }),
 }))
 
 export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
@@ -994,17 +973,20 @@ export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
-  linkedPlanets: many(buyOrderPlanets),
 }))
 
-export const buyOrderPlanetsRelations = relations(buyOrderPlanets, ({ one }) => ({
-  buyOrder: one(buyOrders, {
-    fields: [buyOrderPlanets.buyOrderId],
-    references: [buyOrders.id],
+export const supplyChainLinesRelations = relations(supplyChainLines, ({ one }) => ({
+  user: one(users, {
+    fields: [supplyChainLines.userId],
+    references: [users.id],
   }),
-  userPlanet: one(fioUserPlanets, {
-    fields: [buyOrderPlanets.userPlanetId],
-    references: [fioUserPlanets.id],
+  commodity: one(fioCommodities, {
+    fields: [supplyChainLines.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+  sourceLocation: one(fioLocations, {
+    fields: [supplyChainLines.sourceLocationId],
+    references: [fioLocations.naturalId],
   }),
 }))
 

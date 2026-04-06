@@ -1,15 +1,16 @@
 // Demand order recalculation service
-// Recalculates quantity for demand buy orders and limitQuantity for demand sell order reserves
+// Uses supply_chain_lines to calculate demand for buy orders and sell order reserves
 
 import { eq, and, inArray } from 'drizzle-orm'
 import {
   db,
   buyOrders,
-  buyOrderPlanets,
   sellOrders,
-  sellOrderPlanets,
+  supplyChainLines,
+  fioUserPlanets,
   fioPlanetWorkforce,
   fioPlanetBuildings,
+  fioPlanetProduction,
   fioInventory,
   fioUserStorage,
 } from '../db/index.js'
@@ -24,16 +25,19 @@ export interface RecalculationResult {
 }
 
 /**
- * Get current stock of a commodity at a location for a user.
- * Sums across all storage types (base store, warehouse, etc.)
+ * Get stock of a commodity at a location filtered by storage types.
  */
-export async function getStockAtLocation(
+export async function getFilteredStock(
   userId: number,
   commodityTicker: string,
-  locationId: string
+  locationId: string,
+  storageTypes: string[]
 ): Promise<number> {
   const inventory = await db
-    .select({ quantity: fioInventory.quantity })
+    .select({
+      quantity: fioInventory.quantity,
+      storageType: fioUserStorage.type,
+    })
     .from(fioInventory)
     .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
     .where(
@@ -44,107 +48,227 @@ export async function getStockAtLocation(
       )
     )
 
-  return inventory.reduce((sum, item) => sum + item.quantity, 0)
+  return inventory
+    .filter(item => storageTypes.includes(item.storageType))
+    .reduce((sum, item) => sum + item.quantity, 0)
 }
 
 /**
- * Calculate burn need for a commodity across linked planets.
- * Burns are daily rates multiplied by target days.
+ * Calculate demand for a single supply chain line based on its demandSource.
+ * Returns the calculated demand amount, or the fixed demand if set.
  */
-export async function calculateBurnNeed(
-  commodityTicker: string,
-  userPlanetIds: number[],
+export async function calculateLineDemand(
+  line: {
+    commodityTicker: string
+    destinationPlanetId: string
+    demandSource: string | null
+    demand: number | null
+  },
+  userId: number,
   targetDays: number
 ): Promise<number> {
-  if (userPlanetIds.length === 0 || targetDays <= 0) return 0
+  // Fixed demand overrides calculation
+  if (line.demand !== null) return line.demand
 
-  const workforceRows = await db
-    .select({ needs: fioPlanetWorkforce.needs })
-    .from(fioPlanetWorkforce)
-    .where(inArray(fioPlanetWorkforce.userPlanetId, userPlanetIds))
+  if (!line.demandSource) return 0
 
-  let totalRate = 0
-  for (const row of workforceRows) {
-    const needs = row.needs as {
-      MaterialTicker: string
-      UnitsPerInterval: number
-      Essential: boolean
-    }[]
+  // Resolve destinationPlanetId to userPlanetId
+  const [planet] = await db
+    .select({ id: fioUserPlanets.id })
+    .from(fioUserPlanets)
+    .where(
+      and(
+        eq(fioUserPlanets.userId, userId),
+        eq(fioUserPlanets.planetNaturalId, line.destinationPlanetId)
+      )
+    )
 
-    for (const need of needs) {
-      if (need.MaterialTicker === commodityTicker) {
-        totalRate += need.UnitsPerInterval
+  if (!planet) return 0
+
+  if (line.demandSource === 'consumables') {
+    // Workforce burn rate * target days
+    const workforceRows = await db
+      .select({ needs: fioPlanetWorkforce.needs })
+      .from(fioPlanetWorkforce)
+      .where(eq(fioPlanetWorkforce.userPlanetId, planet.id))
+
+    let totalRate = 0
+    for (const row of workforceRows) {
+      const needs = row.needs as {
+        MaterialTicker: string
+        UnitsPerInterval: number
+        Essential: boolean
+      }[]
+      for (const need of needs) {
+        if (need.MaterialTicker === line.commodityTicker) {
+          totalRate += need.UnitsPerInterval
+        }
       }
     }
+    return totalRate > 0 ? Math.ceil(totalRate * targetDays) : 0
   }
 
-  return totalRate > 0 ? Math.ceil(totalRate * targetDays) : 0
+  if (line.demandSource === 'inputs') {
+    // Production input needs
+    const productionRows = await db
+      .select({
+        condition: fioPlanetProduction.condition,
+        orders: fioPlanetProduction.orders,
+      })
+      .from(fioPlanetProduction)
+      .where(eq(fioPlanetProduction.userPlanetId, planet.id))
+
+    let totalNeed = 0
+    const hoursInPeriod = 24 * targetDays
+    for (const row of productionRows) {
+      const orders = row.orders as {
+        Recurring: boolean
+        DurationMs: number
+        Inputs: { MaterialTicker: string; MaterialAmount: number }[]
+      }[]
+      for (const order of orders) {
+        if (!order.Recurring || order.DurationMs <= 0) continue
+        const durationHours = order.DurationMs / 3_600_000
+        const runs = hoursInPeriod / durationHours
+        for (const input of order.Inputs) {
+          if (input.MaterialTicker === line.commodityTicker) {
+            totalNeed += Math.ceil(input.MaterialAmount * runs)
+          }
+        }
+      }
+    }
+    return totalNeed
+  }
+
+  if (line.demandSource === 'repair') {
+    // Repair material costs
+    const buildingRows = await db
+      .select({ repairMaterials: fioPlanetBuildings.repairMaterials })
+      .from(fioPlanetBuildings)
+      .where(eq(fioPlanetBuildings.userPlanetId, planet.id))
+
+    let totalNeed = 0
+    for (const row of buildingRows) {
+      const materials = row.repairMaterials as {
+        MaterialTicker: string
+        MaterialAmount: number
+      }[]
+      for (const mat of materials) {
+        if (mat.MaterialTicker === line.commodityTicker) {
+          totalNeed += mat.MaterialAmount
+        }
+      }
+    }
+    return totalNeed
+  }
+
+  return 0
 }
 
 /**
- * Calculate repair need for a commodity across linked planets.
- * Repair needs are absolute amounts from RepairMaterials.
+ * Calculate the deficit for a commodity at a source location using supply chain lines.
+ *
+ * deficit = max(0, total_demand - (dest_stock - reserved) - source_stock)
  */
-export async function calculateRepairNeed(
+export async function calculateDeficit(
+  userId: number,
+  sourceLocationId: string,
   commodityTicker: string,
-  userPlanetIds: number[]
+  targetDays: number
 ): Promise<number> {
-  if (userPlanetIds.length === 0) return 0
+  // Get all supply chain lines for this source + commodity
+  const lines = await db
+    .select()
+    .from(supplyChainLines)
+    .where(
+      and(
+        eq(supplyChainLines.userId, userId),
+        eq(supplyChainLines.sourceLocationId, sourceLocationId),
+        eq(supplyChainLines.commodityTicker, commodityTicker)
+      )
+    )
 
-  const buildingRows = await db
-    .select({ repairMaterials: fioPlanetBuildings.repairMaterials })
-    .from(fioPlanetBuildings)
-    .where(inArray(fioPlanetBuildings.userPlanetId, userPlanetIds))
+  if (lines.length === 0) return 0
 
-  let totalNeed = 0
-  for (const row of buildingRows) {
-    const materials = row.repairMaterials as {
-      MaterialTicker: string
-      MaterialAmount: number
-    }[]
+  const demandLines = lines.filter(l => l.mode === 'demand')
+  const reserveLines = lines.filter(l => l.mode === 'reserve')
 
-    for (const mat of materials) {
-      if (mat.MaterialTicker === commodityTicker) {
-        totalNeed += mat.MaterialAmount
-      }
-    }
+  // Sum demand from all demand lines
+  let totalDemand = 0
+  for (const line of demandLines) {
+    totalDemand += await calculateLineDemand(line, userId, targetDays)
   }
 
-  return totalNeed
+  // Sum destination stock and reserved amounts per destination
+  // Group by destination to avoid double-counting
+  const destinations = new Map<string, { storageTypes: Set<string>; reserved: number }>()
+  for (const line of [...demandLines, ...reserveLines]) {
+    const dest = destinations.get(line.destinationPlanetId) ?? {
+      storageTypes: new Set<string>(),
+      reserved: 0,
+    }
+    const lineStorageTypes = line.destinationStorageTypes as string[]
+    for (const st of lineStorageTypes) {
+      dest.storageTypes.add(st)
+    }
+    destinations.set(line.destinationPlanetId, dest)
+  }
+
+  // Add reserved amounts
+  for (const line of reserveLines) {
+    const dest = destinations.get(line.destinationPlanetId)!
+    dest.reserved += line.demand ?? 0
+  }
+
+  // Calculate available stock at destinations
+  let totalDestStock = 0
+  let totalReserved = 0
+  for (const [destPlanetId, destInfo] of destinations) {
+    const stock = await getFilteredStock(
+      userId,
+      commodityTicker,
+      destPlanetId,
+      Array.from(destInfo.storageTypes)
+    )
+    totalDestStock += stock
+    totalReserved += destInfo.reserved
+  }
+
+  // Get source stock (union of all sourceStorageTypes across lines)
+  const sourceStorageTypes = new Set<string>()
+  for (const line of lines) {
+    const lineSourceTypes = line.sourceStorageTypes as string[]
+    for (const st of lineSourceTypes) {
+      sourceStorageTypes.add(st)
+    }
+  }
+  const sourceStock = await getFilteredStock(
+    userId,
+    commodityTicker,
+    sourceLocationId,
+    Array.from(sourceStorageTypes)
+  )
+
+  return Math.max(0, totalDemand - (totalDestStock - totalReserved) - sourceStock)
 }
 
+// ==================== BUY ORDER RECALCULATION ====================
+
 /**
- * Recalculate quantity for a single demand buy order.
- * Returns the new quantity, or null if the order is not a demand order.
+ * Recalculate quantity for a single demand buy order using supply chain lines.
  */
 export async function recalculateSingleDemandOrder(orderId: number): Promise<number | null> {
   const [order] = await db.select().from(buyOrders).where(eq(buyOrders.id, orderId))
 
   if (!order || order.sourceMode !== 'demand') return null
 
-  // Get linked planet IDs
-  const links = await db
-    .select({ userPlanetId: buyOrderPlanets.userPlanetId })
-    .from(buyOrderPlanets)
-    .where(eq(buyOrderPlanets.buyOrderId, orderId))
+  const newQuantity = await calculateDeficit(
+    order.userId,
+    order.locationId,
+    order.commodityTicker,
+    order.targetDays ?? 0
+  )
 
-  const userPlanetIds = links.map(l => l.userPlanetId)
-
-  // Calculate total need based on demand source
-  let totalNeed = 0
-  if (order.demandSource === 'burn') {
-    totalNeed = await calculateBurnNeed(order.commodityTicker, userPlanetIds, order.targetDays ?? 0)
-  } else if (order.demandSource === 'repair') {
-    totalNeed = await calculateRepairNeed(order.commodityTicker, userPlanetIds)
-  }
-
-  // Get current stock at order location
-  const stock = await getStockAtLocation(order.userId, order.commodityTicker, order.locationId)
-
-  // Calculate new quantity
-  const newQuantity = Math.max(0, totalNeed - stock)
-
-  // Update if changed
   if (newQuantity !== order.quantity) {
     await db
       .update(buyOrders)
@@ -157,7 +281,6 @@ export async function recalculateSingleDemandOrder(orderId: number): Promise<num
 
 /**
  * Recalculate quantity for all demand buy orders owned by a user.
- * Called after FIO sync to update all demand orders with fresh data.
  */
 export async function recalculateDemandOrders(userId: number): Promise<RecalculationResult> {
   const result: RecalculationResult = {
@@ -166,7 +289,6 @@ export async function recalculateDemandOrders(userId: number): Promise<Recalcula
     errors: [],
   }
 
-  // Fetch all demand orders for this user
   const demandOrders = await db
     .select()
     .from(buyOrders)
@@ -189,12 +311,7 @@ export async function recalculateDemandOrders(userId: number): Promise<Recalcula
   }
 
   log.info(
-    {
-      userId,
-      processed: result.ordersProcessed,
-      updated: result.ordersUpdated,
-      errors: result.errors.length,
-    },
+    { userId, processed: result.ordersProcessed, updated: result.ordersUpdated },
     'Recalculated demand buy orders'
   )
 
@@ -205,37 +322,34 @@ export async function recalculateDemandOrders(userId: number): Promise<Recalcula
 
 /**
  * Recalculate limitQuantity for a single demand-reserve sell order.
- * Returns the new limitQuantity, or null if the order is not a demand reserve.
+ * Uses supply chain lines to determine how much to reserve.
  *
- * Formula: limitQuantity = ceil(sum(burn_rate_per_linked_planet) * targetDays)
- * (No stock offset — reserve is the raw amount to hold back)
+ * For sell order reserves, the calculation is similar but updates limitQuantity
+ * and doesn't subtract source stock (reserve is the raw demand amount).
  */
 export async function recalculateSingleDemandReserve(orderId: number): Promise<number | null> {
   const [order] = await db.select().from(sellOrders).where(eq(sellOrders.id, orderId))
 
   if (!order || order.reserveSource !== 'demand') return null
 
-  // Get linked planet IDs
-  const links = await db
-    .select({ userPlanetId: sellOrderPlanets.userPlanetId })
-    .from(sellOrderPlanets)
-    .where(eq(sellOrderPlanets.sellOrderId, orderId))
-
-  const userPlanetIds = links.map(l => l.userPlanetId)
-
-  // Calculate total need based on demand source
-  let totalNeed = 0
-  if (order.reserveDemandSource === 'burn') {
-    totalNeed = await calculateBurnNeed(
-      order.commodityTicker,
-      userPlanetIds,
-      order.reserveTargetDays ?? 0
+  // Get supply chain lines for this location + commodity
+  const lines = await db
+    .select()
+    .from(supplyChainLines)
+    .where(
+      and(
+        eq(supplyChainLines.userId, order.userId),
+        eq(supplyChainLines.sourceLocationId, order.locationId),
+        eq(supplyChainLines.commodityTicker, order.commodityTicker),
+        eq(supplyChainLines.mode, 'demand')
+      )
     )
-  } else if (order.reserveDemandSource === 'repair') {
-    totalNeed = await calculateRepairNeed(order.commodityTicker, userPlanetIds)
+
+  let totalNeed = 0
+  for (const line of lines) {
+    totalNeed += await calculateLineDemand(line, order.userId, order.reserveTargetDays ?? 0)
   }
 
-  // Update if changed (no stock offset — reserve is the raw burn/repair amount)
   if (totalNeed !== order.limitQuantity) {
     await db
       .update(sellOrders)
@@ -278,12 +392,7 @@ export async function recalculateDemandReserves(userId: number): Promise<Recalcu
   }
 
   log.info(
-    {
-      userId,
-      processed: result.ordersProcessed,
-      updated: result.ordersUpdated,
-      errors: result.errors.length,
-    },
+    { userId, processed: result.ordersProcessed, updated: result.ordersUpdated },
     'Recalculated demand sell order reserves'
   )
 

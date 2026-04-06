@@ -19,16 +19,8 @@ import type {
   SellOrderLimitMode,
   BuyOrderSourceMode,
   DemandSource,
-  LinkedPlanetInfo,
 } from '@kawakawa/types'
-import {
-  db,
-  sellOrders,
-  sellOrderPlanets,
-  fioUserPlanets,
-  fioCommodities,
-  fioLocations,
-} from '../db/index.js'
+import { db, sellOrders, fioCommodities, fioLocations } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
@@ -54,7 +46,6 @@ interface SellOrderResponse {
   reserveSource: BuyOrderSourceMode
   reserveDemandSource: DemandSource | null
   reserveTargetDays: number | null
-  linkedPlanets: LinkedPlanetInfo[]
   fioQuantity: number
   availableQuantity: number
   activeReservationCount: number
@@ -80,7 +71,6 @@ interface CreateSellOrderRequest {
   reserveSource?: BuyOrderSourceMode
   reserveDemandSource?: DemandSource
   reserveTargetDays?: number
-  planetIds?: string[] // Planet NaturalIds to link (for demand reserve)
 }
 
 interface UpdateSellOrderRequest {
@@ -91,7 +81,6 @@ interface UpdateSellOrderRequest {
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
   reserveTargetDays?: number
-  planetIds?: string[] // Replace linked planets
 }
 
 /**
@@ -106,62 +95,6 @@ function getPermissionForOrderType(orderType: OrderType): string {
  */
 function getOrderTypeDisplay(orderType: OrderType): string {
   return orderType === 'partner' ? 'partner' : 'internal'
-}
-
-/**
- * Fetch linked planets for a list of sell order IDs
- */
-async function getLinkedPlanetsForSellOrders(
-  orderIds: number[]
-): Promise<Map<number, LinkedPlanetInfo[]>> {
-  if (orderIds.length === 0) return new Map()
-
-  const links = await db
-    .select({
-      sellOrderId: sellOrderPlanets.sellOrderId,
-      userPlanetId: sellOrderPlanets.userPlanetId,
-      planetNaturalId: fioUserPlanets.planetNaturalId,
-      planetName: fioUserPlanets.planetName,
-    })
-    .from(sellOrderPlanets)
-    .innerJoin(fioUserPlanets, eq(sellOrderPlanets.userPlanetId, fioUserPlanets.id))
-
-  const map = new Map<number, LinkedPlanetInfo[]>()
-  for (const link of links) {
-    if (!orderIds.includes(link.sellOrderId)) continue
-    const planets = map.get(link.sellOrderId) ?? []
-    planets.push({
-      userPlanetId: link.userPlanetId,
-      planetNaturalId: link.planetNaturalId,
-      planetName: link.planetName,
-    })
-    map.set(link.sellOrderId, planets)
-  }
-  return map
-}
-
-/**
- * Link a sell order to planets by NaturalId
- */
-async function linkSellOrderToPlanets(
-  sellOrderId: number,
-  userId: number,
-  planetNaturalIds: string[]
-): Promise<void> {
-  if (planetNaturalIds.length === 0) return
-
-  const userPlanets = await db
-    .select({ id: fioUserPlanets.id, planetNaturalId: fioUserPlanets.planetNaturalId })
-    .from(fioUserPlanets)
-    .where(eq(fioUserPlanets.userId, userId))
-
-  const planetMap = new Map(userPlanets.map(p => [p.planetNaturalId, p.id]))
-
-  for (const naturalId of planetNaturalIds) {
-    const userPlanetId = planetMap.get(naturalId)
-    if (!userPlanetId) continue
-    await db.insert(sellOrderPlanets).values({ sellOrderId, userPlanetId })
-  }
 }
 
 @Route('sell-orders')
@@ -195,9 +128,6 @@ export class SellOrdersController extends Controller {
         limitQuantity: o.limitQuantity,
       }))
     )
-
-    // Fetch linked planets for all orders
-    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders(orders.map(o => o.id))
 
     // Batch fetch all dynamic prices in 3 queries instead of 3-5 per order
     const priceRequests = orders
@@ -249,7 +179,6 @@ export class SellOrdersController extends Controller {
         reserveSource: order.reserveSource,
         reserveDemandSource: order.reserveDemandSource,
         reserveTargetDays: order.reserveTargetDays,
-        linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
         fioQuantity: quantityInfo.fioQuantity,
         availableQuantity: quantityInfo.availableQuantity,
         activeReservationCount: quantityInfo.activeReservationCount,
@@ -307,9 +236,6 @@ export class SellOrdersController extends Controller {
       fioUploadedAt: null,
     }
 
-    // Fetch linked planets
-    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([order.id])
-
     // Calculate effective price for dynamic pricing orders
     const pricingMode: PricingMode = order.priceListCode ? 'dynamic' : 'fixed'
     let effectivePrice: number | null = null
@@ -343,7 +269,6 @@ export class SellOrdersController extends Controller {
       reserveSource: order.reserveSource,
       reserveDemandSource: order.reserveDemandSource,
       reserveTargetDays: order.reserveTargetDays,
-      linkedPlanets: linkedPlanetsMap.get(order.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -385,10 +310,6 @@ export class SellOrdersController extends Controller {
 
     // Validate demand reserve requirements
     if (reserveSource === 'demand') {
-      if (!body.planetIds || body.planetIds.length === 0) {
-        this.setStatus(400)
-        throw BadRequest('At least one planet must be linked for demand reserve orders')
-      }
       if (
         body.reserveDemandSource === 'burn' &&
         (!body.reserveTargetDays || body.reserveTargetDays <= 0)
@@ -477,11 +398,6 @@ export class SellOrdersController extends Controller {
       })
       .returning()
 
-    // Link planets for demand reserve
-    if (reserveSource === 'demand' && body.planetIds) {
-      await linkSellOrderToPlanets(newOrder.id, userId, body.planetIds)
-    }
-
     // Recalculate reserve quantity for demand orders
     if (reserveSource === 'demand') {
       await recalculateSingleDemandReserve(newOrder.id)
@@ -491,9 +407,6 @@ export class SellOrdersController extends Controller {
         .where(eq(sellOrders.id, newOrder.id))
       if (refreshed) newOrder.limitQuantity = refreshed.limitQuantity
     }
-
-    // Fetch linked planets
-    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([newOrder.id])
 
     this.setStatus(201)
 
@@ -552,7 +465,6 @@ export class SellOrdersController extends Controller {
       reserveSource: newOrder.reserveSource,
       reserveDemandSource: newOrder.reserveDemandSource,
       reserveTargetDays: newOrder.reserveTargetDays,
-      linkedPlanets: linkedPlanetsMap.get(newOrder.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -646,17 +558,8 @@ export class SellOrdersController extends Controller {
       .where(eq(sellOrders.id, id))
       .returning()
 
-    // Update linked planets if provided (demand reserve only)
-    if (body.planetIds !== undefined && existing.reserveSource === 'demand') {
-      await db.delete(sellOrderPlanets).where(eq(sellOrderPlanets.sellOrderId, id))
-      await linkSellOrderToPlanets(id, userId, body.planetIds)
-    }
-
     // Recalculate if demand reserve and relevant fields changed
-    if (
-      existing.reserveSource === 'demand' &&
-      (body.reserveTargetDays !== undefined || body.planetIds !== undefined)
-    ) {
+    if (existing.reserveSource === 'demand' && body.reserveTargetDays !== undefined) {
       await recalculateSingleDemandReserve(id)
       const [refreshed] = await db
         .select({ limitQuantity: sellOrders.limitQuantity })
@@ -664,9 +567,6 @@ export class SellOrdersController extends Controller {
         .where(eq(sellOrders.id, id))
       if (refreshed) updated.limitQuantity = refreshed.limitQuantity
     }
-
-    // Fetch linked planets
-    const linkedPlanetsMap = await getLinkedPlanetsForSellOrders([updated.id])
 
     // Use centralized function to get quantity info with proper expiration logic
     const quantityMap = await enrichSellOrdersWithQuantities([
@@ -723,7 +623,6 @@ export class SellOrdersController extends Controller {
       reserveSource: updated.reserveSource,
       reserveDemandSource: updated.reserveDemandSource,
       reserveTargetDays: updated.reserveTargetDays,
-      linkedPlanets: linkedPlanetsMap.get(updated.id) ?? [],
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,

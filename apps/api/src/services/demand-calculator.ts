@@ -1,7 +1,7 @@
 // Demand order recalculation service
 // Uses supply_chain_lines to calculate demand for buy orders and sell order reserves
 
-import { eq, and, inArray } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import {
   db,
   buyOrders,

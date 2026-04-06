@@ -2,10 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   getFilteredStock,
   calculateLineDemand,
-  calculateDeficit,
-  recalculateSingleDemandOrder,
   recalculateDemandOrders,
-  recalculateSingleDemandReserve,
   recalculateDemandReserves,
 } from './demand-calculator.js'
 

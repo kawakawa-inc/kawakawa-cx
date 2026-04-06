@@ -9,6 +9,12 @@ export type ReserveSource = 'manual' | 'demand'
 /** Demand source: burn (rate * days) or repair (absolute cost) */
 export type DemandSource = 'burn' | 'repair'
 
+/** Supply chain line mode: demand (consumption) or reserve (held stock) */
+export type SupplyChainMode = 'demand' | 'reserve'
+
+/** Supply chain demand source for auto-calculation */
+export type SupplyChainDemandSource = 'consumables' | 'inputs' | 'repair'
+
 /** Linked planet info for demand orders/reserves */
 export interface LinkedPlanetInfo {
   userPlanetId: number

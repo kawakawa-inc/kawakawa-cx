@@ -106,19 +106,3 @@ export function useUrlState<T>(options: UseUrlStateOptions<T>): Ref<T> {
 
   return state
 }
-
-/**
- * Helper to create transform for enum/union types with validation
- */
-export function createEnumTransform<T extends string>(
-  validValues: readonly T[],
-  defaultValue: T
-): { toUrl: (v: T | null) => string | null; fromUrl: (v: string | null) => T | null } {
-  return {
-    toUrl: (v: T | null) => (v === defaultValue ? null : v),
-    fromUrl: (v: string | null) => {
-      if (v == null) return null
-      return validValues.includes(v as T) ? (v as T) : null
-    },
-  }
-}

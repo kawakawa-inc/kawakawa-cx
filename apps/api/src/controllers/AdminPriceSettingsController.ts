@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Put, Request, Route, Security, Tags } from 'tsoa'
-import { AuthenticatedRequest } from '../middleware/auth.js'
+import type { JwtPayload } from '../utils/jwt.js'
 import { settingsService } from '../services/settingsService.js'
 import { type FioPriceField } from '../services/fio/sync-exchange-prices.js'
 import { parseGoogleSheetsUrl, fetchSheetAsCsv } from '../services/google-sheets/client.js'
@@ -74,10 +74,10 @@ export class AdminPriceSettingsController extends Controller {
   @Put('fio')
   @Security('jwt', ['admin.manage_users'])
   public async updateFioSettings(
-    @Request() request: AuthenticatedRequest,
+    @Request() request: { user: JwtPayload },
     @Body() body: UpdateFioSettingsRequest
   ): Promise<PriceSettingsResponse> {
-    const userId = request.user!.userId
+    const userId = request.user.userId
     const updates: Record<string, string> = {}
 
     if (body.baseUrl !== undefined) {
@@ -113,10 +113,10 @@ export class AdminPriceSettingsController extends Controller {
   @Put('google')
   @Security('jwt', ['admin.manage_users'])
   public async updateGoogleSettings(
-    @Request() request: AuthenticatedRequest,
+    @Request() request: { user: JwtPayload },
     @Body() body: UpdateGoogleSettingsRequest
   ): Promise<PriceSettingsResponse> {
-    const userId = request.user!.userId
+    const userId = request.user.userId
 
     if (body.apiKey !== undefined) {
       await settingsService.set(SETTING_KEYS.GOOGLE_SHEETS_API_KEY, body.apiKey, userId)
@@ -131,10 +131,10 @@ export class AdminPriceSettingsController extends Controller {
   @Put('kawa-sheet')
   @Security('jwt', ['admin.manage_users'])
   public async updateKawaSheetSettings(
-    @Request() request: AuthenticatedRequest,
+    @Request() request: { user: JwtPayload },
     @Body() body: UpdateKawaSheetRequest
   ): Promise<PriceSettingsResponse> {
-    const userId = request.user!.userId
+    const userId = request.user.userId
     const updates: Record<string, string> = {}
 
     if (body.url !== undefined) {

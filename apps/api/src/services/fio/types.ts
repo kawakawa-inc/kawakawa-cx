@@ -1,102 +1,5 @@
 // FIO API Types based on Swagger spec
 
-export interface FioMaterial {
-  MaterialId: string // Ticker like "H2O", "FE", etc.
-  CategoryName: string // "agricultural products", "metals", etc.
-  CategoryId: string
-  Name: string
-  Ticker: string
-  Weight: number
-  Volume: number
-  UserNameSubmitted: string
-  Timestamp: string
-}
-
-export interface FioPlanet {
-  PlanetId: string
-  PlanetNaturalId: string // Natural ID like "UV-351a"
-  PlanetName: string
-  Namer: string | null
-  NamingDataEpochMs: number
-  Nameable: boolean
-  SystemId: string
-  Gravity: number
-  MagneticField: number
-  Mass: number
-  MassEarth: number
-  OrbitSemiMajorAxis: number
-  OrbitEccentricity: number
-  OrbitInclination: number
-  OrbitRightAscension: number
-  OrbitPeriapsis: number
-  OrbitIndex: number
-  Radius: number
-  Sunlight: number
-  Surface: boolean
-  Temperature: number
-  Fertility: number
-  HasLocalMarket: boolean
-  HasChamberOfCommerce: boolean
-  HasWarehouse: boolean
-  HasAdministrationCenter: boolean
-  HasShipyard: boolean
-  FactionCode: string | null
-  FactionName: string | null
-  GovernorId: string | null
-  GovernorUserName: string | null
-  GovernorCorporationId: string | null
-  GovernorCorporationName: string | null
-  GovernorCorporationCode: string | null
-  CurrencyName: string | null
-  CurrencyCode: string | null
-  CollectorId: string | null
-  CollectorName: string | null
-  CollectorCode: string | null
-  BaseAttackProtection: number
-  UserNameSubmitted: string
-  Timestamp: string
-}
-
-export interface FioSystem {
-  SystemId: string
-  NaturalId: string // Natural ID like "UV-351"
-  Name: string
-  Type: string
-  PositionX: number
-  PositionY: number
-  PositionZ: number
-  SectorId: string
-  SubSectorId: string
-  UserNameSubmitted: string
-  Timestamp: string
-}
-
-export interface FioOrder {
-  OrderId: string
-  CompanyId: string
-  CompanyName: string
-  CompanyCode: string
-  ItemCount: number
-  ItemCost: number
-  MaterialId: string
-  MaterialName: string
-  MaterialTicker: string
-  MaterialCategory: string
-  MaterialWeight: number
-  MaterialVolume: number
-  ExchangeCode: string // "IC1", "NC1", etc.
-  ExchangeName: string
-  MMBuy: number
-  MMSell: number
-  PriceAverage: number
-  PriceAsk: number
-  PriceBid: number
-  SupplyAverage: number
-  SupplyDemand: number
-  UserNameSubmitted: string
-  Timestamp: string
-}
-
 export interface FioBuilding {
   BuildingId: string
   Name: string
@@ -140,99 +43,6 @@ export interface FioRecipeIO {
   MaterialTicker: string
   MaterialCategory: string
   Amount: number
-}
-
-export interface FioPrice {
-  MaterialId: string
-  MaterialTicker: string
-  MaterialName: string
-  ExchangeCode: string
-  MMBuy: number | null
-  MMSell: number | null
-  PriceAverage: number | null
-  PriceAsk: number | null
-  PriceBid: number | null
-  SupplyAverage: number | null
-  DemandAverage: number | null
-  Traded: number | null
-  VolumeAmount: number | null
-  PriceTimeEpochMs: number
-  UserNameSubmitted: string
-  Timestamp: string
-}
-
-// User inventory item from /csv/inventory endpoint (legacy, prefer FioStorage)
-export interface FioInventoryItem {
-  Username: string
-  NaturalId: string // Location natural ID (e.g., "UV-351a", "BEN")
-  Name: string // Location name (e.g., "Benten Station")
-  StorageType: string // e.g., "WAREHOUSE_STORE", "STORE"
-  Ticker: string // e.g., "H2O", "RAT"
-  Amount: number
-}
-
-// User site from /csv/sites endpoint
-export interface FioSite {
-  SiteId: string
-  PlanetId: string
-  PlanetNaturalId: string
-  PlanetName: string
-}
-
-// ==================== JSON API Types ====================
-
-// Storage item from /storage/{UserName} endpoint
-export interface FioStorageItem {
-  MaterialId: string
-  MaterialName: string
-  MaterialTicker: string
-  MaterialCategory: string
-  MaterialWeight: number
-  MaterialVolume: number
-  MaterialAmount: number
-  MaterialValue: number
-  MaterialValueCurrency: string
-  Type: string // "INVENTORY"
-  TotalWeight: number
-  TotalVolume: number
-}
-
-// Storage location from /storage/{UserName} endpoint
-export interface FioStorage {
-  StorageId: string
-  AddressableId: string // UUID for the location (planet/station/ship)
-  Name: string | null // Ship name if applicable
-  WeightLoad: number
-  WeightCapacity: number
-  VolumeLoad: number
-  VolumeCapacity: number
-  FixedStore: boolean
-  Type: string // "STORE", "WAREHOUSE_STORE", "SHIP_STORE", "STL_FUEL_STORE", "FTL_FUEL_STORE"
-  UserNameSubmitted: string
-  Timestamp: string // ISO timestamp of last sync from game
-  StorageItems: FioStorageItem[]
-}
-
-// User planet from /user/{UserName} endpoint
-export interface FioUserPlanet {
-  PlanetId: string // UUID
-  PlanetNaturalId: string // Natural ID like "UV-351a"
-  PlanetName: string
-}
-
-// User data from /user/{UserName} endpoint
-export interface FioUserData {
-  UserDataId: string
-  UserId: string
-  UserName: string
-  CompanyId: string
-  CompanyName: string
-  CompanyCode: string
-  CorporationId: string | null
-  CorporationName: string | null
-  CorporationCode: string | null
-  Planets: FioUserPlanet[]
-  Timestamp: string // ISO timestamp of last sync from game
 }
 
 // ==================== GroupHub API Types (undocumented) ====================
@@ -327,6 +137,11 @@ export interface FioWorkforceType {
   WorkforceNeeds: FioWorkforceNeed[]
 }
 
+// Wrapper response from /workforce/{User}/{Planet}
+export interface FioWorkforceResponse {
+  Workforces: FioWorkforceType[]
+}
+
 // ==================== Production API Types ====================
 
 // Material entry in production order inputs/outputs
@@ -346,18 +161,39 @@ export interface FioProductionOrder {
 // Production line from /production/{User}/{Planet} endpoint
 export interface FioProductionLine {
   Type: string // e.g. "chemPlant", "smelter"
+  Capacity: number // number of buildings of this type
   Condition: number // average condition of buildings of this type
   Efficiency: number // combined non-condition multiplier (CoGC, experts, etc.)
   Orders: FioProductionOrder[]
 }
 
+// ==================== Building Definition API Types ====================
+
+export interface FioBuildingDefinition {
+  Ticker: string
+  Name: string
+  AreaCost: number
+  Pioneers: number
+  Settlers: number
+  Technicians: number
+  Engineers: number
+  Scientists: number
+  BuildingCosts: { CommodityTicker: string; Amount: number }[]
+}
+
+export interface FioPlanetData {
+  PlanetNaturalId: string
+  PlanetName: string
+  BuildRequirements: { MaterialTicker: string; MaterialAmount: number }[]
+}
+
 // ==================== Rain (User Planets) API Types ====================
 
 // Planet from /rain/userplanets/{User} endpoint
+// FIO API returns { NaturalId, Name } per the spec at doc.fnar.net
 export interface FioRainPlanet {
-  PlanetId: string
-  PlanetNaturalId: string
-  PlanetName: string
+  NaturalId: string
+  Name: string
 }
 
 // Full GroupHub response

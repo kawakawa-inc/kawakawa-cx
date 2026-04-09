@@ -137,11 +137,3 @@ export function formatQuantity(
 ): string {
   return formatNumberWithSettings(Math.round(value), settings)
 }
-
-/**
- * Format a number without settings (simple wrapper).
- * Uses browser locale by default.
- */
-export function formatNumber(value: number): string {
-  return value.toLocaleString()
-}

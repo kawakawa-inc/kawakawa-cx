@@ -13,6 +13,7 @@ const mockDeleteWhere = vi.fn()
 vi.mock('../db/index.js', () => ({
   db: {
     select: vi.fn(() => ({ from: mockSelectFrom })),
+    selectDistinct: vi.fn(() => ({ from: mockSelectFrom })),
     insert: vi.fn(() => ({ values: mockInsertValues })),
     update: vi.fn(() => ({ set: mockUpdateSet })),
     delete: vi.fn(() => ({ where: mockDeleteWhere })),
@@ -35,8 +36,33 @@ vi.mock('../db/index.js', () => ({
   fioLocations: { naturalId: 'naturalId' },
   fioUserPlanets: { id: 'id', userId: 'userId', planetNaturalId: 'planetNaturalId' },
   fioPlanetWorkforce: { userPlanetId: 'userPlanetId', needs: 'needs' },
-  fioPlanetBuildings: { userPlanetId: 'userPlanetId', repairMaterials: 'repairMaterials' },
+  fioPlanetBuildings: {
+    userPlanetId: 'userPlanetId',
+    buildingTicker: 'buildingTicker',
+    buildingCreated: 'buildingCreated',
+    buildingLastRepair: 'buildingLastRepair',
+    condition: 'condition',
+    repairMaterials: 'repairMaterials',
+    reclaimableMaterials: 'reclaimableMaterials',
+  },
   fioPlanetProduction: { userPlanetId: 'userPlanetId', orders: 'orders' },
+  fioUserStorage: { userId: 'userId', locationId: 'locationId', type: 'type' },
+}))
+
+vi.mock('../services/userSettingsService.js', () => ({
+  getSetting: vi.fn().mockResolvedValue(0),
+}))
+
+const mockCalculateBuildingRepairNeeds = vi.fn()
+vi.mock('../services/supply-calculator.js', () => ({
+  calculateBuildingRepairNeeds: (...args: unknown[]) => mockCalculateBuildingRepairNeeds(...args),
+}))
+
+const mockGetBuildings = vi.fn()
+vi.mock('../services/fio/client.js', () => ({
+  FioClient: class MockFioClient {
+    getBuildings = mockGetBuildings
+  },
 }))
 
 describe('SupplyChainController', () => {
@@ -71,6 +97,13 @@ describe('SupplyChainController', () => {
     mockUpdateSet.mockReturnValue({ where: mockUpdateWhere })
     mockUpdateWhere.mockResolvedValue(undefined)
     mockDeleteWhere.mockResolvedValue(undefined)
+
+    // Default: all building tickers are repairable (tests override when needed)
+    mockGetBuildings.mockResolvedValue([
+      { Ticker: 'CHP', Pioneers: 0, Settlers: 100, Technicians: 0, Engineers: 0, Scientists: 0 },
+      { Ticker: 'FP', Pioneers: 100, Settlers: 0, Technicians: 0, Engineers: 0, Scientists: 0 },
+      { Ticker: 'COL', Pioneers: 40, Settlers: 0, Technicians: 0, Engineers: 0, Scientists: 0 },
+    ])
   })
 
   // ==================== GET /supply-chain ====================
@@ -262,7 +295,7 @@ describe('SupplyChainController', () => {
           },
           mockRequest
         )
-      ).rejects.toThrow('Demand lines require either demandSource or a fixed demand amount')
+      ).rejects.toThrow('Demand lines require either a category or a fixed demand amount')
     })
 
     it('should reject empty sourceStorageTypes', async () => {
@@ -351,9 +384,13 @@ describe('SupplyChainController', () => {
 
   describe('clearLines', () => {
     it('should delete all lines for a source-destination pair', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 1 }, { id: 2 }, { id: 3 }])
+      mockSelectWhere.mockResolvedValueOnce([
+        { id: 1, destinationStorageTypes: ['STORE'] },
+        { id: 2, destinationStorageTypes: ['STORE'] },
+        { id: 3, destinationStorageTypes: ['STORE'] },
+      ])
 
-      const result = await controller.clearLines('BEN', 'UV-351a', mockRequest)
+      const result = await controller.clearLines('BEN', 'UV-351a', undefined, mockRequest)
 
       expect(result.deleted).toBe(3)
     })
@@ -361,7 +398,7 @@ describe('SupplyChainController', () => {
     it('should return 0 when no lines to delete', async () => {
       mockSelectWhere.mockResolvedValueOnce([])
 
-      const result = await controller.clearLines('BEN', 'UNKNOWN', mockRequest)
+      const result = await controller.clearLines('BEN', 'UNKNOWN', undefined, mockRequest)
 
       expect(result.deleted).toBe(0)
     })
@@ -370,20 +407,27 @@ describe('SupplyChainController', () => {
   // ==================== POST /supply-chain/add-consumables ====================
 
   describe('addConsumableLines', () => {
-    it('should create lines for each workforce consumable material', async () => {
+    it('should create lines for each workforce consumable material with burn rate > 0', async () => {
       // Planet lookup
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
-      // Workforce data
+      // Storage types at source (BEN) and destination (UV-351a)
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'WAREHOUSE_STORE' }])
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }])
+      // Workforce data (includes zero-rate needs that should be skipped)
       mockSelectWhere.mockResolvedValueOnce([
         {
           needs: [
-            { MaterialTicker: 'DW' },
-            { MaterialTicker: 'RAT' },
-            { MaterialTicker: 'DW' }, // duplicate should be deduped
+            { MaterialTicker: 'DW', UnitsPerInterval: 42.8 },
+            { MaterialTicker: 'RAT', UnitsPerInterval: 6.0 },
+            { MaterialTicker: 'DW', UnitsPerInterval: 10.0 }, // duplicate should be deduped
+            { MaterialTicker: 'FIM', UnitsPerInterval: 0.0 }, // zero rate, should be skipped
           ],
         },
         {
-          needs: [{ MaterialTicker: 'COF' }],
+          needs: [
+            { MaterialTicker: 'COF', UnitsPerInterval: 2.5 },
+            { MaterialTicker: 'HSS', UnitsPerInterval: 0 }, // zero rate, should be skipped
+          ],
         },
       ])
       // Existing lines check (none)
@@ -408,8 +452,15 @@ describe('SupplyChainController', () => {
 
     it('should skip already existing lines', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([
-        { needs: [{ MaterialTicker: 'DW' }, { MaterialTicker: 'RAT' }] },
+        {
+          needs: [
+            { MaterialTicker: 'DW', UnitsPerInterval: 42.8 },
+            { MaterialTicker: 'RAT', UnitsPerInterval: 6.0 },
+          ],
+        },
       ])
       // DW already exists
       mockSelectWhere.mockResolvedValueOnce([{ commodityTicker: 'DW' }])
@@ -428,6 +479,8 @@ describe('SupplyChainController', () => {
 
     it('should return empty when planet has no workforce needs', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([]) // no workforce
 
       const result = await controller.addConsumableLines(
@@ -450,9 +503,13 @@ describe('SupplyChainController', () => {
       ).rejects.toThrow('Planet UNKNOWN not found')
     })
 
-    it('should use default storage types when not specified', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
-      mockSelectWhere.mockResolvedValueOnce([{ needs: [{ MaterialTicker: 'DW' }] }])
+    it('should use detected storage types when not specified', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'WAREHOUSE_STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
+      mockSelectWhere.mockResolvedValueOnce([
+        { needs: [{ MaterialTicker: 'DW', UnitsPerInterval: 42.8 }] },
+      ])
       mockSelectWhere.mockResolvedValueOnce([]) // no existing
 
       const inserted = [makeLine({ sourceStorageTypes: ['STORE'] })]
@@ -468,7 +525,9 @@ describe('SupplyChainController', () => {
 
     it('should use custom storage types when specified', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
-      mockSelectWhere.mockResolvedValueOnce([{ needs: [{ MaterialTicker: 'DW' }] }])
+      mockSelectWhere.mockResolvedValueOnce([
+        { needs: [{ MaterialTicker: 'DW', UnitsPerInterval: 42.8 }] },
+      ])
       mockSelectWhere.mockResolvedValueOnce([]) // no existing
 
       const inserted = [
@@ -496,17 +555,45 @@ describe('SupplyChainController', () => {
   // ==================== POST /supply-chain/add-repair ====================
 
   describe('addRepairLines', () => {
-    it('should create lines for each repair material', async () => {
+    it('should project repair needs forward and create lines for all materials', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      // userSettingsService.getSetting for repairDays (returns 0, so max(45,0)=45)
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
+      // Building data from DB
       mockSelectWhere.mockResolvedValueOnce([
-        { repairMaterials: [{ MaterialTicker: 'BBH' }, { MaterialTicker: 'INS' }] },
-        { repairMaterials: [{ MaterialTicker: 'BBH' }] }, // duplicate deduped
+        {
+          buildingTicker: 'CHP',
+          buildingCreated: new Date('2024-01-01'),
+          buildingLastRepair: new Date('2024-06-01'),
+          condition: '0.95',
+          repairMaterials: [{ MaterialTicker: 'BBH', MaterialAmount: 2 }],
+          reclaimableMaterials: [{ MaterialTicker: 'BBH', MaterialAmount: 10 }],
+        },
+        {
+          buildingTicker: 'FP',
+          buildingCreated: new Date('2024-01-01'),
+          buildingLastRepair: null,
+          condition: '1.0',
+          repairMaterials: [],
+          reclaimableMaterials: [{ MaterialTicker: 'MCG', MaterialAmount: 20 }],
+        },
       ])
-      mockSelectWhere.mockResolvedValueOnce([]) // no existing
+
+      // Calculator returns projected repair needs per building
+      mockCalculateBuildingRepairNeeds
+        .mockReturnValueOnce([{ ticker: 'BBH', amount: 5 }])
+        .mockReturnValueOnce([
+          { ticker: 'MCG', amount: 8 },
+          { ticker: 'INS', amount: 3 },
+        ])
+
+      mockSelectWhere.mockResolvedValueOnce([]) // no existing lines
 
       const inserted = [
         makeLine({ id: 1, commodityTicker: 'BBH', demandSource: 'repair' as const }),
-        makeLine({ id: 2, commodityTicker: 'INS', demandSource: 'repair' as const }),
+        makeLine({ id: 2, commodityTicker: 'MCG', demandSource: 'repair' as const }),
+        makeLine({ id: 3, commodityTicker: 'INS', demandSource: 'repair' as const }),
       ]
       mockInsertReturning.mockResolvedValueOnce(inserted)
 
@@ -515,12 +602,17 @@ describe('SupplyChainController', () => {
         mockRequest
       )
 
-      expect(result.created).toBe(2)
+      expect(result.created).toBe(3)
       expect(result.skipped).toBe(0)
+      // Verify calculator was called with 45 days projection (max(45, 0))
+      expect(mockCalculateBuildingRepairNeeds).toHaveBeenCalledTimes(2)
+      expect(mockCalculateBuildingRepairNeeds.mock.calls[0][1]).toBe(45)
     })
 
     it('should return empty when no buildings', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([]) // no buildings
 
       const result = await controller.addRepairLines(
@@ -530,6 +622,55 @@ describe('SupplyChainController', () => {
 
       expect(result.created).toBe(0)
     })
+
+    it('should skip infrastructure buildings without workforce', async () => {
+      // PSL has no workforce requirement
+      mockGetBuildings.mockResolvedValueOnce([
+        { Ticker: 'CHP', Pioneers: 0, Settlers: 100, Technicians: 0, Engineers: 0, Scientists: 0 },
+        { Ticker: 'PSL', Pioneers: 0, Settlers: 0, Technicians: 0, Engineers: 0, Scientists: 0 },
+      ])
+
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
+      mockSelectWhere.mockResolvedValueOnce([
+        {
+          buildingTicker: 'CHP',
+          buildingCreated: new Date('2024-01-01'),
+          buildingLastRepair: null,
+          condition: '0.9',
+          repairMaterials: [{ MaterialTicker: 'BBH', MaterialAmount: 5 }],
+          reclaimableMaterials: [{ MaterialTicker: 'BBH', MaterialAmount: 10 }],
+        },
+        {
+          buildingTicker: 'PSL',
+          buildingCreated: new Date('2024-01-01'),
+          buildingLastRepair: null,
+          condition: '0.9',
+          repairMaterials: [{ MaterialTicker: 'LSE', MaterialAmount: 5 }],
+          reclaimableMaterials: [{ MaterialTicker: 'LSE', MaterialAmount: 20 }],
+        },
+      ])
+
+      // Only CHP should be calculated, PSL skipped
+      mockCalculateBuildingRepairNeeds.mockReturnValueOnce([{ ticker: 'BBH', amount: 5 }])
+
+      mockSelectWhere.mockResolvedValueOnce([]) // no existing lines
+
+      const inserted = [
+        makeLine({ id: 1, commodityTicker: 'BBH', demandSource: 'repair' as const }),
+      ]
+      mockInsertReturning.mockResolvedValueOnce(inserted)
+
+      const result = await controller.addRepairLines(
+        { sourceLocationId: 'BEN', destinationPlanetId: 'UV-351a' },
+        mockRequest
+      )
+
+      expect(result.created).toBe(1)
+      // Calculator only called for CHP, not PSL
+      expect(mockCalculateBuildingRepairNeeds).toHaveBeenCalledTimes(1)
+    })
   })
 
   // ==================== POST /supply-chain/add-inputs ====================
@@ -537,6 +678,8 @@ describe('SupplyChainController', () => {
   describe('addInputLines', () => {
     it('should create lines for production input materials from recurring orders', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([
         {
           orders: [
@@ -569,7 +712,9 @@ describe('SupplyChainController', () => {
     })
 
     it('should skip non-recurring orders', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([
         {
           orders: [{ Recurring: false, Inputs: [{ MaterialTicker: 'H2O' }] }],
@@ -585,7 +730,9 @@ describe('SupplyChainController', () => {
     })
 
     it('should return empty when no production lines', async () => {
-      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // dest storage
       mockSelectWhere.mockResolvedValueOnce([]) // no production
 
       const result = await controller.addInputLines(

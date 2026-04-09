@@ -14,6 +14,7 @@ import {
   uniqueIndex,
   index,
   jsonb,
+  foreignKey,
 } from 'drizzle-orm/pg-core'
 import { relations } from 'drizzle-orm'
 
@@ -94,6 +95,8 @@ export const supplyChainDemandSourceEnum = pgEnum('supply_chain_demand_source', 
   'consumables',
   'inputs',
   'repair',
+  'government',
+  'other',
 ])
 export const supplyChainModeEnum = pgEnum('supply_chain_mode', ['demand', 'reserve'])
 
@@ -388,6 +391,7 @@ export const fioPlanetBuildings = pgTable(
     condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
     repairMaterials: jsonb('repair_materials').notNull(), // FioSiteMaterial[]
     reclaimableMaterials: jsonb('reclaimable_materials').notNull(), // FioSiteMaterial[]
+    constructionCosts: jsonb('construction_costs').notNull(), // { MaterialTicker, MaterialAmount }[] — true CC including env materials
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   table => ({
@@ -423,6 +427,7 @@ export const fioPlanetProduction = pgTable(
       .notNull()
       .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
     lineType: varchar('line_type', { length: 40 }).notNull(),
+    capacity: integer('capacity').notNull().default(0),
     condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
     efficiency: decimal('efficiency', { precision: 6, scale: 4 }).notNull(),
     orders: jsonb('orders').notNull(), // FioProductionOrder[]
@@ -508,12 +513,8 @@ export const supplyChainLines = pgTable(
     userId: integer('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    commodityTicker: varchar('commodity_ticker', { length: 10 })
-      .notNull()
-      .references(() => fioCommodities.ticker),
-    sourceLocationId: varchar('source_location_id', { length: 20 })
-      .notNull()
-      .references(() => fioLocations.naturalId),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    sourceLocationId: varchar('source_location_id', { length: 20 }).notNull(),
     sourceStorageTypes: jsonb('source_storage_types').notNull(), // string[] e.g. ['STORE', 'WAREHOUSE_STORE']
     destinationPlanetId: varchar('destination_planet_id', { length: 20 }).notNull(),
     destinationStorageTypes: jsonb('destination_storage_types').notNull(), // string[]
@@ -527,6 +528,16 @@ export const supplyChainLines = pgTable(
     userIdx: index('supply_chain_lines_user_idx').on(table.userId),
     sourceIdx: index('supply_chain_lines_source_idx').on(table.userId, table.sourceLocationId),
     destIdx: index('supply_chain_lines_dest_idx').on(table.userId, table.destinationPlanetId),
+    commodityFk: foreignKey({
+      name: 'scl_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    sourceLocationFk: foreignKey({
+      name: 'scl_source_location_fk',
+      columns: [table.sourceLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
   })
 )
 

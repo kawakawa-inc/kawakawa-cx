@@ -113,6 +113,13 @@
       "when": 1775409981500,
       "tag": "0015_small_jack_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1775761590026,
+      "tag": "0016_elite_scourge",
+      "breakpoints": true
     }
   ]
 }

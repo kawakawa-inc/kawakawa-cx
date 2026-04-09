@@ -23,7 +23,7 @@ import {
 } from '../db/index.js'
 import { eq, and, or, isNull, ilike } from 'drizzle-orm'
 import { NotFound, BadRequest } from '../utils/errors.js'
-import { AuthenticatedRequest } from '../middleware/auth.js'
+import type { JwtPayload } from '../utils/jwt.js'
 import type { AdjustmentType } from '../services/price-calculator.js'
 
 interface PriceAdjustmentResponse {
@@ -293,7 +293,7 @@ export class PriceAdjustmentsController extends Controller {
   @SuccessResponse('201', 'Created')
   public async createAdjustment(
     @Body() body: CreatePriceAdjustmentRequest,
-    @Request() request: AuthenticatedRequest
+    @Request() request: { user: JwtPayload }
   ): Promise<PriceAdjustmentResponse> {
     const priceListCode = body.priceListCode?.toUpperCase() ?? null
     const commodityTicker = body.commodityTicker?.toUpperCase() ?? null
@@ -354,7 +354,7 @@ export class PriceAdjustmentsController extends Controller {
         isActive: body.isActive ?? true,
         effectiveFrom: body.effectiveFrom ? new Date(body.effectiveFrom) : null,
         effectiveUntil: body.effectiveUntil ? new Date(body.effectiveUntil) : null,
-        createdByUserId: request.user!.userId,
+        createdByUserId: request.user.userId,
       })
       .returning({ id: priceAdjustments.id })
 

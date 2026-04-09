@@ -296,28 +296,3 @@ export async function syncUserInventory(
     return result
   }
 }
-
-/**
- * Get a user's synced FIO inventory with storage and location details
- */
-export async function getUserFioInventory(userId: number) {
-  return db
-    .select({
-      id: fioInventory.id,
-      commodityTicker: fioInventory.commodityTicker,
-      quantity: fioInventory.quantity,
-      // Storage info
-      storageId: fioUserStorage.storageId,
-      storageType: fioUserStorage.type,
-      fioUploadedAt: fioUserStorage.fioUploadedAt,
-      lastSyncedAt: fioUserStorage.lastSyncedAt,
-      // Location info
-      locationId: fioUserStorage.locationId,
-      locationName: fioLocations.name,
-      locationType: fioLocations.type,
-    })
-    .from(fioInventory)
-    .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
-    .leftJoin(fioLocations, eq(fioUserStorage.locationId, fioLocations.naturalId))
-    .where(eq(fioUserStorage.userId, userId))
-}

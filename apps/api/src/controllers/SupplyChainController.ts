@@ -10,15 +10,17 @@ import {
   Request,
   Body,
   Path,
+  Query,
   SuccessResponse,
 } from 'tsoa'
-import type { SupplyChainMode, SupplyChainDemandSource } from '@kawakawa/types'
+import type { SupplyChainMode, SupplyChainDemandSource, BuildingData } from '@kawakawa/types'
 import {
   db,
   supplyChainLines,
   fioCommodities,
   fioLocations,
   fioUserPlanets,
+  fioUserStorage,
   fioPlanetWorkforce,
   fioPlanetBuildings,
   fioPlanetProduction,
@@ -26,6 +28,10 @@ import {
 import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
+import { calculateBuildingRepairNeeds } from '../services/supply-calculator.js'
+import { FioClient } from '../services/fio/client.js'
+import type { FioBuilding } from '../services/fio/types.js'
+import * as userSettingsService from '../services/userSettingsService.js'
 
 // ==================== Request/Response Types ====================
 
@@ -73,9 +79,14 @@ interface BulkAddLinesResponse {
   lines: SupplyChainLineResponse[]
 }
 
+interface StorageLocationInfo {
+  locationId: string
+  storageTypes: string[]
+}
+
 // ==================== Helpers ====================
 
-const DEFAULT_STORAGE_TYPES = ['STORE']
+const FALLBACK_STORAGE_TYPES = ['STORE']
 
 function toLineResponse(line: typeof supplyChainLines.$inferSelect): SupplyChainLineResponse {
   return {
@@ -134,6 +145,37 @@ export class SupplyChainController extends Controller {
   }
 
   /**
+   * Get all locations where the user has storage, with their available storage types.
+   * Used to populate source/destination storage type selectors.
+   */
+  @Get('locations')
+  public async getStorageLocations(
+    @Request() request: { user: JwtPayload }
+  ): Promise<StorageLocationInfo[]> {
+    const rows = await db
+      .selectDistinct({
+        locationId: fioUserStorage.locationId,
+        type: fioUserStorage.type,
+      })
+      .from(fioUserStorage)
+      .where(eq(fioUserStorage.userId, request.user.userId))
+
+    // Group types by location (skip rows without a location)
+    const map = new Map<string, string[]>()
+    for (const row of rows) {
+      if (!row.locationId) continue
+      const types = map.get(row.locationId) ?? []
+      types.push(row.type)
+      map.set(row.locationId, types)
+    }
+
+    return [...map.entries()].map(([locationId, storageTypes]) => ({
+      locationId,
+      storageTypes,
+    }))
+  }
+
+  /**
    * Create a new supply chain line
    */
   @Post('lines')
@@ -163,7 +205,13 @@ export class SupplyChainController extends Controller {
       throw BadRequest('Reserve lines cannot have a demandSource')
     }
     if (body.mode === 'demand' && !body.demandSource && body.demand == null) {
-      throw BadRequest('Demand lines require either demandSource or a fixed demand amount')
+      throw BadRequest('Demand lines require either a category or a fixed demand amount')
+    }
+    if (
+      (body.demandSource === 'government' || body.demandSource === 'other') &&
+      body.demand == null
+    ) {
+      throw BadRequest('Government and Other categories require a fixed demand amount')
     }
 
     if (body.sourceStorageTypes.length === 0) {
@@ -253,18 +301,23 @@ export class SupplyChainController extends Controller {
   }
 
   /**
-   * Clear all supply chain lines for a source-destination pair
+   * Clear supply chain lines for a source-destination pair.
+   * Optionally filter by destination storage types (comma-separated).
    */
   @Delete('source/{sourceLocationId}/{destinationPlanetId}')
   public async clearLines(
     @Path() sourceLocationId: string,
     @Path() destinationPlanetId: string,
-    @Request() request: { user: JwtPayload }
+    @Query() storageTypes?: string,
+    @Request() request?: { user: JwtPayload }
   ): Promise<{ deleted: number }> {
-    const userId = request.user.userId
+    const userId = request!.user.userId
 
-    const toDelete = await db
-      .select({ id: supplyChainLines.id })
+    const candidates = await db
+      .select({
+        id: supplyChainLines.id,
+        destinationStorageTypes: supplyChainLines.destinationStorageTypes,
+      })
       .from(supplyChainLines)
       .where(
         and(
@@ -274,16 +327,17 @@ export class SupplyChainController extends Controller {
         )
       )
 
-    if (toDelete.length > 0) {
-      await db
-        .delete(supplyChainLines)
-        .where(
-          and(
-            eq(supplyChainLines.userId, userId),
-            eq(supplyChainLines.sourceLocationId, sourceLocationId),
-            eq(supplyChainLines.destinationPlanetId, destinationPlanetId)
-          )
+    const filterTypes = storageTypes ? new Set(storageTypes.split(',')) : null
+    const toDelete = filterTypes
+      ? candidates.filter(c =>
+          (c.destinationStorageTypes as string[]).some(t => filterTypes.has(t))
         )
+      : candidates
+
+    if (toDelete.length > 0) {
+      for (const row of toDelete) {
+        await db.delete(supplyChainLines).where(eq(supplyChainLines.id, row.id))
+      }
     }
 
     return { deleted: toDelete.length }
@@ -303,10 +357,12 @@ export class SupplyChainController extends Controller {
     @Request() request: { user: JwtPayload }
   ): Promise<BulkAddLinesResponse> {
     const userId = request.user.userId
-    const sourceStorageTypes = body.sourceStorageTypes ?? DEFAULT_STORAGE_TYPES
-    const destinationStorageTypes = body.destinationStorageTypes ?? DEFAULT_STORAGE_TYPES
-
     const planet = await this.resolveUserPlanet(userId, body.destinationPlanetId)
+    const sourceStorageTypes =
+      body.sourceStorageTypes ?? (await this.getStorageTypesAt(userId, body.sourceLocationId))
+    const destinationStorageTypes =
+      body.destinationStorageTypes ??
+      (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
     // Get workforce needs
     const workforceRows = await db
@@ -314,12 +370,14 @@ export class SupplyChainController extends Controller {
       .from(fioPlanetWorkforce)
       .where(eq(fioPlanetWorkforce.userPlanetId, planet.id))
 
-    // Extract unique material tickers
+    // Extract unique material tickers (only where burn rate > 0)
     const tickers = new Set<string>()
     for (const row of workforceRows) {
-      const needs = row.needs as { MaterialTicker: string }[]
+      const needs = row.needs as { MaterialTicker: string; UnitsPerInterval: number }[]
       for (const need of needs) {
-        tickers.add(need.MaterialTicker)
+        if (need.UnitsPerInterval > 0) {
+          tickers.add(need.MaterialTicker)
+        }
       }
     }
 
@@ -351,22 +409,54 @@ export class SupplyChainController extends Controller {
     @Request() request: { user: JwtPayload }
   ): Promise<BulkAddLinesResponse> {
     const userId = request.user.userId
-    const sourceStorageTypes = body.sourceStorageTypes ?? DEFAULT_STORAGE_TYPES
-    const destinationStorageTypes = body.destinationStorageTypes ?? DEFAULT_STORAGE_TYPES
-
     const planet = await this.resolveUserPlanet(userId, body.destinationPlanetId)
+    const sourceStorageTypes =
+      body.sourceStorageTypes ?? (await this.getStorageTypesAt(userId, body.sourceLocationId))
+    const destinationStorageTypes =
+      body.destinationStorageTypes ??
+      (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
-    // Get building repair materials
+    // Project repair needs forward to determine all possible material tickers.
+    // Use max(45, user's repairDays) so we catch materials even for healthy buildings.
+    // Only include buildings with workforce (infra like PSL, STO don't need repairs).
+    const userRepairDays =
+      ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
+    const projectionDays = Math.max(45, userRepairDays)
+    const now = new Date()
+
+    const repairableTickers = await this.getRepairableBuildingTickers()
+
     const buildingRows = await db
-      .select({ repairMaterials: fioPlanetBuildings.repairMaterials })
+      .select({
+        buildingTicker: fioPlanetBuildings.buildingTicker,
+        buildingCreated: fioPlanetBuildings.buildingCreated,
+        buildingLastRepair: fioPlanetBuildings.buildingLastRepair,
+        condition: fioPlanetBuildings.condition,
+        repairMaterials: fioPlanetBuildings.repairMaterials,
+        reclaimableMaterials: fioPlanetBuildings.reclaimableMaterials,
+      })
       .from(fioPlanetBuildings)
       .where(eq(fioPlanetBuildings.userPlanetId, planet.id))
 
     const tickers = new Set<string>()
     for (const row of buildingRows) {
-      const materials = row.repairMaterials as { MaterialTicker: string }[]
-      for (const mat of materials) {
-        tickers.add(mat.MaterialTicker)
+      if (!repairableTickers.has(row.buildingTicker)) continue
+
+      const building: BuildingData = {
+        buildingTicker: row.buildingTicker,
+        buildingCreated: row.buildingCreated,
+        buildingLastRepair: row.buildingLastRepair,
+        condition: Number(row.condition),
+        repairMaterials: (
+          row.repairMaterials as { MaterialTicker: string; MaterialAmount: number }[]
+        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
+        reclaimableMaterials: (
+          row.reclaimableMaterials as { MaterialTicker: string; MaterialAmount: number }[]
+        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
+      }
+      const needs = calculateBuildingRepairNeeds(building, projectionDays, now)
+      for (const need of needs) {
+        tickers.add(need.ticker)
       }
     }
 
@@ -398,10 +488,12 @@ export class SupplyChainController extends Controller {
     @Request() request: { user: JwtPayload }
   ): Promise<BulkAddLinesResponse> {
     const userId = request.user.userId
-    const sourceStorageTypes = body.sourceStorageTypes ?? DEFAULT_STORAGE_TYPES
-    const destinationStorageTypes = body.destinationStorageTypes ?? DEFAULT_STORAGE_TYPES
-
     const planet = await this.resolveUserPlanet(userId, body.destinationPlanetId)
+    const sourceStorageTypes =
+      body.sourceStorageTypes ?? (await this.getStorageTypesAt(userId, body.sourceLocationId))
+    const destinationStorageTypes =
+      body.destinationStorageTypes ??
+      (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
     // Get production inputs from recurring orders
     const productionRows = await db
@@ -457,6 +549,36 @@ export class SupplyChainController extends Controller {
     }
 
     return planet
+  }
+
+  /**
+   * Get storage types the user has at a given location.
+   * Falls back to ['STORE'] if no storage found.
+   */
+  private async getStorageTypesAt(userId: number, locationId: string): Promise<string[]> {
+    const rows = await db
+      .selectDistinct({ type: fioUserStorage.type })
+      .from(fioUserStorage)
+      .where(and(eq(fioUserStorage.userId, userId), eq(fioUserStorage.locationId, locationId)))
+
+    return rows.length > 0 ? rows.map(r => r.type) : FALLBACK_STORAGE_TYPES
+  }
+
+  /**
+   * Fetch building definitions from FIO and return tickers that have workforce > 0
+   * (infrastructure buildings like PSL, STO don't need repairs).
+   */
+  private async getRepairableBuildingTickers(): Promise<Set<string>> {
+    const client = new FioClient()
+    const buildings = (await client.getBuildings()) as FioBuilding[]
+    const repairable = new Set<string>()
+    for (const b of buildings) {
+      const totalWorkforce = b.Pioneers + b.Settlers + b.Technicians + b.Engineers + b.Scientists
+      if (totalWorkforce > 0) {
+        repairable.add(b.Ticker)
+      }
+    }
+    return repairable
   }
 
   private async bulkInsertLines(

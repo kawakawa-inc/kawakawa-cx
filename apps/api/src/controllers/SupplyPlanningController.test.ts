@@ -4,6 +4,7 @@ import { db } from '../db/index.js'
 import * as syncUserPlanetsModule from '../services/fio/sync-user-planets.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 import * as supplyCalculator from '../services/supply-calculator.js'
+import * as demandCalculator from '../services/demand-calculator.js'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -17,6 +18,14 @@ vi.mock('../db/index.js', () => ({
     planetName: 'planetName',
     lastSyncedAt: 'lastSyncedAt',
   },
+  supplyChainLines: {
+    userId: 'userId',
+  },
+}))
+
+vi.mock('../services/demand-calculator.js', () => ({
+  calculateLineDemand: vi.fn(),
+  getFilteredStock: vi.fn(),
 }))
 
 vi.mock('../services/fio/sync-user-planets.js', () => ({
@@ -425,6 +434,132 @@ describe('SupplyPlanningController', () => {
 
       expect(result.planetId).toBe('UV-351a')
       expect(supplyCalculator.calculatePlanetSupply).toHaveBeenCalled()
+    })
+  })
+
+  describe('getDashboard', () => {
+    function setupDashboardSettings() {
+      vi.mocked(userSettingsService.getSetting)
+        .mockResolvedValueOnce(7) // supply.burnDays
+        .mockResolvedValueOnce(0) // supply.repairDays
+    }
+
+    it('should return empty dashboard when no supply chain lines', async () => {
+      setupDashboardSettings()
+      // First select: supply chain lines
+      mockSelect.where.mockResolvedValueOnce([])
+
+      const result = await controller.getDashboard(mockRequest)
+
+      expect(result.settings).toEqual({ burnDays: 7, repairDays: 0, conditionMode: 'max' })
+      expect(result.sources).toHaveLength(0)
+      expect(result.materials).toHaveLength(0)
+    })
+
+    it('should build dashboard with source, destination, and materials', async () => {
+      setupDashboardSettings()
+
+      // Supply chain lines
+      mockSelect.where.mockResolvedValueOnce([
+        {
+          id: 1,
+          userId: 1,
+          commodityTicker: 'DW',
+          sourceLocationId: 'BEN',
+          sourceStorageTypes: ['STORE'],
+          destinationPlanetId: 'UV-351a',
+          destinationStorageTypes: ['STORE'],
+          mode: 'demand',
+          demandSource: 'consumables',
+          demand: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 2,
+          userId: 1,
+          commodityTicker: 'RAT',
+          sourceLocationId: 'BEN',
+          sourceStorageTypes: ['STORE'],
+          destinationPlanetId: 'UV-351a',
+          destinationStorageTypes: ['STORE'],
+          mode: 'demand',
+          demandSource: 'consumables',
+          demand: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ])
+
+      // Planet names lookup
+      mockSelect.where.mockResolvedValueOnce([{ planetNaturalId: 'UV-351a', planetName: 'Katoa' }])
+
+      // Mock demand calculations
+      vi.mocked(demandCalculator.calculateLineDemand)
+        .mockResolvedValueOnce(210) // DW burn
+        .mockResolvedValueOnce(90) // RAT burn
+
+      // Mock stock queries (destination DW, destination RAT, source DW, source RAT)
+      vi.mocked(demandCalculator.getFilteredStock)
+        .mockResolvedValueOnce(50) // DW at destination
+        .mockResolvedValueOnce(20) // RAT at destination
+        .mockResolvedValueOnce(100) // DW at source
+        .mockResolvedValueOnce(30) // RAT at source
+
+      const result = await controller.getDashboard(mockRequest)
+
+      expect(result.sources).toHaveLength(1)
+      expect(result.sources[0].sourceLocationId).toBe('BEN')
+      expect(result.sources[0].destinations).toHaveLength(1)
+      expect(result.sources[0].destinations[0].planetName).toBe('Katoa')
+      expect(result.sources[0].destinations[0].burn).toHaveLength(2)
+      expect(result.sources[0].aggregatedNeed['DW']).toBe(210)
+      expect(result.sources[0].aggregatedNeed['RAT']).toBe(90)
+      // gap = need - destStock - sourceStock
+      expect(result.sources[0].gap['DW']).toBe(Math.max(0, 210 - 50 - 100)) // 60
+      expect(result.sources[0].gap['RAT']).toBe(Math.max(0, 90 - 20 - 30)) // 40
+
+      expect(result.materials).toHaveLength(2)
+      // Materials sorted by gap descending
+      const dwMat = result.materials.find(m => m.ticker === 'DW')!
+      expect(dwMat.burnNeed).toBe(210)
+      expect(dwMat.totalNeed).toBe(210)
+      expect(dwMat.sources).toContain('BEN')
+    })
+
+    it('should handle repair lines', async () => {
+      setupDashboardSettings()
+
+      mockSelect.where.mockResolvedValueOnce([
+        {
+          id: 1,
+          userId: 1,
+          commodityTicker: 'BBH',
+          sourceLocationId: 'BEN',
+          sourceStorageTypes: ['STORE'],
+          destinationPlanetId: 'UV-351a',
+          destinationStorageTypes: ['STORE'],
+          mode: 'demand',
+          demandSource: 'repair',
+          demand: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ])
+
+      mockSelect.where.mockResolvedValueOnce([{ planetNaturalId: 'UV-351a', planetName: 'Katoa' }])
+
+      vi.mocked(demandCalculator.calculateLineDemand).mockResolvedValueOnce(150)
+      vi.mocked(demandCalculator.getFilteredStock)
+        .mockResolvedValueOnce(0) // dest stock
+        .mockResolvedValueOnce(0) // source stock
+
+      const result = await controller.getDashboard(mockRequest)
+
+      expect(result.sources[0].destinations[0].repair).toEqual([{ ticker: 'BBH', need: 150 }])
+      const mat = result.materials.find(m => m.ticker === 'BBH')!
+      expect(mat.repairNeed).toBe(150)
+      expect(mat.gap).toBe(150)
     })
   })
 })

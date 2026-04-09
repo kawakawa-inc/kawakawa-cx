@@ -139,7 +139,23 @@ export class FioClient {
     const params: Record<string, string> = {}
     if (includeCosts) params.include_costs = 'true'
     if (includeRecipes) params.include_recipes = 'true'
-    return this.fetchJson('/building', params)
+    return this.fetchJson('/building/allbuildings', params)
+  }
+
+  /**
+   * Fetch a single building definition (public, no auth).
+   * Returns BuildingCosts, AreaCost, workforce counts, etc.
+   */
+  async getBuildingDefinition<T>(ticker: string): Promise<T> {
+    return this.fetchJson(`/building/${encodeURIComponent(ticker)}`) as Promise<T>
+  }
+
+  /**
+   * Fetch planet data (public, no auth).
+   * Returns BuildRequirements and other planet info.
+   */
+  async getPlanetData<T>(planetId: string): Promise<T> {
+    return this.fetchJson(`/planet/${encodeURIComponent(planetId)}`) as Promise<T>
   }
 
   /**

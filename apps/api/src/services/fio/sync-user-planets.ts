@@ -12,13 +12,72 @@ import { FioClient } from './client.js'
 import type {
   FioRainPlanet,
   FioSiteResponse,
-  FioWorkforceType,
+  FioWorkforceResponse,
   FioProductionLine,
+  FioBuildingDefinition,
+  FioPlanetData,
 } from './types.js'
 import type { SyncResult } from './sync-types.js'
 import { createLogger } from '../../utils/logger.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'user-planets' })
+
+// Cache building definitions during a sync run (static game data)
+const buildingDefCache = new Map<string, FioBuildingDefinition>()
+let cachedCmArea: number | null = null
+
+async function getBuildingDef(
+  client: FioClient,
+  ticker: string
+): Promise<FioBuildingDefinition | null> {
+  if (buildingDefCache.has(ticker)) return buildingDefCache.get(ticker)!
+  try {
+    const def = await client.getBuildingDefinition<FioBuildingDefinition>(ticker)
+    buildingDefCache.set(ticker, def)
+    return def
+  } catch {
+    return null
+  }
+}
+
+async function getCmArea(client: FioClient): Promise<number> {
+  if (cachedCmArea !== null) return cachedCmArea
+  const cm = await getBuildingDef(client, 'CM')
+  cachedCmArea = cm?.AreaCost ?? 25 // 25 is the known CM area
+  return cachedCmArea
+}
+
+/**
+ * Compute true construction costs for a building.
+ * = base building materials + environmental materials scaled by building area.
+ */
+function computeConstructionCosts(
+  buildingDef: FioBuildingDefinition | null,
+  planetBuildReqs: Map<string, number>,
+  cmArea: number
+): { MaterialTicker: string; MaterialAmount: number }[] {
+  const costs = new Map<string, number>()
+
+  // Base building materials
+  if (buildingDef) {
+    for (const cost of buildingDef.BuildingCosts) {
+      costs.set(cost.CommodityTicker, (costs.get(cost.CommodityTicker) ?? 0) + cost.Amount)
+    }
+
+    // Environmental materials: floor(planet_req * building_area / cm_area)
+    const area = buildingDef.AreaCost
+    for (const [ticker, amount] of planetBuildReqs) {
+      const envCost = Math.floor((amount * area) / cmArea)
+      if (envCost <= 0) continue
+      costs.set(ticker, (costs.get(ticker) ?? 0) + envCost)
+    }
+  }
+
+  return [...costs.entries()].map(([MaterialTicker, MaterialAmount]) => ({
+    MaterialTicker,
+    MaterialAmount,
+  }))
+}
 
 export interface PlanetSyncResult extends SyncResult {
   planetsFound: number
@@ -78,14 +137,20 @@ export async function syncUserPlanets(
 
     // 2. Process each planet sequentially (avoid FIO rate limits)
     for (const planet of planets) {
+      // Skip planets with missing identifiers (bad FIO data)
+      if (!planet.NaturalId) {
+        log.warn({ planet }, 'Skipping planet with missing NaturalId')
+        continue
+      }
+
       // Check exclusion
       if (
-        excludedPlanets.has(planet.PlanetNaturalId.toLowerCase()) ||
-        excludedPlanets.has(planet.PlanetName.toLowerCase())
+        excludedPlanets.has(planet.NaturalId.toLowerCase()) ||
+        (planet.Name && excludedPlanets.has(planet.Name.toLowerCase()))
       ) {
         result.skippedExcludedPlanets++
         log.debug(
-          { planetId: planet.PlanetNaturalId, planetName: planet.PlanetName },
+          { planetId: planet.NaturalId, planetName: planet.Name },
           'Skipping excluded planet'
         )
         continue
@@ -93,12 +158,12 @@ export async function syncUserPlanets(
 
       try {
         await syncPlanet(client, userId, fioApiKey, fioUsername, planet, result)
-        syncedPlanetIds.push(planet.PlanetNaturalId)
+        syncedPlanetIds.push(planet.NaturalId)
         result.planetsSynced++
       } catch (error) {
-        const errorMsg = `Failed to sync planet ${planet.PlanetNaturalId}: ${error instanceof Error ? error.message : 'Unknown error'}`
+        const errorMsg = `Failed to sync planet ${planet.NaturalId}: ${error instanceof Error ? error.message : 'Unknown error'}`
         result.errors.push(errorMsg)
-        log.error({ planetId: planet.PlanetNaturalId, err: error }, 'Failed to sync planet')
+        log.error({ planetId: planet.NaturalId, err: error }, 'Failed to sync planet')
       }
     }
 
@@ -153,10 +218,10 @@ async function syncPlanet(
   planet: FioRainPlanet,
   result: PlanetSyncResult
 ): Promise<void> {
-  const planetId = planet.PlanetNaturalId
+  const planetId = planet.NaturalId
 
-  // Fetch all three endpoints in parallel
-  const [siteData, workforceData, productionData] = await Promise.all([
+  // Fetch user data + planet info in parallel
+  const [siteData, workforceData, productionData, planetData] = await Promise.all([
     client.getUserSiteData<FioSiteResponse>(fioApiKey, fioUsername, planetId).catch(error => {
       result.errors.push(
         `Failed to fetch site data for ${planetId}: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -164,7 +229,7 @@ async function syncPlanet(
       log.warn({ planetId, err: error }, 'Failed to fetch site data')
       return null
     }),
-    client.getUserWorkforce<FioWorkforceType[]>(fioApiKey, fioUsername, planetId).catch(error => {
+    client.getUserWorkforce<FioWorkforceResponse>(fioApiKey, fioUsername, planetId).catch(error => {
       result.errors.push(
         `Failed to fetch workforce data for ${planetId}: ${error instanceof Error ? error.message : 'Unknown error'}`
       )
@@ -178,7 +243,21 @@ async function syncPlanet(
       log.warn({ planetId, err: error }, 'Failed to fetch production data')
       return null
     }),
+    client.getPlanetData<FioPlanetData>(planetId).catch(error => {
+      log.warn({ planetId, err: error }, 'Failed to fetch planet data for construction costs')
+      return null
+    }),
   ])
+
+  // Build lookup for planet environmental costs and CM area
+  const planetBuildReqs = new Map<string, number>()
+  if (planetData?.BuildRequirements) {
+    for (const req of planetData.BuildRequirements) {
+      planetBuildReqs.set(req.MaterialTicker, req.MaterialAmount)
+    }
+  }
+  // CM area (needed for scaling environmental costs per building area)
+  const cmArea = await getCmArea(client)
 
   // Upsert the planet record (preserves ID for junction table references)
   const [planetRecord] = await db
@@ -186,12 +265,12 @@ async function syncPlanet(
     .values({
       userId,
       planetNaturalId: planetId,
-      planetName: planet.PlanetName,
+      planetName: planet.Name || planetId,
       lastSyncedAt: new Date(),
     })
     .onConflictDoUpdate({
       target: [fioUserPlanets.userId, fioUserPlanets.planetNaturalId],
-      set: { planetName: planet.PlanetName, lastSyncedAt: new Date() },
+      set: { planetName: planet.Name || planetId, lastSyncedAt: new Date() },
     })
     .returning({ id: fioUserPlanets.id })
 
@@ -206,6 +285,10 @@ async function syncPlanet(
   if (siteData?.Buildings) {
     for (const building of siteData.Buildings) {
       try {
+        // Compute true construction costs from building definition + planet env
+        const buildingDef = await getBuildingDef(client, building.BuildingTicker)
+        const constructionCosts = computeConstructionCosts(buildingDef, planetBuildReqs, cmArea)
+
         await db.insert(fioPlanetBuildings).values({
           userPlanetId,
           buildingId: building.BuildingId,
@@ -217,6 +300,7 @@ async function syncPlanet(
           condition: String(building.Condition),
           repairMaterials: building.RepairMaterials,
           reclaimableMaterials: building.ReclaimableMaterials,
+          constructionCosts,
         })
         result.buildingsSynced++
       } catch (error) {
@@ -230,9 +314,9 @@ async function syncPlanet(
     }
   }
 
-  // Store workforce
-  if (workforceData) {
-    for (const wfType of workforceData) {
+  // Store workforce (API returns { Workforces: [...] } wrapper)
+  if (workforceData?.Workforces) {
+    for (const wfType of workforceData.Workforces) {
       try {
         await db.insert(fioPlanetWorkforce).values({
           userPlanetId,
@@ -260,6 +344,7 @@ async function syncPlanet(
         await db.insert(fioPlanetProduction).values({
           userPlanetId,
           lineType: line.Type,
+          capacity: line.Capacity,
           condition: String(line.Condition),
           efficiency: String(line.Efficiency),
           orders: line.Orders,
@@ -277,7 +362,7 @@ async function syncPlanet(
     {
       planetId,
       buildings: siteData?.Buildings?.length ?? 0,
-      workforceTypes: workforceData?.length ?? 0,
+      workforceTypes: workforceData?.Workforces?.length ?? 0,
       productionLines: productionData?.length ?? 0,
     },
     'Synced planet data'

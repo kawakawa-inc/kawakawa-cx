@@ -73,9 +73,18 @@ import { commodityService } from '../services/commodityService'
 import { locationService } from '../services/locationService'
 import { useShoppingListStore } from '../stores/shoppingList'
 
+export type SearchChipType =
+  | 'commodity'
+  | 'location'
+  | 'user'
+  | 'itemType'
+  | 'shoppingList'
+  | 'category'
+  | 'storage'
+
 export interface SearchChip {
-  type: 'commodity' | 'location' | 'user' | 'itemType' | 'shoppingList'
-  value: string // Actual value (ticker, location ID, username, 'sell'/'buy')
+  type: SearchChipType
+  value: string // Actual value (ticker, location ID, username, 'sell'/'buy', category key, storage type)
   display: string // Display text
   color?: string // Chip color — derived from type if not provided
   shoppingListData?: {
@@ -83,6 +92,13 @@ export interface SearchChip {
     name?: string
     origin?: string // Location ID from XIT origin
   }
+}
+
+export interface ExtraSuggestionType {
+  type: SearchChipType
+  typeLabel: string
+  color: string
+  options: { value: string; display: string }[]
 }
 
 // Initialize shopping list store
@@ -101,11 +117,18 @@ const chipColor = (type: SearchChip['type'], value?: string): string => {
       return value === 'buy' ? 'warning' : 'success'
     case 'shoppingList':
       return 'purple'
+    case 'category':
+      return 'teal'
+    case 'storage':
+      return 'orange'
+    default:
+      // Check extra suggestion types for color
+      return props.extraSuggestionTypes?.find(e => e.type === type)?.color ?? 'grey'
   }
 }
 
 interface Suggestion {
-  type: 'commodity' | 'location' | 'user' | 'itemType'
+  type: SearchChipType
   typeLabel: string
   value: string
   display: string
@@ -122,6 +145,8 @@ interface Props {
   getLocationDisplay?: (locationId: string) => string
   /** Function to get localized commodity name (for search matching) */
   getCommodityName?: (ticker: string) => string
+  /** Additional suggestion types (e.g., category, storage) */
+  extraSuggestionTypes?: ExtraSuggestionType[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -130,6 +155,7 @@ const props = withDefaults(defineProps<Props>(), {
   getCommodityDisplay: (ticker: string) => ticker,
   getLocationDisplay: (locationId: string) => locationId,
   getCommodityName: (ticker: string) => ticker,
+  extraSuggestionTypes: () => [],
 })
 
 const emit = defineEmits<{
@@ -391,8 +417,37 @@ const suggestions = computed((): Suggestion[] => {
     if (results.length >= 15) break
   }
 
-  // Sort: by type (Commodity > Location > User > ItemType), then by match quality
-  const typeOrder: Record<string, number> = { commodity: 0, location: 1, user: 2, itemType: 3 }
+  // Extra suggestion types (category, storage, etc.)
+  for (const extra of props.extraSuggestionTypes) {
+    for (const opt of extra.options) {
+      if (
+        opt.value.toLowerCase().startsWith(lowerWord) ||
+        opt.display.toLowerCase().startsWith(lowerWord) ||
+        opt.display.toLowerCase().includes(lowerWord)
+      ) {
+        if (!results.find(r => r.type === extra.type && r.value === opt.value)) {
+          results.push({
+            type: extra.type,
+            typeLabel: extra.typeLabel,
+            value: opt.value,
+            display: opt.display,
+            color: extra.color,
+          })
+        }
+      }
+      if (results.length >= 15) break
+    }
+  }
+
+  // Sort: by type (Commodity > Location > User > ItemType > extras), then by match quality
+  const typeOrder: Record<string, number> = {
+    commodity: 0,
+    location: 1,
+    category: 2,
+    storage: 3,
+    user: 4,
+    itemType: 5,
+  }
   results.sort((a, b) => {
     // First sort by type
     const typeCompare = typeOrder[a.type] - typeOrder[b.type]
@@ -440,9 +495,9 @@ const getCurrentWord = (): string => {
 const selectSuggestion = (suggestion: Suggestion) => {
   const chip = createChipFromSuggestion(suggestion)
   if (chip) {
-    // Remove existing itemType chip if adding a new one
-    if (chip.type === 'itemType') {
-      chips.value = chips.value.filter(c => c.type !== 'itemType')
+    // Remove existing chip of same type for singular types (itemType, category)
+    if (chip.type === 'itemType' || chip.type === 'category') {
+      chips.value = chips.value.filter(c => c.type !== chip.type)
     }
 
     chips.value.push(chip)
@@ -489,6 +544,18 @@ const createChipFromSuggestion = (suggestion: Suggestion): SearchChip | null => 
         display: suggestion.value === 'buy' ? 'Buy' : 'Sell',
         color: chipColor('itemType', suggestion.value),
       }
+    default: {
+      // Extra suggestion types (category, storage, etc.)
+      const extra = props.extraSuggestionTypes.find(e => e.type === suggestion.type)
+      if (extra) {
+        return {
+          type: suggestion.type,
+          value: suggestion.value,
+          display: suggestion.display,
+          color: extra.color,
+        }
+      }
+    }
   }
   return null
 }
@@ -761,9 +828,9 @@ defineExpose({
   addChip: (chip: SearchChip) => {
     // Deduplicate: skip if same type+value already exists
     if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-    // Replace any existing itemType chip
-    if (chip.type === 'itemType') {
-      chips.value = chips.value.filter(c => c.type !== 'itemType')
+    // Replace existing chip for singular types (itemType, category)
+    if (chip.type === 'itemType' || chip.type === 'category') {
+      chips.value = chips.value.filter(c => c.type !== chip.type)
     }
     chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
     emitChanges()

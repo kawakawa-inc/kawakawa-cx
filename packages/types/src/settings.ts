@@ -285,6 +285,16 @@ export const SETTING_DEFINITIONS = {
     description: 'Stock consumables for N days',
   } satisfies SettingDef<number, 'number'>,
 
+  'supply.conditionMode': {
+    key: 'supply.conditionMode',
+    type: 'enum',
+    defaultValue: 'max',
+    enumOptions: ['actual', 'max'] as const,
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Condition',
+    description: 'Use actual building conditions or assume max (100%) for production calculations',
+  } satisfies SettingDef<string, 'enum'>,
+
   'supply.includeProduction': {
     key: 'supply.includeProduction',
     type: 'boolean',

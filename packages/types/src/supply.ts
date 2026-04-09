@@ -12,8 +12,8 @@ export type DemandSource = 'burn' | 'repair'
 /** Supply chain line mode: demand (consumption) or reserve (held stock) */
 export type SupplyChainMode = 'demand' | 'reserve'
 
-/** Supply chain demand source for auto-calculation */
-export type SupplyChainDemandSource = 'consumables' | 'inputs' | 'repair'
+/** Supply chain category — determines how demand is calculated */
+export type SupplyChainDemandSource = 'consumables' | 'inputs' | 'repair' | 'government' | 'other'
 
 /** Linked planet info for demand orders/reserves */
 export interface LinkedPlanetInfo {
@@ -118,4 +118,47 @@ export interface SupplyCalculationResult {
   burnMaterials: Record<string, number>
   /** Aggregated production materials by ticker */
   productionMaterials: Record<string, number>
+}
+
+// ==================== Supply Dashboard ====================
+
+/** Dashboard data organized by source location */
+export interface SupplyDashboard {
+  settings: { burnDays: number; repairDays: number; conditionMode: 'actual' | 'max' }
+  sources: SourceDashboard[]
+  materials: MaterialDashboard[]
+}
+
+/** Per-source-location dashboard data */
+export interface SourceDashboard {
+  sourceLocationId: string
+  sourceStock: Record<string, number>
+  destinations: DestinationDashboard[]
+  aggregatedNeed: Record<string, number>
+  gap: Record<string, number>
+}
+
+/** Per-destination planet within a source, grouped by storage type */
+export interface DestinationDashboard {
+  planetId: string
+  planetName: string
+  destinationStorageTypes: string[]
+  burn: { ticker: string; need: number }[]
+  repair: { ticker: string; need: number }[]
+  production: { ticker: string; need: number }[]
+  other: { ticker: string; need: number }[]
+  destinationStock: Record<string, number>
+}
+
+/** Per-material aggregated dashboard data */
+export interface MaterialDashboard {
+  ticker: string
+  burnNeed: number
+  repairNeed: number
+  productionNeed: number
+  totalNeed: number
+  sourceStock: number
+  destinationStock: number
+  gap: number
+  sources: string[]
 }

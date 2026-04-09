@@ -6,6 +6,9 @@ const mockGetUserPlanets = vi.fn()
 const mockGetUserSiteData = vi.fn()
 const mockGetUserWorkforce = vi.fn()
 const mockGetUserProduction = vi.fn()
+const mockGetPlanetData = vi.fn()
+const mockGetBuildingDefinition = vi.fn()
+const mockGetBuildings = vi.fn()
 
 // Mock the FIO client module
 vi.mock('./client.js', () => ({
@@ -14,6 +17,9 @@ vi.mock('./client.js', () => ({
     getUserSiteData = mockGetUserSiteData
     getUserWorkforce = mockGetUserWorkforce
     getUserProduction = mockGetUserProduction
+    getPlanetData = mockGetPlanetData
+    getBuildingDefinition = mockGetBuildingDefinition
+    getBuildings = mockGetBuildings
   },
 }))
 
@@ -79,15 +85,28 @@ describe('syncUserPlanets', () => {
     mockGetUserSiteData.mockReset()
     mockGetUserWorkforce.mockReset()
     mockGetUserProduction.mockReset()
+    mockGetPlanetData.mockReset()
+    mockGetBuildingDefinition.mockReset()
+
+    // Default: planet has no environmental requirements, CM area = 25
+    mockGetPlanetData.mockResolvedValue({ BuildRequirements: [] })
+    mockGetBuildingDefinition.mockImplementation(async (ticker: string) => ({
+      Ticker: ticker,
+      AreaCost: ticker === 'CM' ? 25 : 12,
+      BuildingCosts: [],
+      Pioneers: 0,
+      Settlers: 0,
+      Technicians: 0,
+      Engineers: 0,
+      Scientists: 0,
+    }))
 
     mockDeleteWhere.mockResolvedValue(undefined)
     mockOnConflictDoUpdate.mockReturnValue({ returning: mockInsertReturning })
   })
 
   it('should sync planet data successfully', async () => {
-    mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-    ])
+    mockGetUserPlanets.mockResolvedValue([{ NaturalId: 'UV-351a', Name: 'Katoa' }])
 
     // Mock planet upsert returning ID
     mockInsertReturning.mockResolvedValueOnce([{ id: 10 }])
@@ -107,14 +126,16 @@ describe('syncUserPlanets', () => {
       ],
     })
 
-    mockGetUserWorkforce.mockResolvedValue([
-      {
-        WorkforceTypeName: 'SETTLER',
-        Population: 100,
-        Required: 100,
-        WorkforceNeeds: [{ MaterialTicker: 'RAT', UnitsPerInterval: 6.0, Essential: true }],
-      },
-    ])
+    mockGetUserWorkforce.mockResolvedValue({
+      Workforces: [
+        {
+          WorkforceTypeName: 'SETTLER',
+          Population: 100,
+          Required: 100,
+          WorkforceNeeds: [{ MaterialTicker: 'RAT', UnitsPerInterval: 6.0, Essential: true }],
+        },
+      ],
+    })
 
     mockGetUserProduction.mockResolvedValue([
       {
@@ -152,13 +173,11 @@ describe('syncUserPlanets', () => {
   })
 
   it('should use upsert to preserve planet IDs', async () => {
-    mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-    ])
+    mockGetUserPlanets.mockResolvedValue([{ NaturalId: 'UV-351a', Name: 'Katoa' }])
 
     mockInsertReturning.mockResolvedValueOnce([{ id: 10 }])
     mockGetUserSiteData.mockResolvedValue({ PlanetId: 'uuid-1', Buildings: [] })
-    mockGetUserWorkforce.mockResolvedValue([])
+    mockGetUserWorkforce.mockResolvedValue({ Workforces: [] })
     mockGetUserProduction.mockResolvedValue([])
 
     await syncUserPlanets(userId, fioApiKey, fioUsername)
@@ -169,13 +188,13 @@ describe('syncUserPlanets', () => {
 
   it('should skip excluded planets', async () => {
     mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-      { PlanetId: 'uuid-2', PlanetNaturalId: 'KW-688c', PlanetName: 'Promitor' },
+      { NaturalId: 'UV-351a', Name: 'Katoa' },
+      { NaturalId: 'KW-688c', Name: 'Promitor' },
     ])
 
     mockInsertReturning.mockResolvedValueOnce([{ id: 10 }])
     mockGetUserSiteData.mockResolvedValue({ PlanetId: 'uuid-2', Buildings: [] })
-    mockGetUserWorkforce.mockResolvedValue([])
+    mockGetUserWorkforce.mockResolvedValue({ Workforces: [] })
     mockGetUserProduction.mockResolvedValue([])
 
     const result = await syncUserPlanets(userId, fioApiKey, fioUsername, {
@@ -191,9 +210,7 @@ describe('syncUserPlanets', () => {
   })
 
   it('should exclude planets case-insensitively by name', async () => {
-    mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-    ])
+    mockGetUserPlanets.mockResolvedValue([{ NaturalId: 'UV-351a', Name: 'Katoa' }])
 
     const result = await syncUserPlanets(userId, fioApiKey, fioUsername, {
       excludedPlanets: ['katoa'],
@@ -205,21 +222,21 @@ describe('syncUserPlanets', () => {
   })
 
   it('should handle FIO API errors for individual planet endpoints gracefully', async () => {
-    mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-    ])
+    mockGetUserPlanets.mockResolvedValue([{ NaturalId: 'UV-351a', Name: 'Katoa' }])
 
     mockInsertReturning.mockResolvedValue([{ id: 10 }])
 
     mockGetUserSiteData.mockRejectedValue(new Error('FIO API timeout'))
-    mockGetUserWorkforce.mockResolvedValue([
-      {
-        WorkforceTypeName: 'PIONEER',
-        Population: 50,
-        Required: 50,
-        WorkforceNeeds: [{ MaterialTicker: 'DW', UnitsPerInterval: 3.0, Essential: true }],
-      },
-    ])
+    mockGetUserWorkforce.mockResolvedValue({
+      Workforces: [
+        {
+          WorkforceTypeName: 'PIONEER',
+          Population: 50,
+          Required: 50,
+          WorkforceNeeds: [{ MaterialTicker: 'DW', UnitsPerInterval: 3.0, Essential: true }],
+        },
+      ],
+    })
     mockGetUserProduction.mockResolvedValue([])
 
     const result = await syncUserPlanets(userId, fioApiKey, fioUsername)
@@ -248,8 +265,8 @@ describe('syncUserPlanets', () => {
 
   it('should handle multiple planets sequentially', async () => {
     mockGetUserPlanets.mockResolvedValue([
-      { PlanetId: 'uuid-1', PlanetNaturalId: 'UV-351a', PlanetName: 'Katoa' },
-      { PlanetId: 'uuid-2', PlanetNaturalId: 'KW-688c', PlanetName: 'Promitor' },
+      { NaturalId: 'UV-351a', Name: 'Katoa' },
+      { NaturalId: 'KW-688c', Name: 'Promitor' },
     ])
 
     mockInsertReturning
@@ -260,7 +277,9 @@ describe('syncUserPlanets', () => {
       .mockResolvedValueOnce({ PlanetId: 'uuid-1', Buildings: [] })
       .mockResolvedValueOnce({ PlanetId: 'uuid-2', Buildings: [] })
 
-    mockGetUserWorkforce.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+    mockGetUserWorkforce
+      .mockResolvedValueOnce({ Workforces: [] })
+      .mockResolvedValueOnce({ Workforces: [] })
     mockGetUserProduction.mockResolvedValueOnce([]).mockResolvedValueOnce([])
 
     const result = await syncUserPlanets(userId, fioApiKey, fioUsername)

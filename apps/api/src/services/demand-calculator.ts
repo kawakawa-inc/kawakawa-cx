@@ -65,7 +65,8 @@ export async function calculateLineDemand(
     demand: number | null
   },
   userId: number,
-  targetDays: number
+  targetDays: number,
+  assumeMaxCondition = true
 ): Promise<number> {
   // Fixed demand overrides calculation
   if (line.demand !== null) return line.demand
@@ -109,55 +110,117 @@ export async function calculateLineDemand(
   }
 
   if (line.demandSource === 'inputs') {
-    // Production input needs
+    // Production input needs — matches Refined PRUN's XIT BURN approach:
+    // Use line.capacity (building count) and non-started recurring orders (unique recipes).
+    // daily_rate = sum of (amount * capacity / totalCycleDays) per recipe per line
+    // Net out on-site production of the same material (split-base scenarios).
+    // total = ceil(max(0, netDailyRate) * targetDays)
     const productionRows = await db
       .select({
+        capacity: fioPlanetProduction.capacity,
         condition: fioPlanetProduction.condition,
         orders: fioPlanetProduction.orders,
       })
       .from(fioPlanetProduction)
       .where(eq(fioPlanetProduction.userPlanetId, planet.id))
 
-    let totalNeed = 0
-    const hoursInPeriod = 24 * targetDays
+    let dailyInput = 0
+    let dailyOutput = 0
     for (const row of productionRows) {
+      const capacity = row.capacity
+      if (capacity <= 0) continue
+
       const orders = row.orders as {
         Recurring: boolean
+        StartedEpochMs: number | null
         DurationMs: number
         Inputs: { MaterialTicker: string; MaterialAmount: number }[]
+        Outputs: { MaterialTicker: string; MaterialAmount: number }[]
       }[]
-      for (const order of orders) {
-        if (!order.Recurring || order.DurationMs <= 0) continue
-        const durationHours = order.DurationMs / 3_600_000
-        const runs = hoursInPeriod / durationHours
+
+      // Non-started recurring orders = unique recipes (one per recipe, not per building)
+      const uniqueOrders = orders.filter(o => o.Recurring && o.DurationMs > 0 && !o.StartedEpochMs)
+      if (uniqueOrders.length === 0) continue
+
+      // Total cycle duration for all unique recipes
+      // When assuming max condition, remove degradation: duration * condition = duration at 100%
+      const conditionFactor = assumeMaxCondition ? Number(row.condition) : 1
+      const totalDurationDays =
+        (uniqueOrders.reduce((sum, o) => sum + o.DurationMs, 0) * conditionFactor) / 86_400_000
+
+      for (const order of uniqueOrders) {
         for (const input of order.Inputs) {
           if (input.MaterialTicker === line.commodityTicker) {
-            totalNeed += Math.ceil(input.MaterialAmount * runs)
+            dailyInput += (input.MaterialAmount * capacity) / totalDurationDays
+          }
+        }
+        for (const output of order.Outputs ?? []) {
+          if (output.MaterialTicker === line.commodityTicker) {
+            dailyOutput += (output.MaterialAmount * capacity) / totalDurationDays
           }
         }
       }
     }
-    return totalNeed
+
+    // Net: if the planet produces more than it consumes, no need to ship it in
+    const netDaily = dailyInput - dailyOutput
+    return netDaily > 0 ? Math.ceil(netDaily * targetDays) : 0
   }
 
   if (line.demandSource === 'repair') {
-    // Repair material costs
+    // Repair material costs using true construction costs and Refined PRUN formula
     const buildingRows = await db
-      .select({ repairMaterials: fioPlanetBuildings.repairMaterials })
+      .select({
+        buildingCreated: fioPlanetBuildings.buildingCreated,
+        buildingLastRepair: fioPlanetBuildings.buildingLastRepair,
+        repairMaterials: fioPlanetBuildings.repairMaterials,
+        constructionCosts: fioPlanetBuildings.constructionCosts,
+      })
       .from(fioPlanetBuildings)
       .where(eq(fioPlanetBuildings.userPlanetId, planet.id))
 
+    if (targetDays === 0) {
+      // Use current repair materials directly (exact game values)
+      let totalNeed = 0
+      for (const row of buildingRows) {
+        const materials = row.repairMaterials as {
+          MaterialTicker: string
+          MaterialAmount: number
+        }[]
+        for (const mat of materials) {
+          if (mat.MaterialTicker === line.commodityTicker) {
+            totalNeed += mat.MaterialAmount
+          }
+        }
+      }
+      return totalNeed
+    }
+
+    // Project forward using Refined PRUN formula:
+    // condition(age) = age > 180 ? 0 : 1 - age/180
+    // repairCost = ceil(CC * (1 - condition)) = ceil(CC * min(age, 180) / 180)
+    const now = new Date()
     let totalNeed = 0
     for (const row of buildingRows) {
-      const materials = row.repairMaterials as {
+      // Skip infrastructure buildings (no repair materials = no workforce)
+      const repairMats = row.repairMaterials as { MaterialTicker: string; MaterialAmount: number }[]
+      if (repairMats.length === 0) continue
+
+      const referenceDate = row.buildingLastRepair ?? row.buildingCreated
+      const daysSinceRepair = (now.getTime() - referenceDate.getTime()) / 86_400_000
+      const plannedAge = daysSinceRepair + targetDays
+
+      // Get true construction cost for this material from stored data
+      const ccMats = row.constructionCosts as {
         MaterialTicker: string
         MaterialAmount: number
       }[]
-      for (const mat of materials) {
-        if (mat.MaterialTicker === line.commodityTicker) {
-          totalNeed += mat.MaterialAmount
-        }
-      }
+      const ccEntry = ccMats.find(m => m.MaterialTicker === line.commodityTicker)
+      if (!ccEntry || ccEntry.MaterialAmount <= 0) continue
+
+      // Refined PRUN formula
+      const clampedAge = Math.min(plannedAge, 180)
+      totalNeed += Math.ceil((ccEntry.MaterialAmount * clampedAge) / 180)
     }
     return totalNeed
   }

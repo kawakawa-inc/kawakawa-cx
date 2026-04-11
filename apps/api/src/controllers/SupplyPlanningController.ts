@@ -522,17 +522,12 @@ export class SupplyPlanningController extends Controller {
         sourceStock[ticker] = await getStock(ticker, sourceLocationId, srcStorageArr)
       }
 
-      // Calculate gap per ticker
+      // Calculate gap per ticker: need minus source stock only.
+      // Destination stock is not subtracted — it may be earmarked or consumed locally.
+      // To account for destination surplus, the user would set up a reverse supply chain line.
       const gap: Record<string, number> = {}
       for (const ticker of Object.keys(aggregatedNeed)) {
-        const totalDestStock = destinations.reduce(
-          (sum, d) => sum + (d.destinationStock[ticker] ?? 0),
-          0
-        )
-        gap[ticker] = Math.max(
-          0,
-          aggregatedNeed[ticker] - totalDestStock - (sourceStock[ticker] ?? 0)
-        )
+        gap[ticker] = Math.max(0, aggregatedNeed[ticker] - (sourceStock[ticker] ?? 0))
       }
 
       sources.push({ sourceLocationId, sourceStock, destinations, aggregatedNeed, gap })
@@ -558,7 +553,7 @@ export class SupplyPlanningController extends Controller {
         totalNeed,
         sourceStock,
         destinationStock,
-        gap: Math.max(0, totalNeed - sourceStock - destinationStock),
+        gap: Math.max(0, totalNeed - sourceStock),
         sources: [...agg.sources],
       })
     }

@@ -9,6 +9,7 @@ import {
   Request,
   Body,
   Path,
+  Query,
   SuccessResponse,
 } from 'tsoa'
 import { db, fioUserPlanets, supplyChainLines, shoppingLists } from '../db/index.js'
@@ -20,7 +21,13 @@ import { getUserPlanetData } from '../services/fio/sync-user-planets.js'
 import { FioClient } from '../services/fio/client.js'
 import type { FioBuilding } from '../services/fio/types.js'
 import { calculateSupply, calculatePlanetSupply } from '../services/supply-calculator.js'
-import { calculateLineDemand, getFilteredStock } from '../services/demand-calculator.js'
+import {
+  calculateLineDemand,
+  calculateOutputSupply,
+  getFilteredStock,
+  getAllProductionRates,
+  getAllBurnRates,
+} from '../services/demand-calculator.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 import type {
   PlanetSupplyInput,
@@ -30,8 +37,8 @@ import type {
   SupplyCalculationOptions,
   SupplyCalculationResult,
   SupplyDashboard,
-  SourceDashboard,
-  DestinationDashboard,
+  LocationDashboard,
+  ConnectionDashboard,
   MaterialDashboard,
 } from '@kawakawa/types'
 
@@ -357,11 +364,15 @@ export class SupplyPlanningController extends Controller {
   }
 
   /**
-   * Get supply dashboard data organized by source location and material.
-   * Computes demand from supply chain lines, stock levels, and gaps.
+   * Get supply dashboard data organized by location.
+   * Each location that appears in any supply chain line (as source or destination)
+   * gets a panel showing all connected locations with import/export flows.
    */
   @Get('dashboard')
-  public async getDashboard(@Request() request: { user: JwtPayload }): Promise<SupplyDashboard> {
+  public async getDashboard(
+    @Request() request: { user: JwtPayload },
+    @Query() locationId?: string
+  ): Promise<SupplyDashboard> {
     const userId = request.user.userId
     const burnDays =
       ((await userSettingsService.getSetting(userId, 'supply.burnDays')) as number) ?? 7
@@ -370,7 +381,6 @@ export class SupplyPlanningController extends Controller {
     const conditionMode =
       ((await userSettingsService.getSetting(userId, 'supply.conditionMode')) as string) ?? 'max'
 
-    // Get all supply chain lines
     const lines = await db
       .select()
       .from(supplyChainLines)
@@ -379,37 +389,25 @@ export class SupplyPlanningController extends Controller {
     if (lines.length === 0) {
       return {
         settings: { burnDays, repairDays, conditionMode: conditionMode as 'actual' | 'max' },
-        sources: [],
+        locations: [],
         materials: [],
       }
     }
 
-    // Get planet names for display
+    // Planet names for display
     const planets = await db
       .select({
+        id: fioUserPlanets.id,
         planetNaturalId: fioUserPlanets.planetNaturalId,
         planetName: fioUserPlanets.planetName,
       })
       .from(fioUserPlanets)
       .where(eq(fioUserPlanets.userId, userId))
     const planetNames = new Map(planets.map(p => [p.planetNaturalId, p.planetName]))
+    const planetDbIds = new Map(planets.map(p => [p.planetNaturalId, p.id]))
 
-    // Group lines by source location
-    const sourceGroups = new Map<string, (typeof lines)[number][]>()
-    for (const line of lines) {
-      const group = sourceGroups.get(line.sourceLocationId) ?? []
-      group.push(line)
-      sourceGroups.set(line.sourceLocationId, group)
-    }
-
-    // Material aggregation across all sources
-    const matAgg = new Map<
-      string,
-      { burnNeed: number; repairNeed: number; productionNeed: number; sources: Set<string> }
-    >()
-    // Stock aggregation (deduplicated by location+ticker)
+    // Stock cache
     const stockCache = new Map<string, number>()
-
     const getStock = async (
       ticker: string,
       locationId: string,
@@ -422,169 +420,227 @@ export class SupplyPlanningController extends Controller {
       return qty
     }
 
-    const sources: SourceDashboard[] = []
+    // Pre-calculate amounts for relevant lines
+    const relevantLines = locationId
+      ? lines.filter(l => l.sourceLocationId === locationId || l.destinationPlanetId === locationId)
+      : lines
+    const lineAmounts = new Map<number, number>()
+    for (const line of relevantLines) {
+      if (line.mode !== 'demand') continue
+      let amount: number
+      if (line.lineSource === 'production_output') {
+        amount = await calculateOutputSupply(line, userId, burnDays, conditionMode === 'max')
+      } else {
+        const targetDays =
+          line.lineSource === 'repair'
+            ? repairDays
+            : line.lineSource === 'consumables' || line.lineSource === 'inputs'
+              ? burnDays
+              : 0
+        amount = await calculateLineDemand(line, userId, targetDays, conditionMode === 'max')
+      }
+      lineAmounts.set(line.id, amount)
+    }
 
-    for (const [sourceLocationId, sourceLines] of sourceGroups) {
-      // Group by destination + storage types within this source
-      // so the same planet with different storage types shows as separate entries
-      const destGroups = new Map<string, (typeof lines)[number][]>()
-      for (const line of sourceLines) {
-        const destStorageKey =
-          line.destinationPlanetId +
-          ':' +
-          (line.destinationStorageTypes as string[]).sort().join(',')
-        const group = destGroups.get(destStorageKey) ?? []
+    // Group lines by every location they touch (each line appears under both source and dest)
+    // If a specific locationId is requested, only build that location's data
+    const locationLines = new Map<string, (typeof lines)[number][]>()
+    for (const line of lines) {
+      for (const locId of [line.sourceLocationId, line.destinationPlanetId]) {
+        if (locationId && locId !== locationId) continue
+        const group = locationLines.get(locId) ?? []
         group.push(line)
-        destGroups.set(destStorageKey, group)
+        locationLines.set(locId, group)
+      }
+    }
+
+    // Build location dashboards
+    const locations: LocationDashboard[] = []
+    const matAgg = new Map<
+      string,
+      { totalExport: number; totalImport: number; locations: Set<string> }
+    >()
+
+    for (const [locationId, locLines] of locationLines) {
+      // Group by the OTHER location in the pair (the connected location)
+      const connectionGroups = new Map<string, (typeof lines)[number][]>()
+      for (const line of locLines) {
+        const otherId =
+          line.sourceLocationId === locationId ? line.destinationPlanetId : line.sourceLocationId
+        const group = connectionGroups.get(otherId) ?? []
+        group.push(line)
+        connectionGroups.set(otherId, group)
       }
 
-      const destinations: DestinationDashboard[] = []
-      const aggregatedNeed: Record<string, number> = {}
-      const allSourceStorageTypes = new Set<string>()
-      const allSourceTickers = new Set<string>()
+      const connections: ConnectionDashboard[] = []
+      const aggregatedExport: Record<string, number> = {}
+      const aggregatedImport: Record<string, number> = {}
+      // Demand exports = materials this location needs to source (excludes production_output)
+      const demandExport: Record<string, number> = {}
+      const allStorageTypes = new Set<string>()
+      const allTickers = new Set<string>()
 
-      for (const [, destLines] of destGroups) {
-        const destPlanetId = destLines[0].destinationPlanetId
-        const destStorageTypes = (destLines[0].destinationStorageTypes as string[]).sort()
-        const burn: { ticker: string; need: number }[] = []
-        const repair: { ticker: string; need: number }[] = []
-        const production: { ticker: string; need: number }[] = []
-        const other: { ticker: string; need: number }[] = []
-        const destTickers = new Set<string>()
+      for (const [connId, connLines] of connectionGroups) {
+        const exports: { ticker: string; amount: number; lineSource: string }[] = []
+        const imports: { ticker: string; amount: number; lineSource: string }[] = []
+        const connTickers = new Set<string>()
 
-        for (const line of destLines) {
-          for (const st of line.sourceStorageTypes as string[]) allSourceStorageTypes.add(st)
-          destTickers.add(line.commodityTicker)
-          allSourceTickers.add(line.commodityTicker)
-
+        for (const line of connLines) {
           if (line.mode !== 'demand') continue
+          const amount = lineAmounts.get(line.id) ?? 0
+          const lineSource = line.lineSource ?? 'other'
+          connTickers.add(line.commodityTicker)
+          allTickers.add(line.commodityTicker)
 
-          const targetDays =
-            line.demandSource === 'repair'
-              ? repairDays
-              : line.demandSource === 'consumables' || line.demandSource === 'inputs'
-                ? burnDays
-                : 0
-          const demand = await calculateLineDemand(
-            line,
-            userId,
-            targetDays,
+          // Determine direction relative to this location
+          const isExport = line.sourceLocationId === locationId
+
+          // Collect storage types for this location
+          const localStorageTypes = isExport
+            ? (line.sourceStorageTypes as string[])
+            : (line.destinationStorageTypes as string[])
+          for (const st of localStorageTypes) allStorageTypes.add(st)
+
+          if (isExport) {
+            exports.push({ ticker: line.commodityTicker, amount, lineSource })
+            aggregatedExport[line.commodityTicker] =
+              (aggregatedExport[line.commodityTicker] ?? 0) + amount
+            // Only non-production exports create a gap (need to acquire)
+            if (lineSource !== 'production_output') {
+              demandExport[line.commodityTicker] =
+                (demandExport[line.commodityTicker] ?? 0) + amount
+            }
+          } else {
+            imports.push({ ticker: line.commodityTicker, amount, lineSource })
+            aggregatedImport[line.commodityTicker] =
+              (aggregatedImport[line.commodityTicker] ?? 0) + amount
+          }
+        }
+
+        // Get stock at the connected location
+        const connStorageTypes = new Set<string>()
+        for (const line of connLines) {
+          const connSt =
+            line.sourceLocationId === locationId
+              ? (line.destinationStorageTypes as string[])
+              : (line.sourceStorageTypes as string[])
+          for (const st of connSt) connStorageTypes.add(st)
+        }
+        const connectionStock: Record<string, number> = {}
+        for (const ticker of connTickers) {
+          connectionStock[ticker] = await getStock(ticker, connId, [...connStorageTypes])
+        }
+
+        // Compute production/demand rates for planet connections
+        let rates: Record<string, { dailyProduction: number; dailyDemand: number }> | null = null
+        const connPlanetDbId = planetDbIds.get(connId)
+        if (connPlanetDbId && connTickers.size > 0) {
+          const prodRates = await getAllProductionRates(
+            connPlanetDbId,
+            connTickers,
             conditionMode === 'max'
           )
+          const burnRates = await getAllBurnRates(connPlanetDbId, connTickers)
+          rates = {}
+          for (const ticker of connTickers) {
+            const pr = prodRates[ticker] ?? { dailyInput: 0, dailyOutput: 0 }
+            const netProduction = Math.max(0, pr.dailyOutput - pr.dailyInput)
+            let netDemand = (burnRates[ticker] ?? 0) + Math.max(0, pr.dailyInput - pr.dailyOutput)
 
-          if (line.demandSource === 'consumables') {
-            burn.push({ ticker: line.commodityTicker, need: demand })
-            this.addToMatAgg(matAgg, line.commodityTicker, 'burnNeed', demand, sourceLocationId)
-          } else if (line.demandSource === 'repair') {
-            repair.push({ ticker: line.commodityTicker, need: demand })
-            this.addToMatAgg(matAgg, line.commodityTicker, 'repairNeed', demand, sourceLocationId)
-          } else if (line.demandSource === 'inputs') {
-            production.push({ ticker: line.commodityTicker, need: demand })
-            this.addToMatAgg(
-              matAgg,
-              line.commodityTicker,
-              'productionNeed',
-              demand,
-              sourceLocationId
-            )
-          } else {
-            // government, other, or null demandSource with fixed demand
-            other.push({ ticker: line.commodityTicker, need: demand })
-            this.addToMatAgg(matAgg, line.commodityTicker, 'burnNeed', demand, sourceLocationId)
+            // Add fixed demand from supply chain lines (government, other, repair)
+            // targeting this connection as a destination
+            for (const line of connLines) {
+              if (line.mode !== 'demand') continue
+              if (line.commodityTicker !== ticker) continue
+              if (line.lineSource === 'production_output') continue
+              if (line.lineSource === 'consumables' || line.lineSource === 'inputs') continue
+              // government, other, repair — convert total to daily rate
+              const amount = lineAmounts.get(line.id) ?? 0
+              const days =
+                line.lineSource === 'repair' ? (repairDays > 0 ? repairDays : burnDays) : burnDays
+              if (amount > 0 && days > 0) {
+                netDemand += amount / days
+              }
+            }
+
+            rates[ticker] = { dailyProduction: netProduction, dailyDemand: netDemand }
           }
-
-          aggregatedNeed[line.commodityTicker] =
-            (aggregatedNeed[line.commodityTicker] ?? 0) + demand
         }
 
-        // Get destination stock per ticker filtered by this group's storage types
-        const destinationStock: Record<string, number> = {}
-        for (const ticker of destTickers) {
-          destinationStock[ticker] = await getStock(ticker, destPlanetId, destStorageTypes)
-        }
-
-        destinations.push({
-          planetId: destPlanetId,
-          planetName: planetNames.get(destPlanetId) ?? destPlanetId,
-          destinationStorageTypes: destStorageTypes,
-          burn,
-          repair,
-          production,
-          other,
-          destinationStock,
+        connections.push({
+          locationId: connId,
+          locationName: planetNames.get(connId) ?? connId,
+          storageTypes: [...connStorageTypes].sort(),
+          exports,
+          imports,
+          connectionStock,
+          rates,
         })
       }
 
-      // Get source stock
-      const sourceStock: Record<string, number> = {}
-      const srcStorageArr = [...allSourceStorageTypes]
-      for (const ticker of allSourceTickers) {
-        sourceStock[ticker] = await getStock(ticker, sourceLocationId, srcStorageArr)
+      // Get stock at this location
+      const stock: Record<string, number> = {}
+      const storageArr = [...allStorageTypes]
+      for (const ticker of allTickers) {
+        stock[ticker] = await getStock(ticker, locationId, storageArr)
       }
 
-      // Calculate gap per ticker: need minus source stock only.
-      // Destination stock is not subtracted — it may be earmarked or consumed locally.
-      // To account for destination surplus, the user would set up a reverse supply chain line.
+      // Gap = how much we need to acquire to fulfill demand exports, after stock + imports.
+      // Production exports don't create a gap — the location produces those.
+      const allTickerSet = new Set([
+        ...Object.keys(aggregatedExport),
+        ...Object.keys(aggregatedImport),
+      ])
       const gap: Record<string, number> = {}
-      for (const ticker of Object.keys(aggregatedNeed)) {
-        gap[ticker] = Math.max(0, aggregatedNeed[ticker] - (sourceStock[ticker] ?? 0))
+      for (const ticker of allTickerSet) {
+        gap[ticker] = Math.max(
+          0,
+          (demandExport[ticker] ?? 0) - (stock[ticker] ?? 0) - (aggregatedImport[ticker] ?? 0)
+        )
       }
 
-      sources.push({ sourceLocationId, sourceStock, destinations, aggregatedNeed, gap })
+      locations.push({ locationId, stock, connections, aggregatedExport, aggregatedImport, gap })
+
+      // Material aggregation
+      for (const ticker of allTickerSet) {
+        const entry = matAgg.get(ticker) ?? {
+          totalExport: 0,
+          totalImport: 0,
+          locations: new Set<string>(),
+        }
+        entry.totalExport += aggregatedExport[ticker] ?? 0
+        entry.totalImport += aggregatedImport[ticker] ?? 0
+        entry.locations.add(locationId)
+        matAgg.set(ticker, entry)
+      }
     }
 
-    // Build materials array
+    // Build materials array — gap is sum of per-location gaps
     const materials: MaterialDashboard[] = []
     for (const [ticker, agg] of matAgg) {
-      const totalNeed = agg.burnNeed + agg.repairNeed + agg.productionNeed
-      let sourceStock = 0
-      let destinationStock = 0
-      for (const src of sources) {
-        sourceStock += src.sourceStock[ticker] ?? 0
-        for (const dest of src.destinations) {
-          destinationStock += dest.destinationStock[ticker] ?? 0
-        }
+      let totalStock = 0
+      let totalGap = 0
+      for (const loc of locations) {
+        totalStock += loc.stock[ticker] ?? 0
+        totalGap += loc.gap[ticker] ?? 0
       }
       materials.push({
         ticker,
-        burnNeed: agg.burnNeed,
-        repairNeed: agg.repairNeed,
-        productionNeed: agg.productionNeed,
-        totalNeed,
-        sourceStock,
-        destinationStock,
-        gap: Math.max(0, totalNeed - sourceStock),
-        sources: [...agg.sources],
+        totalExport: agg.totalExport,
+        totalImport: agg.totalImport,
+        totalNeed: agg.totalExport,
+        stock: totalStock,
+        gap: totalGap,
+        locations: [...agg.locations],
       })
     }
     materials.sort((a, b) => b.gap - a.gap)
 
     return {
       settings: { burnDays, repairDays, conditionMode: conditionMode as 'actual' | 'max' },
-      sources,
+      locations,
       materials,
     }
-  }
-
-  private addToMatAgg(
-    matAgg: Map<
-      string,
-      { burnNeed: number; repairNeed: number; productionNeed: number; sources: Set<string> }
-    >,
-    ticker: string,
-    field: 'burnNeed' | 'repairNeed' | 'productionNeed',
-    amount: number,
-    sourceLocationId: string
-  ): void {
-    const entry = matAgg.get(ticker) ?? {
-      burnNeed: 0,
-      repairNeed: 0,
-      productionNeed: 0,
-      sources: new Set<string>(),
-    }
-    entry[field] += amount
-    entry.sources.add(sourceLocationId)
-    matAgg.set(ticker, entry)
   }
 
   /**

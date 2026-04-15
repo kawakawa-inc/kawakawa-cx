@@ -60,3 +60,6 @@ apps/api/src/generated/
 # Generated API client (keep index.ts)
 packages/client/src/*.ts
 !packages/client/src/index.ts
+
+# playwright
+.playwright-mcp/

@@ -12,8 +12,17 @@ export type DemandSource = 'burn' | 'repair'
 /** Supply chain line mode: demand (consumption) or reserve (held stock) */
 export type SupplyChainMode = 'demand' | 'reserve'
 
-/** Supply chain category — determines how demand is calculated */
-export type SupplyChainDemandSource = 'consumables' | 'inputs' | 'repair' | 'government' | 'other'
+/** Whether a fixed demand amount is a total or daily rate */
+export type DemandRate = 'total' | 'daily'
+
+/** Supply chain line source — determines how demand or supply is calculated */
+export type SupplyChainLineSource =
+  | 'consumables'
+  | 'inputs'
+  | 'repair'
+  | 'government'
+  | 'other'
+  | 'production_output'
 
 /** Linked planet info for demand orders/reserves */
 export interface LinkedPlanetInfo {
@@ -122,43 +131,42 @@ export interface SupplyCalculationResult {
 
 // ==================== Supply Dashboard ====================
 
-/** Dashboard data organized by source location */
+/** Dashboard data organized by location */
 export interface SupplyDashboard {
   settings: { burnDays: number; repairDays: number; conditionMode: 'actual' | 'max' }
-  sources: SourceDashboard[]
+  locations: LocationDashboard[]
   materials: MaterialDashboard[]
 }
 
-/** Per-source-location dashboard data */
-export interface SourceDashboard {
-  sourceLocationId: string
-  sourceStock: Record<string, number>
-  destinations: DestinationDashboard[]
-  aggregatedNeed: Record<string, number>
+/** Per-location dashboard data (any location touched by supply chain lines) */
+export interface LocationDashboard {
+  locationId: string
+  stock: Record<string, number>
+  connections: ConnectionDashboard[]
+  aggregatedExport: Record<string, number>
+  aggregatedImport: Record<string, number>
   gap: Record<string, number>
 }
 
-/** Per-destination planet within a source, grouped by storage type */
-export interface DestinationDashboard {
-  planetId: string
-  planetName: string
-  destinationStorageTypes: string[]
-  burn: { ticker: string; need: number }[]
-  repair: { ticker: string; need: number }[]
-  production: { ticker: string; need: number }[]
-  other: { ticker: string; need: number }[]
-  destinationStock: Record<string, number>
+/** Flow data between two connected locations */
+export interface ConnectionDashboard {
+  locationId: string
+  locationName: string
+  storageTypes: string[]
+  exports: { ticker: string; amount: number; lineSource: string }[]
+  imports: { ticker: string; amount: number; lineSource: string }[]
+  connectionStock: Record<string, number>
+  /** Per-ticker production/demand rates at this connection (planets only, null for stations) */
+  rates: Record<string, { dailyProduction: number; dailyDemand: number }> | null
 }
 
 /** Per-material aggregated dashboard data */
 export interface MaterialDashboard {
   ticker: string
-  burnNeed: number
-  repairNeed: number
-  productionNeed: number
+  totalExport: number
+  totalImport: number
   totalNeed: number
-  sourceStock: number
-  destinationStock: number
+  stock: number
   gap: number
-  sources: string[]
+  locations: string[]
 }

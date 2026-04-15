@@ -13,7 +13,12 @@ import {
   Query,
   SuccessResponse,
 } from 'tsoa'
-import type { SupplyChainMode, SupplyChainDemandSource, BuildingData } from '@kawakawa/types'
+import type {
+  SupplyChainMode,
+  SupplyChainLineSource,
+  DemandRate,
+  BuildingData,
+} from '@kawakawa/types'
 import {
   db,
   supplyChainLines,
@@ -43,8 +48,9 @@ interface SupplyChainLineResponse {
   destinationPlanetId: string
   destinationStorageTypes: string[]
   mode: SupplyChainMode
-  demandSource: SupplyChainDemandSource | null
+  lineSource: SupplyChainLineSource | null
   demand: number | null
+  demandRate: DemandRate | null
   createdAt: string
   updatedAt: string
 }
@@ -56,14 +62,17 @@ interface CreateSupplyChainLineRequest {
   destinationPlanetId: string
   destinationStorageTypes: string[]
   mode: SupplyChainMode
-  demandSource?: SupplyChainDemandSource
+  lineSource?: SupplyChainLineSource
   demand?: number
+  demandRate?: DemandRate
 }
 
 interface UpdateSupplyChainLineRequest {
   sourceStorageTypes?: string[]
   destinationStorageTypes?: string[]
+  lineSource?: SupplyChainLineSource
   demand?: number | null
+  demandRate?: DemandRate
 }
 
 interface BulkAddLinesRequest {
@@ -97,8 +106,9 @@ function toLineResponse(line: typeof supplyChainLines.$inferSelect): SupplyChain
     destinationPlanetId: line.destinationPlanetId,
     destinationStorageTypes: line.destinationStorageTypes as string[],
     mode: line.mode,
-    demandSource: line.demandSource,
+    lineSource: line.lineSource,
     demand: line.demand,
+    demandRate: line.demandRate,
     createdAt: line.createdAt.toISOString(),
     updatedAt: line.updatedAt.toISOString(),
   }
@@ -201,16 +211,13 @@ export class SupplyChainController extends Controller {
     if (!location) throw BadRequest('Invalid source location')
 
     // Validate mode-specific fields
-    if (body.mode === 'reserve' && body.demandSource) {
-      throw BadRequest('Reserve lines cannot have a demandSource')
+    if (body.mode === 'reserve' && body.lineSource) {
+      throw BadRequest('Reserve lines cannot have a lineSource')
     }
-    if (body.mode === 'demand' && !body.demandSource && body.demand == null) {
+    if (body.mode === 'demand' && !body.lineSource && body.demand == null) {
       throw BadRequest('Demand lines require either a category or a fixed demand amount')
     }
-    if (
-      (body.demandSource === 'government' || body.demandSource === 'other') &&
-      body.demand == null
-    ) {
+    if ((body.lineSource === 'government' || body.lineSource === 'other') && body.demand == null) {
       throw BadRequest('Government and Other categories require a fixed demand amount')
     }
 
@@ -231,8 +238,9 @@ export class SupplyChainController extends Controller {
         destinationPlanetId: body.destinationPlanetId,
         destinationStorageTypes: body.destinationStorageTypes,
         mode: body.mode,
-        demandSource: body.demandSource ?? null,
+        lineSource: body.lineSource ?? null,
         demand: body.demand ?? null,
+        demandRate: body.demandRate ?? 'daily',
       })
       .returning()
 
@@ -269,6 +277,8 @@ export class SupplyChainController extends Controller {
     if (body.sourceStorageTypes !== undefined) updates.sourceStorageTypes = body.sourceStorageTypes
     if (body.destinationStorageTypes !== undefined)
       updates.destinationStorageTypes = body.destinationStorageTypes
+    if (body.lineSource !== undefined) updates.lineSource = body.lineSource
+    if (body.demandRate !== undefined) updates.demandRate = body.demandRate
     if (body.demand !== undefined) updates.demand = body.demand
 
     await db.update(supplyChainLines).set(updates).where(eq(supplyChainLines.id, id))
@@ -364,22 +374,7 @@ export class SupplyChainController extends Controller {
       body.destinationStorageTypes ??
       (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
-    // Get workforce needs
-    const workforceRows = await db
-      .select({ needs: fioPlanetWorkforce.needs })
-      .from(fioPlanetWorkforce)
-      .where(eq(fioPlanetWorkforce.userPlanetId, planet.id))
-
-    // Extract unique material tickers (only where burn rate > 0)
-    const tickers = new Set<string>()
-    for (const row of workforceRows) {
-      const needs = row.needs as { MaterialTicker: string; UnitsPerInterval: number }[]
-      for (const need of needs) {
-        if (need.UnitsPerInterval > 0) {
-          tickers.add(need.MaterialTicker)
-        }
-      }
-    }
+    const tickers = await this.getConsumableTickers(planet.id)
 
     if (tickers.size === 0) {
       this.setStatus(201)
@@ -416,49 +411,7 @@ export class SupplyChainController extends Controller {
       body.destinationStorageTypes ??
       (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
-    // Project repair needs forward to determine all possible material tickers.
-    // Use max(45, user's repairDays) so we catch materials even for healthy buildings.
-    // Only include buildings with workforce (infra like PSL, STO don't need repairs).
-    const userRepairDays =
-      ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
-    const projectionDays = Math.max(45, userRepairDays)
-    const now = new Date()
-
-    const repairableTickers = await this.getRepairableBuildingTickers()
-
-    const buildingRows = await db
-      .select({
-        buildingTicker: fioPlanetBuildings.buildingTicker,
-        buildingCreated: fioPlanetBuildings.buildingCreated,
-        buildingLastRepair: fioPlanetBuildings.buildingLastRepair,
-        condition: fioPlanetBuildings.condition,
-        repairMaterials: fioPlanetBuildings.repairMaterials,
-        reclaimableMaterials: fioPlanetBuildings.reclaimableMaterials,
-      })
-      .from(fioPlanetBuildings)
-      .where(eq(fioPlanetBuildings.userPlanetId, planet.id))
-
-    const tickers = new Set<string>()
-    for (const row of buildingRows) {
-      if (!repairableTickers.has(row.buildingTicker)) continue
-
-      const building: BuildingData = {
-        buildingTicker: row.buildingTicker,
-        buildingCreated: row.buildingCreated,
-        buildingLastRepair: row.buildingLastRepair,
-        condition: Number(row.condition),
-        repairMaterials: (
-          row.repairMaterials as { MaterialTicker: string; MaterialAmount: number }[]
-        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
-        reclaimableMaterials: (
-          row.reclaimableMaterials as { MaterialTicker: string; MaterialAmount: number }[]
-        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
-      }
-      const needs = calculateBuildingRepairNeeds(building, projectionDays, now)
-      for (const need of needs) {
-        tickers.add(need.ticker)
-      }
-    }
+    const tickers = await this.getRepairMaterialTickers(userId, planet.id)
 
     if (tickers.size === 0) {
       this.setStatus(201)
@@ -495,25 +448,7 @@ export class SupplyChainController extends Controller {
       body.destinationStorageTypes ??
       (await this.getStorageTypesAt(userId, body.destinationPlanetId))
 
-    // Get production inputs from recurring orders
-    const productionRows = await db
-      .select({ orders: fioPlanetProduction.orders })
-      .from(fioPlanetProduction)
-      .where(eq(fioPlanetProduction.userPlanetId, planet.id))
-
-    const tickers = new Set<string>()
-    for (const row of productionRows) {
-      const orders = row.orders as {
-        Recurring: boolean
-        Inputs: { MaterialTicker: string }[]
-      }[]
-      for (const order of orders) {
-        if (!order.Recurring) continue
-        for (const input of order.Inputs) {
-          tickers.add(input.MaterialTicker)
-        }
-      }
-    }
+    const tickers = await this.getRecurringInputTickers(planet.id)
 
     if (tickers.size === 0) {
       this.setStatus(201)
@@ -527,6 +462,91 @@ export class SupplyChainController extends Controller {
       sourceStorageTypes,
       destinationStorageTypes,
       'inputs',
+      tickers
+    )
+  }
+
+  /**
+   * Get production output material tickers for a planet.
+   * Returns unique tickers from recurring production order outputs.
+   */
+  @Get('output-tickers/{planetId}')
+  public async getOutputTickers(
+    @Path() planetId: string,
+    @Request() request: { user: JwtPayload }
+  ): Promise<string[]> {
+    const planet = await this.resolveUserPlanet(request.user.userId, planetId)
+    return this.getRecurringOutputTickers(planet.id)
+  }
+
+  /**
+   * Get detected material tickers for a planet + category, sourced from FIO data.
+   * Used by the Supply Lines form to filter the Material dropdown.
+   * For `production_output` the planetId is the producing planet; for the others it is the destination.
+   */
+  @Get('detected-tickers/{planetId}/{category}')
+  public async getDetectedTickers(
+    @Path() planetId: string,
+    @Path() category: SupplyChainLineSource,
+    @Request() request: { user: JwtPayload }
+  ): Promise<string[]> {
+    const userId = request.user.userId
+    const planet = await this.resolveUserPlanet(userId, planetId)
+    let tickers: Set<string>
+    switch (category) {
+      case 'consumables':
+        tickers = await this.getConsumableTickers(planet.id)
+        break
+      case 'inputs':
+        tickers = await this.getRecurringInputTickers(planet.id)
+        break
+      case 'repair':
+        tickers = await this.getRepairMaterialTickers(userId, planet.id)
+        break
+      case 'production_output':
+        return this.getRecurringOutputTickers(planet.id)
+      default:
+        return []
+    }
+    return [...tickers].sort()
+  }
+
+  /**
+   * Bulk add production output lines for a planet.
+   * Creates one supply chain line per production output material from recurring orders.
+   * Skips materials that already have a matching line.
+   */
+  @Post('add-outputs')
+  @SuccessResponse('201', 'Created')
+  public async addOutputLines(
+    @Body() body: BulkAddLinesRequest,
+    @Request() request: { user: JwtPayload }
+  ): Promise<BulkAddLinesResponse> {
+    const userId = request.user.userId
+    // For production_output: source = producing planet, destination = hub
+    const planet = await this.resolveUserPlanet(userId, body.sourceLocationId)
+    const sourceStorageTypes =
+      body.sourceStorageTypes ?? (await this.getStorageTypesAt(userId, body.sourceLocationId))
+    const destinationStorageTypes =
+      body.destinationStorageTypes ??
+      (await this.getStorageTypesAt(userId, body.destinationPlanetId))
+
+    // Get production output tickers from recurring orders
+    const tickerList = await this.getRecurringOutputTickers(planet.id)
+    const tickers = new Set(tickerList)
+
+    if (tickers.size === 0) {
+      this.setStatus(201)
+      return { created: 0, skipped: 0, lines: [] }
+    }
+
+    return this.bulkInsertLines(
+      userId,
+      body.sourceLocationId,
+      body.destinationPlanetId,
+      sourceStorageTypes,
+      destinationStorageTypes,
+      'production_output',
       tickers
     )
   }
@@ -565,6 +585,130 @@ export class SupplyChainController extends Controller {
   }
 
   /**
+   * Get unique output material tickers from recurring production orders for a planet.
+   */
+  private async getRecurringOutputTickers(userPlanetDbId: number): Promise<string[]> {
+    const productionRows = await db
+      .select({ orders: fioPlanetProduction.orders })
+      .from(fioPlanetProduction)
+      .where(eq(fioPlanetProduction.userPlanetId, userPlanetDbId))
+
+    const tickers = new Set<string>()
+    for (const row of productionRows) {
+      const orders = row.orders as {
+        Recurring: boolean
+        Outputs: { MaterialTicker: string }[]
+      }[]
+      for (const order of orders) {
+        if (!order.Recurring) continue
+        for (const output of order.Outputs) {
+          tickers.add(output.MaterialTicker)
+        }
+      }
+    }
+    return [...tickers].sort()
+  }
+
+  /**
+   * Get unique input material tickers from recurring production orders for a planet.
+   */
+  private async getRecurringInputTickers(userPlanetDbId: number): Promise<Set<string>> {
+    const productionRows = await db
+      .select({ orders: fioPlanetProduction.orders })
+      .from(fioPlanetProduction)
+      .where(eq(fioPlanetProduction.userPlanetId, userPlanetDbId))
+
+    const tickers = new Set<string>()
+    for (const row of productionRows) {
+      const orders = row.orders as {
+        Recurring: boolean
+        Inputs: { MaterialTicker: string }[]
+      }[]
+      for (const order of orders) {
+        if (!order.Recurring) continue
+        for (const input of order.Inputs) {
+          tickers.add(input.MaterialTicker)
+        }
+      }
+    }
+    return tickers
+  }
+
+  /**
+   * Get unique consumable material tickers from workforce needs for a planet.
+   * Only includes materials with burn rate > 0.
+   */
+  private async getConsumableTickers(userPlanetDbId: number): Promise<Set<string>> {
+    const workforceRows = await db
+      .select({ needs: fioPlanetWorkforce.needs })
+      .from(fioPlanetWorkforce)
+      .where(eq(fioPlanetWorkforce.userPlanetId, userPlanetDbId))
+
+    const tickers = new Set<string>()
+    for (const row of workforceRows) {
+      const needs = row.needs as { MaterialTicker: string; UnitsPerInterval: number }[]
+      for (const need of needs) {
+        if (need.UnitsPerInterval > 0) {
+          tickers.add(need.MaterialTicker)
+        }
+      }
+    }
+    return tickers
+  }
+
+  /**
+   * Get unique repair material tickers for a planet by projecting repair needs forward.
+   * Uses max(45, user's repairDays) so we catch materials even for healthy buildings.
+   * Only includes buildings with workforce (infra like PSL, STO don't need repairs).
+   */
+  private async getRepairMaterialTickers(
+    userId: number,
+    userPlanetDbId: number
+  ): Promise<Set<string>> {
+    const userRepairDays =
+      ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
+    const projectionDays = Math.max(45, userRepairDays)
+    const now = new Date()
+
+    const repairableTickers = await this.getRepairableBuildingTickers()
+
+    const buildingRows = await db
+      .select({
+        buildingTicker: fioPlanetBuildings.buildingTicker,
+        buildingCreated: fioPlanetBuildings.buildingCreated,
+        buildingLastRepair: fioPlanetBuildings.buildingLastRepair,
+        condition: fioPlanetBuildings.condition,
+        repairMaterials: fioPlanetBuildings.repairMaterials,
+        reclaimableMaterials: fioPlanetBuildings.reclaimableMaterials,
+      })
+      .from(fioPlanetBuildings)
+      .where(eq(fioPlanetBuildings.userPlanetId, userPlanetDbId))
+
+    const tickers = new Set<string>()
+    for (const row of buildingRows) {
+      if (!repairableTickers.has(row.buildingTicker)) continue
+
+      const building: BuildingData = {
+        buildingTicker: row.buildingTicker,
+        buildingCreated: row.buildingCreated,
+        buildingLastRepair: row.buildingLastRepair,
+        condition: Number(row.condition),
+        repairMaterials: (
+          row.repairMaterials as { MaterialTicker: string; MaterialAmount: number }[]
+        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
+        reclaimableMaterials: (
+          row.reclaimableMaterials as { MaterialTicker: string; MaterialAmount: number }[]
+        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
+      }
+      const needs = calculateBuildingRepairNeeds(building, projectionDays, now)
+      for (const need of needs) {
+        tickers.add(need.ticker)
+      }
+    }
+    return tickers
+  }
+
+  /**
    * Fetch building definitions from FIO and return tickers that have workforce > 0
    * (infrastructure buildings like PSL, STO don't need repairs).
    */
@@ -587,7 +731,7 @@ export class SupplyChainController extends Controller {
     destinationPlanetId: string,
     sourceStorageTypes: string[],
     destinationStorageTypes: string[],
-    demandSource: SupplyChainDemandSource,
+    lineSource: SupplyChainLineSource,
     tickers: Set<string>
   ): Promise<BulkAddLinesResponse> {
     // Find existing lines to avoid duplicates
@@ -602,7 +746,7 @@ export class SupplyChainController extends Controller {
           eq(supplyChainLines.sourceLocationId, sourceLocationId),
           eq(supplyChainLines.destinationPlanetId, destinationPlanetId),
           eq(supplyChainLines.mode, 'demand'),
-          eq(supplyChainLines.demandSource, demandSource)
+          eq(supplyChainLines.lineSource, lineSource)
         )
       )
 
@@ -626,7 +770,7 @@ export class SupplyChainController extends Controller {
           destinationPlanetId,
           destinationStorageTypes,
           mode: 'demand' as const,
-          demandSource,
+          lineSource,
         }))
       )
       .returning()

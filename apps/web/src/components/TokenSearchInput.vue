@@ -76,6 +76,8 @@ import { useShoppingListStore } from '../stores/shoppingList'
 export type SearchChipType =
   | 'commodity'
   | 'location'
+  | 'source'
+  | 'destination'
   | 'user'
   | 'itemType'
   | 'shoppingList'
@@ -111,6 +113,10 @@ const chipColor = (type: SearchChip['type'], value?: string): string => {
       return 'primary'
     case 'location':
       return 'secondary'
+    case 'source':
+      return 'blue'
+    case 'destination':
+      return 'green'
     case 'user':
       return 'info'
     case 'itemType':

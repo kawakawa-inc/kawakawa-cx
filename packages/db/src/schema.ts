@@ -91,14 +91,16 @@ export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'p
 export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
 export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
 export const demandSourceEnum = pgEnum('demand_source', ['burn', 'repair'])
-export const supplyChainDemandSourceEnum = pgEnum('supply_chain_demand_source', [
+export const supplyChainLineSourceEnum = pgEnum('supply_chain_line_source', [
   'consumables',
   'inputs',
   'repair',
   'government',
   'other',
+  'production_output',
 ])
 export const supplyChainModeEnum = pgEnum('supply_chain_mode', ['demand', 'reserve'])
+export const demandRateEnum = pgEnum('demand_rate', ['total', 'daily'])
 
 // ==================== SETTINGS (Generic key-value with history) ====================
 export const settings = pgTable(
@@ -519,8 +521,9 @@ export const supplyChainLines = pgTable(
     destinationPlanetId: varchar('destination_planet_id', { length: 20 }).notNull(),
     destinationStorageTypes: jsonb('destination_storage_types').notNull(), // string[]
     mode: supplyChainModeEnum('mode').notNull(), // 'demand' or 'reserve'
-    demandSource: supplyChainDemandSourceEnum('demand_source'), // 'consumables' | 'inputs' | 'repair' | null
-    demand: integer('demand'), // fixed amount (overrides demandSource if set)
+    lineSource: supplyChainLineSourceEnum('line_source'), // 'consumables' | 'inputs' | 'repair' | 'production_output' | null
+    demand: integer('demand'), // fixed amount (overrides lineSource calculation if set)
+    demandRate: demandRateEnum('demand_rate').default('daily'), // 'total' = fixed, 'daily' = per day * burnDays
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

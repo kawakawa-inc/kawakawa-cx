@@ -44,7 +44,8 @@ import type {
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
   SupplyChainMode,
-  SupplyChainDemandSource,
+  SupplyChainLineSource,
+  DemandRate,
   SupplyDashboard,
 } from '@kawakawa/types'
 
@@ -4481,10 +4482,48 @@ const realApi = {
     return response.json()
   },
 
+  getOutputTickers: async (planetId: string): Promise<string[]> => {
+    const response = await fetchWithLogging(`/api/supply-chain/output-tickers/${planetId}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) return []
+    return response.json()
+  },
+
+  getDetectedTickers: async (planetId: string, category: string): Promise<string[]> => {
+    const response = await fetchWithLogging(
+      `/api/supply-chain/detected-tickers/${planetId}/${category}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) return []
+    return response.json()
+  },
+
+  addOutputLines: async (request: BulkAddLinesRequest): Promise<BulkAddLinesResponse> => {
+    const response = await fetchWithLogging('/api/supply-chain/add-outputs', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to add output lines')
+    }
+    return response.json()
+  },
+
   // ==================== Supply Dashboard ====================
 
-  getSupplyDashboard: async (): Promise<SupplyDashboard> => {
-    const response = await fetchWithLogging('/api/supply-planning/dashboard', {
+  getSupplyDashboard: async (locationId?: string): Promise<SupplyDashboard> => {
+    const params = locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''
+    const response = await fetchWithLogging(`/api/supply-planning/dashboard${params}`, {
       method: 'GET',
       headers: getAuthHeaders(),
     })
@@ -4536,8 +4575,9 @@ interface SupplyChainLineResponse {
   destinationPlanetId: string
   destinationStorageTypes: string[]
   mode: SupplyChainMode
-  demandSource: SupplyChainDemandSource | null
+  lineSource: SupplyChainLineSource | null
   demand: number | null
+  demandRate: DemandRate | null
   createdAt: string
   updatedAt: string
 }
@@ -4549,14 +4589,17 @@ interface CreateSupplyChainLineRequest {
   destinationPlanetId: string
   destinationStorageTypes: string[]
   mode: SupplyChainMode
-  demandSource?: SupplyChainDemandSource
+  lineSource?: SupplyChainLineSource
   demand?: number
+  demandRate?: DemandRate
 }
 
 interface UpdateSupplyChainLineRequest {
   sourceStorageTypes?: string[]
   destinationStorageTypes?: string[]
+  lineSource?: SupplyChainLineSource
   demand?: number | null
+  demandRate?: DemandRate
 }
 
 interface BulkAddLinesRequest {
@@ -4860,10 +4903,14 @@ export const api = {
     addConsumables: (request: BulkAddLinesRequest) => realApi.addConsumableLines(request),
     addRepair: (request: BulkAddLinesRequest) => realApi.addRepairLines(request),
     addInputs: (request: BulkAddLinesRequest) => realApi.addInputLines(request),
+    addOutputs: (request: BulkAddLinesRequest) => realApi.addOutputLines(request),
+    getOutputTickers: (planetId: string) => realApi.getOutputTickers(planetId),
+    getDetectedTickers: (planetId: string, category: string) =>
+      realApi.getDetectedTickers(planetId, category),
     getLocations: () => realApi.getSupplyChainLocations(),
   },
   supplyDashboard: {
-    get: () => realApi.getSupplyDashboard(),
+    get: (locationId?: string) => realApi.getSupplyDashboard(locationId),
     getPlanets: () => realApi.getSupplyPlanets(),
     sync: () => realApi.syncSupplyPlanets(),
     syncInventory: () => realApi.syncFioInventory(),

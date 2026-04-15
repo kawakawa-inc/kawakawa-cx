@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   getFilteredStock,
   calculateLineDemand,
+  calculateOutputSupply,
   recalculateDemandOrders,
   recalculateDemandReserves,
 } from './demand-calculator.js'
@@ -42,7 +43,7 @@ vi.mock('../db/index.js', () => ({
     commodityTicker: 'commodityTicker',
     sourceLocationId: 'sourceLocationId',
     mode: 'mode',
-    demandSource: 'demandSource',
+    lineSource: 'lineSource',
     demand: 'demand',
     destinationPlanetId: 'destinationPlanetId',
     sourceStorageTypes: 'sourceStorageTypes',
@@ -106,16 +107,16 @@ describe('demand-calculator', () => {
   describe('calculateLineDemand', () => {
     it('should return fixed demand when set', async () => {
       const demand = await calculateLineDemand(
-        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', demandSource: null, demand: 500 },
+        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', lineSource: null, demand: 500 },
         1,
         30
       )
       expect(demand).toBe(500)
     })
 
-    it('should return 0 when no demandSource and no demand', async () => {
+    it('should return 0 when no lineSource and no demand', async () => {
       const demand = await calculateLineDemand(
-        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', demandSource: null, demand: null },
+        { commodityTicker: 'DW', destinationPlanetId: 'UV-351a', lineSource: null, demand: null },
         1,
         30
       )
@@ -139,7 +140,7 @@ describe('demand-calculator', () => {
         {
           commodityTicker: 'CAF',
           destinationPlanetId: 'UV-351a',
-          demandSource: 'consumables',
+          lineSource: 'consumables',
           demand: null,
         },
         1,
@@ -169,7 +170,7 @@ describe('demand-calculator', () => {
         {
           commodityTicker: 'BBH',
           destinationPlanetId: 'UV-351a',
-          demandSource: 'repair',
+          lineSource: 'repair',
           demand: null,
         },
         1,
@@ -185,13 +186,80 @@ describe('demand-calculator', () => {
         {
           commodityTicker: 'CAF',
           destinationPlanetId: 'UNKNOWN',
-          demandSource: 'consumables',
+          lineSource: 'consumables',
           demand: null,
         },
         1,
         30
       )
       expect(demand).toBe(0)
+    })
+
+    it('should calculate production output surplus', async () => {
+      // Planet lookup
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      // Production data: produces 10 FE per order, consumes 3 FE per order, 1 day cycle
+      mockSelectWhere.mockResolvedValueOnce([
+        {
+          capacity: 1,
+          condition: '1.0',
+          orders: [
+            {
+              Recurring: true,
+              StartedEpochMs: null,
+              DurationMs: 86_400_000, // 1 day
+              Inputs: [{ MaterialTicker: 'FE', MaterialAmount: 3 }],
+              Outputs: [{ MaterialTicker: 'FE', MaterialAmount: 10 }],
+            },
+          ],
+        },
+      ])
+
+      const supply = await calculateLineDemand(
+        {
+          commodityTicker: 'FE',
+          destinationPlanetId: 'UV-351a',
+          lineSource: 'production_output',
+          demand: null,
+        },
+        1,
+        10
+      )
+      // net = 10 - 3 = 7 per day, ceil(7 * 10) = 70
+      expect(supply).toBe(70)
+    })
+
+    it('should return 0 for production output when planet is net consumer', async () => {
+      // Planet lookup
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }])
+      // Production data: consumes more FE than it produces
+      mockSelectWhere.mockResolvedValueOnce([
+        {
+          capacity: 1,
+          condition: '1.0',
+          orders: [
+            {
+              Recurring: true,
+              StartedEpochMs: null,
+              DurationMs: 86_400_000,
+              Inputs: [{ MaterialTicker: 'FE', MaterialAmount: 10 }],
+              Outputs: [{ MaterialTicker: 'FE', MaterialAmount: 3 }],
+            },
+          ],
+        },
+      ])
+
+      const supply = await calculateLineDemand(
+        {
+          commodityTicker: 'FE',
+          destinationPlanetId: 'UV-351a',
+          lineSource: 'production_output',
+          demand: null,
+        },
+        1,
+        10
+      )
+      expect(supply).toBe(0)
     })
   })
 
@@ -216,6 +284,178 @@ describe('demand-calculator', () => {
       expect(result.ordersProcessed).toBe(0)
       expect(result.ordersUpdated).toBe(0)
       expect(result.errors).toHaveLength(0)
+    })
+  })
+
+  describe('calculateOutputSupply', () => {
+    const prodOrders = (dailyOutput: number) => [
+      {
+        capacity: 1,
+        condition: '1.0',
+        orders: [
+          {
+            Recurring: true,
+            StartedEpochMs: null,
+            DurationMs: 86_400_000,
+            Inputs: [],
+            Outputs: [{ MaterialTicker: 'CAF', MaterialAmount: dailyOutput }],
+          },
+        ],
+      },
+    ]
+
+    it('should return fixed demand when set', async () => {
+      const supply = await calculateOutputSupply(
+        {
+          commodityTicker: 'CAF',
+          sourceLocationId: 'EW',
+          destinationPlanetId: 'BEN',
+          demand: 200,
+        },
+        1,
+        10
+      )
+      expect(supply).toBe(200)
+    })
+
+    // Helper: mock the per-destination demand lookup sequence
+    // Each dest needs: planet lookup, workforce, production rates
+    function mockDestDemand(planetDbId: number | null, burnRate: number, inputRate = 0) {
+      if (planetDbId === null) {
+        mockSelectWhere.mockResolvedValueOnce([]) // planet not found (e.g. station)
+        return
+      }
+      mockSelectWhere.mockResolvedValueOnce([{ id: planetDbId }]) // planet lookup
+      // Workforce burn for this material
+      mockSelectWhere.mockResolvedValueOnce(
+        burnRate > 0 ? [{ needs: [{ MaterialTicker: 'CAF', UnitsPerInterval: burnRate }] }] : []
+      )
+      // Production rates at destination (input consumption)
+      mockSelectWhere.mockResolvedValueOnce(
+        inputRate > 0
+          ? [
+              {
+                capacity: 1,
+                condition: '1.0',
+                orders: [
+                  {
+                    Recurring: true,
+                    StartedEpochMs: null,
+                    DurationMs: 86_400_000,
+                    Inputs: [{ MaterialTicker: 'CAF', MaterialAmount: inputRate }],
+                    Outputs: [],
+                  },
+                ],
+              },
+            ]
+          : []
+      )
+    }
+
+    it('should return full production for a single output with no demand', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // source planet
+      mockSelectWhere.mockResolvedValueOnce(prodOrders(10)) // 100 over 10 days
+      mockSelectWhere.mockResolvedValueOnce([]) // local burn rates (none)
+      // Output lines: just this one to BEN
+      mockSelectWhere.mockResolvedValueOnce([
+        { id: 1, lineSource: 'production_output', destinationPlanetId: 'BEN', demand: null },
+      ])
+      // BEN is a station — no planet found, so demand = 0
+      mockDestDemand(null, 0)
+
+      const supply = await calculateOutputSupply(
+        {
+          commodityTicker: 'CAF',
+          sourceLocationId: 'EW',
+          destinationPlanetId: 'BEN',
+          demand: null,
+        },
+        1,
+        10
+      )
+      expect(supply).toBe(100)
+    })
+
+    it('should fill demand destinations first, surplus goes to no-demand dest', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // source planet
+      mockSelectWhere.mockResolvedValueOnce(prodOrders(10)) // 100 over 10 days
+      mockSelectWhere.mockResolvedValueOnce([]) // local burn rates (none)
+      // 3 output lines
+      mockSelectWhere.mockResolvedValueOnce([
+        { id: 1, lineSource: 'production_output', destinationPlanetId: 'P1', demand: null },
+        { id: 2, lineSource: 'production_output', destinationPlanetId: 'P2', demand: null },
+        { id: 3, lineSource: 'production_output', destinationPlanetId: 'BEN', demand: null },
+      ])
+      mockDestDemand(20, 0, 2) // P1: 2 CAF/day input = 20 over 10 days
+      mockDestDemand(30, 0, 3) // P2: 3 CAF/day input = 30 over 10 days
+      mockDestDemand(null, 0) // BEN: station, 0 demand
+
+      // production=100, fairShare=100/2=50, P1 gets min(20,50)=20, P2 gets min(30,50)=30
+      // remaining=50, BEN gets 50
+      const supply = await calculateOutputSupply(
+        {
+          commodityTicker: 'CAF',
+          sourceLocationId: 'EW',
+          destinationPlanetId: 'BEN',
+          demand: null,
+        },
+        1,
+        10
+      )
+      expect(supply).toBe(50)
+    })
+
+    it('should use fair-share allocation capped at demand', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // source planet
+      mockSelectWhere.mockResolvedValueOnce(prodOrders(5)) // 50 over 10 days
+      mockSelectWhere.mockResolvedValueOnce([]) // local burn rates (none)
+      // 2 output lines to planets
+      mockSelectWhere.mockResolvedValueOnce([
+        { id: 1, lineSource: 'production_output', destinationPlanetId: 'P1', demand: null },
+        { id: 2, lineSource: 'production_output', destinationPlanetId: 'P2', demand: null },
+      ])
+      mockDestDemand(20, 0, 2) // P1: 20 demand (smaller)
+      mockDestDemand(30, 0, 4) // P2: 40 demand (larger)
+
+      // fairShare=50/2=25, P1 needs 20 gets 20, leftover 5 goes to P2
+      // P2 gets 25+5=30 (capped at 40, so 30)
+      const supplyP1 = await calculateOutputSupply(
+        {
+          commodityTicker: 'CAF',
+          sourceLocationId: 'EW',
+          destinationPlanetId: 'P1',
+          demand: null,
+        },
+        1,
+        10
+      )
+      expect(supplyP1).toBe(20)
+    })
+
+    it('should return 0 when production is exhausted', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // source planet
+      mockSelectWhere.mockResolvedValueOnce(prodOrders(2)) // 20 over 10 days
+      mockSelectWhere.mockResolvedValueOnce([]) // local burn rates (none)
+      // 2 output lines
+      mockSelectWhere.mockResolvedValueOnce([
+        { id: 1, lineSource: 'production_output', destinationPlanetId: 'P1', demand: null },
+        { id: 2, lineSource: 'production_output', destinationPlanetId: 'BEN', demand: null },
+      ])
+      mockDestDemand(20, 0, 3) // P1: 30 demand (exceeds production)
+      mockDestDemand(null, 0) // BEN: 0 demand
+
+      // P1 gets min(30, 20) = 20, nothing left for BEN
+      const supply = await calculateOutputSupply(
+        {
+          commodityTicker: 'CAF',
+          sourceLocationId: 'EW',
+          destinationPlanetId: 'BEN',
+          demand: null,
+        },
+        1,
+        10
+      )
+      expect(supply).toBe(0)
     })
   })
 })

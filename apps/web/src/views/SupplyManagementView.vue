@@ -8,7 +8,7 @@
     <v-card class="mb-4">
       <v-card-text>
         <v-row align="center">
-          <v-col cols="12" sm="4" md="3">
+          <v-col cols="auto" style="width: 180px">
             <v-text-field
               v-model.number="burnDays"
               label="Burn Days"
@@ -20,7 +20,7 @@
               @update:model-value="saveSettingDebounced('supply.burnDays', $event)"
             />
           </v-col>
-          <v-col cols="12" sm="4" md="3">
+          <v-col cols="auto" style="width: 180px">
             <v-text-field
               v-model.number="repairDays"
               label="Repair Days"
@@ -33,7 +33,6 @@
             />
           </v-col>
           <v-col cols="auto" class="d-flex align-center">
-            <span class="text-body-2 mr-2">Condition:</span>
             <v-btn-toggle
               v-model="conditionMode"
               density="compact"
@@ -42,8 +41,28 @@
               mandatory
               @update:model-value="saveSettingDebounced('supply.conditionMode', $event)"
             >
+              <v-btn size="small" class="px-2 settings-label-btn" :ripple="false">
+                <v-icon size="small">mdi-wrench</v-icon>
+                <span class="ml-1">Condition</span>
+              </v-btn>
               <v-btn value="actual" size="small">Actual</v-btn>
               <v-btn value="max" size="small">Max</v-btn>
+            </v-btn-toggle>
+          </v-col>
+          <v-col cols="auto" class="d-flex align-center">
+            <v-btn-toggle
+              v-model="stockMode"
+              density="compact"
+              variant="outlined"
+              color="primary"
+              mandatory
+            >
+              <v-btn size="small" class="px-2 settings-label-btn" :ripple="false">
+                <v-icon size="small">mdi-package-variant</v-icon>
+                <span class="ml-1">Stock</span>
+              </v-btn>
+              <v-btn value="included" size="small">Included</v-btn>
+              <v-btn value="ignored" size="small">Ignored</v-btn>
             </v-btn-toggle>
           </v-col>
           <v-col cols="auto" class="ml-auto d-flex ga-2">
@@ -77,7 +96,7 @@
       <v-tabs v-model="pageState.activeTab" class="mb-4">
         <v-tab value="planet">
           <v-icon start>mdi-warehouse</v-icon>
-          Sources
+          Connections
         </v-tab>
         <v-tab value="material">
           <v-icon start>mdi-cube-outline</v-icon>
@@ -90,9 +109,25 @@
       </v-tabs>
 
       <v-tabs-window v-model="pageState.activeTab">
-        <!-- Sources Tab -->
+        <!-- Connections Tab -->
         <v-tabs-window-item value="planet">
-          <v-card v-if="!dashboard || dashboard.sources.length === 0" class="mb-4">
+          <!-- Location picker -->
+          <div class="d-flex align-center ga-3 mb-4">
+            <KeyValueAutocomplete
+              :model-value="pageState.selectedLocation"
+              :items="availableLocationItems"
+              :favorites="settingsStore.favoritedLocations.value"
+              label="Location"
+              density="compact"
+              hide-details
+              style="max-width: 350px"
+              @update:model-value="pageState.selectedLocation = ($event as string) ?? ''"
+              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
+            />
+          </div>
+
+          <!-- No supply lines state -->
+          <v-card v-if="!dashboard || allLines.length === 0" class="mb-4">
             <v-card-text class="text-center py-8">
               <v-icon size="64" color="grey-lighten-1">mdi-link-variant-off</v-icon>
               <p class="text-h6 mt-4">No supply chain configured</p>
@@ -101,377 +136,369 @@
               </p>
             </v-card-text>
           </v-card>
-          <v-expansion-panels
-            v-for="source in dashboard?.sources ?? []"
-            :key="source.sourceLocationId"
-            v-model="expandedSourcePanels[source.sourceLocationId]"
-            class="mb-4"
-          >
-            <v-expansion-panel class="source-panel">
-              <v-expansion-panel-title>
-                <div class="d-flex align-center">
-                  <v-icon start>mdi-warehouse</v-icon>
-                  <span class="text-h6">{{ getLocationDisplay(source.sourceLocationId) }}</span>
-                </div>
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <!-- Stock + Order cards -->
-                <div
-                  class="stock-cards-container"
-                  :style="{ height: (sourceCardHeight[source.sourceLocationId] ?? 250) + 'px' }"
-                >
-                  <v-row>
-                    <!-- Left: Stock -->
-                    <v-col cols="12" md="6">
-                      <v-card class="source-stock-card">
-                        <v-card-text>
-                          <div class="d-flex align-center mb-1">
-                            <v-icon start size="small">mdi-package-variant</v-icon>
-                            <span class="text-subtitle-2">Stock</span>
-                            <v-spacer />
-                            <v-icon size="small" class="mr-1 text-medium-emphasis">mdi-sort</v-icon>
-                            <v-btn-toggle
-                              v-model="sourceStockSort[source.sourceLocationId]"
-                              density="compact"
-                              variant="outlined"
-                              color="primary"
-                              mandatory
-                            >
-                              <v-btn value="name" size="x-small">Name</v-btn>
-                              <v-btn value="category" size="x-small">Category</v-btn>
-                              <v-btn value="amount" size="x-small">Amount</v-btn>
-                            </v-btn-toggle>
-                          </div>
-                          <div class="d-flex align-center ga-1 mb-2 flex-wrap">
-                            <v-btn
-                              v-for="cat in getSourceCategories(source)"
-                              :key="cat"
-                              size="x-small"
-                              :variant="
-                                isSourceFilterActive(source.sourceLocationId, 'cat', cat, 'stock')
-                                  ? 'flat'
-                                  : 'outlined'
-                              "
-                              :color="
-                                isSourceFilterActive(source.sourceLocationId, 'cat', cat, 'stock')
-                                  ? 'primary'
-                                  : undefined
-                              "
-                              @click="
-                                toggleSourceFilter(source.sourceLocationId, 'cat', cat, 'stock')
-                              "
-                            >
-                              <v-icon start size="small">{{ getCategoryIcon(cat) }}</v-icon>
-                              {{ categoryLabel(cat) }}
-                            </v-btn>
-                            <v-divider vertical class="mx-1" />
-                            <v-btn
-                              v-for="st in getSourceStorageTypes(source)"
-                              :key="st"
-                              size="x-small"
-                              :variant="
-                                isSourceFilterActive(
-                                  source.sourceLocationId,
-                                  'storage',
-                                  st,
-                                  'stock'
-                                )
-                                  ? 'flat'
-                                  : 'outlined'
-                              "
-                              :color="
-                                isSourceFilterActive(
-                                  source.sourceLocationId,
-                                  'storage',
-                                  st,
-                                  'stock'
-                                )
-                                  ? 'primary'
-                                  : undefined
-                              "
-                              @click="
-                                toggleSourceFilter(source.sourceLocationId, 'storage', st, 'stock')
-                              "
-                            >
-                              <v-icon start size="small">{{
-                                st === 'STORE' ? 'mdi-earth' : 'mdi-warehouse'
-                              }}</v-icon>
-                              {{ st === 'STORE' ? 'Base' : 'WAR' }}
-                            </v-btn>
-                          </div>
-                          <div class="d-flex flex-wrap ga-1">
-                            <div
-                              v-for="item in getSortedSourceStock(source)"
-                              :key="item.ticker"
-                              class="stock-icon-wrapper"
-                            >
-                              <CommodityIcon
-                                v-if="item.commodity"
-                                :commodity="item.commodity"
-                                class="stock-icon"
-                              />
-                              <div v-else class="stock-icon stock-icon-fallback">
-                                {{ item.ticker }}
-                              </div>
-                              <span
-                                class="stock-qty"
-                                :class="{
-                                  'stock-qty-zero': item.quantity <= 0,
-                                  'stock-qty-gap':
-                                    item.quantity > 0 && (source.gap[item.ticker] ?? 0) > 0,
-                                }"
-                              >
-                                {{ item.quantity }}
-                              </span>
-                            </div>
-                          </div>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
 
-                    <!-- Right: Needs -->
-                    <v-col cols="12" md="6">
-                      <v-card class="source-stock-card d-flex flex-column">
-                        <v-card-text class="flex-grow-1 d-flex flex-column">
-                          <div class="d-flex align-center ga-2 mb-1">
-                            <v-icon start size="small">mdi-cart-outline</v-icon>
-                            <span class="text-subtitle-2">Needs</span>
-                            <v-spacer />
-                            <v-select
-                              v-model="sourceOrderPriceList[source.sourceLocationId]"
-                              :items="priceLists"
-                              item-title="name"
-                              item-value="code"
-                              label="Price List"
-                              density="compact"
-                              variant="underlined"
-                              hide-details
-                              clearable
-                              style="max-width: 480px"
+          <!-- No location selected state -->
+          <v-card v-else-if="!activeLocation" class="mb-4">
+            <v-card-text class="text-center py-8">
+              <v-icon size="64" color="grey-lighten-1">mdi-map-marker-question</v-icon>
+              <p class="text-h6 mt-4">Select a location</p>
+              <p class="text-body-2 text-medium-emphasis">
+                Choose a location above to view its supply connections.
+              </p>
+            </v-card-text>
+          </v-card>
+
+          <!-- Single location view -->
+          <template v-else>
+            <div v-for="location in [activeLocation]" :key="location.locationId">
+              <!-- Stock + Order cards -->
+              <div
+                class="stock-cards-container"
+                :style="{ height: (sourceCardHeight[location.locationId] ?? 250) + 'px' }"
+              >
+                <v-row>
+                  <!-- Left: Stock -->
+                  <v-col cols="12" md="6">
+                    <v-card
+                      class="source-stock-card"
+                      :style="stockMode === 'ignored' ? { opacity: 0.4 } : {}"
+                    >
+                      <v-card-text>
+                        <div class="d-flex align-center mb-1">
+                          <v-icon start size="small">mdi-package-variant</v-icon>
+                          <span class="text-subtitle-2">Stock</span>
+                          <v-spacer />
+                          <v-icon size="small" class="mr-1 text-medium-emphasis">mdi-sort</v-icon>
+                          <v-btn-toggle
+                            v-model="sourceStockSort[location.locationId]"
+                            density="compact"
+                            variant="outlined"
+                            color="primary"
+                            mandatory
+                          >
+                            <v-btn value="name" size="x-small">Name</v-btn>
+                            <v-btn value="category" size="x-small">Category</v-btn>
+                            <v-btn value="amount" size="x-small">Amount</v-btn>
+                          </v-btn-toggle>
+                        </div>
+                        <div class="d-flex align-center ga-1 mb-2 flex-wrap">
+                          <v-btn
+                            v-for="cat in getLocationCategories(location)"
+                            :key="cat"
+                            size="x-small"
+                            :variant="
+                              isSourceFilterActive(location.locationId, 'cat', cat, 'stock')
+                                ? 'flat'
+                                : 'outlined'
+                            "
+                            :color="
+                              isSourceFilterActive(location.locationId, 'cat', cat, 'stock')
+                                ? 'primary'
+                                : undefined
+                            "
+                            @click="toggleSourceFilter(location.locationId, 'cat', cat, 'stock')"
+                          >
+                            <v-icon start size="small">{{ getCategoryIcon(cat) }}</v-icon>
+                            {{ categoryLabel(cat) }}
+                          </v-btn>
+                          <v-divider vertical class="mx-1" />
+                          <v-btn
+                            v-for="st in getLocationStorageTypes(location)"
+                            :key="st"
+                            size="x-small"
+                            :variant="
+                              isSourceFilterActive(location.locationId, 'storage', st, 'stock')
+                                ? 'flat'
+                                : 'outlined'
+                            "
+                            :color="
+                              isSourceFilterActive(location.locationId, 'storage', st, 'stock')
+                                ? 'primary'
+                                : undefined
+                            "
+                            @click="toggleSourceFilter(location.locationId, 'storage', st, 'stock')"
+                          >
+                            <v-icon start size="small">{{
+                              st === 'STORE' ? 'mdi-earth' : 'mdi-warehouse'
+                            }}</v-icon>
+                            {{ st === 'STORE' ? 'Base' : 'WAR' }}
+                          </v-btn>
+                        </div>
+                        <div class="d-flex flex-wrap ga-1">
+                          <div
+                            v-for="item in getSortedSourceStock(location)"
+                            :key="item.ticker"
+                            class="stock-icon-wrapper"
+                          >
+                            <CommodityIcon
+                              v-if="item.commodity"
+                              :commodity="item.commodity"
+                              class="stock-icon"
                             />
-                          </div>
-                          <div class="d-flex align-center ga-1 mb-2 flex-wrap">
-                            <v-btn
-                              v-for="cat in getSourceCategories(source)"
-                              :key="cat"
-                              size="x-small"
-                              :variant="
-                                isSourceFilterActive(source.sourceLocationId, 'cat', cat, 'order')
-                                  ? 'flat'
-                                  : 'outlined'
-                              "
-                              :color="
-                                isSourceFilterActive(source.sourceLocationId, 'cat', cat, 'order')
-                                  ? 'primary'
-                                  : undefined
-                              "
-                              @click="
-                                toggleSourceFilter(source.sourceLocationId, 'cat', cat, 'order')
-                              "
-                            >
-                              <v-icon start size="small">{{ getCategoryIcon(cat) }}</v-icon>
-                              {{ categoryLabel(cat) }}
-                            </v-btn>
-                            <v-divider vertical class="mx-1" />
-                            <v-btn
-                              v-for="st in getSourceStorageTypes(source)"
-                              :key="st"
-                              size="x-small"
-                              :variant="
-                                isSourceFilterActive(
-                                  source.sourceLocationId,
-                                  'storage',
-                                  st,
-                                  'order'
-                                )
-                                  ? 'flat'
-                                  : 'outlined'
-                              "
-                              :color="
-                                isSourceFilterActive(
-                                  source.sourceLocationId,
-                                  'storage',
-                                  st,
-                                  'order'
-                                )
-                                  ? 'primary'
-                                  : undefined
-                              "
-                              @click="
-                                toggleSourceFilter(source.sourceLocationId, 'storage', st, 'order')
-                              "
-                            >
-                              <v-icon start size="small">{{
-                                st === 'STORE' ? 'mdi-earth' : 'mdi-warehouse'
-                              }}</v-icon>
-                              {{ st === 'STORE' ? 'Base' : 'WAR' }}
-                            </v-btn>
-                            <v-spacer />
-                            <v-btn
-                              size="x-small"
-                              variant="outlined"
-                              prepend-icon="mdi-content-copy"
-                              :disabled="getFilteredSourceGaps(source).length === 0"
-                              @click="copySourceGapsCsv(source)"
-                            >
-                              CSV
-                            </v-btn>
-                            <v-btn
-                              size="x-small"
-                              variant="outlined"
-                              prepend-icon="mdi-cart-plus"
-                              :disabled="getFilteredSourceGaps(source).length === 0"
-                              @click="createShoppingListFromGaps(source)"
-                            >
-                              Shopping List
-                            </v-btn>
-                          </div>
-                          <div class="source-order-table flex-grow-1">
-                            <v-table
-                              v-if="getFilteredSourceGaps(source).length > 0"
-                              density="compact"
-                            >
-                              <thead>
-                                <tr>
-                                  <th>Material</th>
-                                  <th class="text-right">Price</th>
-                                  <th class="text-right">Qty</th>
-                                  <th class="text-right">Total</th>
-                                  <th class="text-right">Wt</th>
-                                  <th class="text-right">Vol</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr
-                                  v-for="item in getFilteredSourceGaps(source)"
-                                  :key="item.ticker"
-                                >
-                                  <td>
-                                    <CommodityDisplay :ticker="item.ticker" />
-                                  </td>
-                                  <td class="text-right text-medium-emphasis">
-                                    <template v-if="getGapPrice(source, item.ticker) !== null">
-                                      {{ formatPrice(getGapPrice(source, item.ticker)!) }}
-                                      <span class="text-caption ml-1">
-                                        {{ settingsStore.preferredCurrency.value }}
-                                      </span>
-                                    </template>
-                                    <template v-else>–</template>
-                                  </td>
-                                  <td class="text-right text-error font-weight-medium">
-                                    {{ item.gap }}
-                                  </td>
-                                  <td class="text-right">
-                                    <template v-if="getGapPrice(source, item.ticker) !== null">
-                                      {{
-                                        formatPrice(getGapPrice(source, item.ticker)! * item.gap)
-                                      }}
-                                      <span class="text-caption text-medium-emphasis ml-1">
-                                        {{ settingsStore.preferredCurrency.value }}
-                                      </span>
-                                    </template>
-                                    <template v-else>–</template>
-                                  </td>
-                                  <td class="text-right text-medium-emphasis">
-                                    {{ getItemWeight(item.ticker, item.gap) }}
-                                    <span
-                                      v-if="getItemWeight(item.ticker, item.gap) !== '–'"
-                                      class="text-caption"
-                                      >t</span
-                                    >
-                                  </td>
-                                  <td class="text-right text-medium-emphasis">
-                                    {{ getItemVolume(item.ticker, item.gap) }}
-                                    <span
-                                      v-if="getItemVolume(item.ticker, item.gap) !== '–'"
-                                      class="text-caption"
-                                      >m³</span
-                                    >
-                                  </td>
-                                </tr>
-                              </tbody>
-                              <tfoot>
-                                <tr class="font-weight-medium">
-                                  <td>Total</td>
-                                  <td></td>
-                                  <td></td>
-                                  <td class="text-right">
-                                    <template v-if="getSourceOrderTotal(source) !== null">
-                                      {{ formatPrice(getSourceOrderTotal(source)!) }}
-                                      <span class="text-caption ml-1">
-                                        {{ settingsStore.preferredCurrency.value }}
-                                      </span>
-                                    </template>
-                                    <template v-else>–</template>
-                                  </td>
-                                  <td class="text-right">
-                                    {{ formatWeight(getSourceOrderWeight(source)) }}
-                                    <span class="text-caption">t</span>
-                                  </td>
-                                  <td class="text-right">
-                                    {{ formatVolume(getSourceOrderVolume(source)) }}
-                                    <span class="text-caption">m³</span>
-                                  </td>
-                                </tr>
-                              </tfoot>
-                            </v-table>
-                            <div v-else class="text-center text-medium-emphasis py-4">
-                              <v-icon size="small" class="mr-1">mdi-check-circle</v-icon>
-                              All covered
+                            <div v-else class="stock-icon stock-icon-fallback">
+                              {{ item.ticker }}
                             </div>
+                            <span class="stock-qty" :class="stockQtyClass(item, location)">
+                              {{ item.quantity }}
+                            </span>
                           </div>
-                        </v-card-text>
-                      </v-card>
-                    </v-col>
-                  </v-row>
-                </div>
+                        </div>
+                      </v-card-text>
+                    </v-card>
+                  </v-col>
 
-                <!-- Draggable divider -->
-                <div
-                  class="resize-handle"
-                  @mousedown="startResize($event, source.sourceLocationId)"
-                >
-                  <v-icon size="x-small" color="grey">mdi-drag-horizontal</v-icon>
-                </div>
+                  <!-- Right: Needs -->
+                  <v-col cols="12" md="6">
+                    <v-card class="source-stock-card d-flex flex-column">
+                      <v-card-text class="flex-grow-1 d-flex flex-column">
+                        <div class="d-flex align-center ga-2 mb-1">
+                          <v-icon start size="small">mdi-cart-outline</v-icon>
+                          <span class="text-subtitle-2">Needs</span>
+                          <v-spacer />
+                          <v-select
+                            v-model="sourceOrderPriceList[location.locationId]"
+                            :items="priceLists"
+                            item-title="name"
+                            item-value="code"
+                            label="Price List"
+                            density="compact"
+                            variant="underlined"
+                            hide-details
+                            clearable
+                            style="max-width: 480px"
+                          />
+                        </div>
+                        <div class="d-flex align-center ga-1 mb-2 flex-wrap">
+                          <v-btn
+                            v-for="cat in getLocationCategories(location)"
+                            :key="cat"
+                            size="x-small"
+                            :variant="
+                              isSourceFilterActive(location.locationId, 'cat', cat, 'order')
+                                ? 'flat'
+                                : 'outlined'
+                            "
+                            :color="
+                              isSourceFilterActive(location.locationId, 'cat', cat, 'order')
+                                ? 'primary'
+                                : undefined
+                            "
+                            @click="toggleSourceFilter(location.locationId, 'cat', cat, 'order')"
+                          >
+                            <v-icon start size="small">{{ getCategoryIcon(cat) }}</v-icon>
+                            {{ categoryLabel(cat) }}
+                          </v-btn>
+                          <v-divider vertical class="mx-1" />
+                          <v-btn
+                            v-for="st in getLocationStorageTypes(location)"
+                            :key="st"
+                            size="x-small"
+                            :variant="
+                              isSourceFilterActive(location.locationId, 'storage', st, 'order')
+                                ? 'flat'
+                                : 'outlined'
+                            "
+                            :color="
+                              isSourceFilterActive(location.locationId, 'storage', st, 'order')
+                                ? 'primary'
+                                : undefined
+                            "
+                            @click="toggleSourceFilter(location.locationId, 'storage', st, 'order')"
+                          >
+                            <v-icon start size="small">{{
+                              st === 'STORE' ? 'mdi-earth' : 'mdi-warehouse'
+                            }}</v-icon>
+                            {{ st === 'STORE' ? 'Base' : 'WAR' }}
+                          </v-btn>
+                          <v-spacer />
+                          <v-btn
+                            size="x-small"
+                            variant="outlined"
+                            prepend-icon="mdi-content-copy"
+                            :disabled="getFilteredSourceGaps(location).length === 0"
+                            @click="copySourceGapsCsv(location)"
+                          >
+                            CSV
+                          </v-btn>
+                          <v-btn
+                            size="x-small"
+                            variant="outlined"
+                            prepend-icon="mdi-cart-plus"
+                            :disabled="getFilteredSourceGaps(location).length === 0"
+                            @click="createShoppingListFromGaps(location)"
+                          >
+                            Shopping List
+                          </v-btn>
+                        </div>
+                        <div class="source-order-table flex-grow-1">
+                          <v-table
+                            v-if="getFilteredSourceGaps(location).length > 0"
+                            density="compact"
+                          >
+                            <thead>
+                              <tr>
+                                <th>Material</th>
+                                <th class="text-right">Price</th>
+                                <th class="text-right">Qty</th>
+                                <th class="text-right">Total</th>
+                                <th class="text-right">Wt</th>
+                                <th class="text-right">Vol</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                v-for="item in getFilteredSourceGaps(location)"
+                                :key="item.ticker"
+                              >
+                                <td>
+                                  <CommodityDisplay :ticker="item.ticker" />
+                                </td>
+                                <td class="text-right text-medium-emphasis">
+                                  <template v-if="getGapPrice(location, item.ticker) !== null">
+                                    {{ formatPrice(getGapPrice(location, item.ticker)!) }}
+                                    <span class="text-caption ml-1">
+                                      {{ settingsStore.preferredCurrency.value }}
+                                    </span>
+                                  </template>
+                                  <template v-else>–</template>
+                                </td>
+                                <td class="text-right text-error font-weight-medium">
+                                  {{ item.gap }}
+                                </td>
+                                <td class="text-right">
+                                  <template v-if="getGapPrice(location, item.ticker) !== null">
+                                    {{
+                                      formatPrice(getGapPrice(location, item.ticker)! * item.gap)
+                                    }}
+                                    <span class="text-caption text-medium-emphasis ml-1">
+                                      {{ settingsStore.preferredCurrency.value }}
+                                    </span>
+                                  </template>
+                                  <template v-else>–</template>
+                                </td>
+                                <td class="text-right text-medium-emphasis">
+                                  {{ getItemWeight(item.ticker, item.gap) }}
+                                  <span
+                                    v-if="getItemWeight(item.ticker, item.gap) !== '–'"
+                                    class="text-caption"
+                                    >t</span
+                                  >
+                                </td>
+                                <td class="text-right text-medium-emphasis">
+                                  {{ getItemVolume(item.ticker, item.gap) }}
+                                  <span
+                                    v-if="getItemVolume(item.ticker, item.gap) !== '–'"
+                                    class="text-caption"
+                                    >m³</span
+                                  >
+                                </td>
+                              </tr>
+                            </tbody>
+                            <tfoot>
+                              <tr class="font-weight-medium">
+                                <td>Total</td>
+                                <td></td>
+                                <td></td>
+                                <td class="text-right">
+                                  <template v-if="getSourceOrderTotal(location) !== null">
+                                    {{ formatPrice(getSourceOrderTotal(location)!) }}
+                                    <span class="text-caption ml-1">
+                                      {{ settingsStore.preferredCurrency.value }}
+                                    </span>
+                                  </template>
+                                  <template v-else>–</template>
+                                </td>
+                                <td class="text-right">
+                                  {{ formatWeight(getSourceOrderWeight(location)) }}
+                                  <span class="text-caption">t</span>
+                                </td>
+                                <td class="text-right">
+                                  {{ formatVolume(getSourceOrderVolume(location)) }}
+                                  <span class="text-caption">m³</span>
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </v-table>
+                          <div v-else class="text-center text-medium-emphasis py-4">
+                            <v-icon size="small" class="mr-1">mdi-check-circle</v-icon>
+                            All covered
+                          </div>
+                        </div>
+                      </v-card-text>
+                    </v-card>
+                  </v-col>
+                </v-row>
+              </div>
 
-                <v-expansion-panels variant="accordion" style="padding: 0 12px">
-                  <v-expansion-panel
-                    v-for="planet in groupDestsByPlanet(source)"
-                    :key="planet.planetId"
+              <!-- Draggable divider -->
+              <div class="resize-handle" @mousedown="startResize($event, location.locationId)">
+                <v-icon size="x-small" color="grey">mdi-drag-horizontal</v-icon>
+              </div>
+
+              <v-card flat class="mt-2" style="margin: 0 12px">
+                <v-card-title class="d-flex align-center py-2 px-3">
+                  <v-icon start size="small">mdi-swap-horizontal</v-icon>
+                  <span class="text-subtitle-2">Connections</span>
+                  <v-spacer />
+                  <v-icon size="small" class="mr-1 text-medium-emphasis" style="font-size: 17.5px">mdi-sort</v-icon>
+                  <v-btn-toggle
+                    v-model="connectionSort"
+                    density="compact"
+                    variant="outlined"
+                    color="primary"
+                    mandatory
+                    class="mr-2"
                   >
+                    <v-btn value="name" size="x-small">Name</v-btn>
+                    <v-btn value="system" size="x-small">System</v-btn>
+                    <v-btn value="gaps" size="x-small">Gaps</v-btn>
+                  </v-btn-toggle>
+                  <v-btn size="x-small" variant="text" @click="expandAllConnections(location)">
+                    Expand All
+                  </v-btn>
+                  <v-btn size="x-small" variant="text" @click="collapseAllConnections(location)">
+                    Collapse All
+                  </v-btn>
+                </v-card-title>
+                <v-expansion-panels
+                  v-model="expandedConnections[location.locationId]"
+                  variant="accordion"
+                  multiple
+                >
+                  <v-expansion-panel v-for="conn in sortedConnections(location)" :key="conn.locationId">
                     <v-expansion-panel-title>
                       <div
                         class="planet-panel-row"
                         :style="{
-                          gridTemplateColumns: maxPlanetNameWidth(source) + 'ch 1fr auto',
+                          gridTemplateColumns: maxConnectionNameWidth(location) + 'ch 1fr auto',
                         }"
                       >
                         <span class="font-weight-medium planet-name">
-                          {{ getLocationDisplay(planet.planetId) }}
+                          {{ getLocationDisplay(conn.locationId) }}
                         </span>
 
                         <!-- Inline material icons grouped by category -->
                         <div class="d-inline-flex align-center planet-icons">
-                          <template v-for="cat in planetCategories(planet.dests)" :key="cat">
+                          <template v-for="cat in connectionCategories(conn)" :key="cat">
                             <v-icon
                               size="x-small"
                               :class="[
-                                cat !== planetCategories(planet.dests)[0] ? 'ml-3' : '',
+                                cat !== connectionCategories(conn)[0] ? 'ml-3' : '',
                                 'cat-icon',
                               ]"
                               :title="categoryLabel(cat)"
-                              @click.stop="toggleExpandedCat(planet.planetId, cat)"
+                              @click.stop="toggleExpandedCat(conn.locationId, cat)"
                             >
                               {{ getCategoryIcon(cat) }}
                             </v-icon>
                             <span
                               class="mat-icons"
                               :class="{
-                                'mat-icons-expanded': isCatExpanded(planet.planetId, cat),
+                                'mat-icons-expanded': isCatExpanded(conn.locationId, cat),
                               }"
                             >
                               <CommodityIcon
-                                v-for="item in planetCategoryTickers(planet.dests, cat)"
+                                v-for="item in connectionCategoryTickers(conn, cat)"
                                 :key="item.ticker"
                                 :commodity="item"
                                 class="ml-1 panel-commodity-icon"
@@ -482,11 +509,11 @@
 
                         <div class="d-flex justify-end">
                           <v-chip
-                            v-if="planetGapCount(source, planet.dests) > 0"
+                            v-if="connectionGapCount(location, conn) > 0"
                             size="small"
                             color="error"
                           >
-                            {{ planetGapCount(source, planet.dests) }} gaps
+                            {{ connectionGapCount(location, conn) }} gaps
                           </v-chip>
                         </div>
                       </div>
@@ -495,38 +522,38 @@
                       <!-- Filters: Category + Storage Type -->
                       <div class="d-flex align-center ga-1 mb-2 flex-wrap">
                         <v-btn
-                          v-for="cat in planetCategories(planet.dests)"
+                          v-for="cat in connectionCategories(conn)"
                           :key="cat"
                           size="x-small"
                           :variant="
-                            isPlanetFilterActive(planet.planetId, 'cat', cat) ? 'flat' : 'outlined'
+                            isPlanetFilterActive(conn.locationId, 'cat', cat) ? 'flat' : 'outlined'
                           "
                           :color="
-                            isPlanetFilterActive(planet.planetId, 'cat', cat)
+                            isPlanetFilterActive(conn.locationId, 'cat', cat)
                               ? 'primary'
                               : undefined
                           "
-                          @click="togglePlanetFilter(planet.planetId, 'cat', cat)"
+                          @click="togglePlanetFilter(conn.locationId, 'cat', cat)"
                         >
                           <v-icon start size="small">{{ getCategoryIcon(cat) }}</v-icon>
                           {{ categoryLabel(cat) }}
                         </v-btn>
                         <v-divider vertical class="mx-1" />
                         <v-btn
-                          v-for="st in planetStorageTypes(planet.dests)"
+                          v-for="st in conn.storageTypes"
                           :key="st"
                           size="x-small"
                           :variant="
-                            isPlanetFilterActive(planet.planetId, 'storage', st)
+                            isPlanetFilterActive(conn.locationId, 'storage', st)
                               ? 'flat'
                               : 'outlined'
                           "
                           :color="
-                            isPlanetFilterActive(planet.planetId, 'storage', st)
+                            isPlanetFilterActive(conn.locationId, 'storage', st)
                               ? 'primary'
                               : undefined
                           "
-                          @click="togglePlanetFilter(planet.planetId, 'storage', st)"
+                          @click="togglePlanetFilter(conn.locationId, 'storage', st)"
                         >
                           <v-icon start size="small">
                             {{ st === 'STORE' ? 'mdi-earth' : 'mdi-warehouse' }}
@@ -535,10 +562,10 @@
                         </v-btn>
                       </div>
 
-                      <!-- Aggregated table -->
+                      <!-- Connection detail table -->
                       <v-data-table
-                        :headers="planetDetailHeaders"
-                        :items="getPlanetMaterials(source, planet)"
+                        :headers="connectionDetailHeaders"
+                        :items="getConnectionMaterials(location, conn)"
                         density="compact"
                         :items-per-page="-1"
                         hide-default-footer
@@ -546,26 +573,6 @@
                       >
                         <template #item.ticker="{ item }">
                           <CommodityDisplay :ticker="item.ticker" />
-                        </template>
-
-                        <template #item.storageIcons="{ item }">
-                          <span class="d-inline-flex">
-                            <v-icon
-                              v-if="item.storageTypes.includes('WAREHOUSE_STORE')"
-                              size="small"
-                            >
-                              mdi-warehouse
-                            </v-icon>
-                            <span v-else style="width: 20px" />
-                            <v-icon
-                              v-if="item.storageTypes.includes('STORE')"
-                              size="small"
-                              class="ml-1"
-                            >
-                              mdi-earth
-                            </v-icon>
-                            <span v-else style="width: 20px" class="ml-1" />
-                          </span>
                         </template>
 
                         <template #item.category="{ item }">
@@ -582,18 +589,42 @@
                           </div>
                         </template>
 
-                        <template #item.needed="{ item }">
-                          <span v-if="item.needed > 0" class="text-warning">
-                            {{ item.needed }}
+                        <template #item.production="{ item }">
+                          <span v-if="item.production !== '–'" class="text-success">
+                            {{ item.production }}
                           </span>
-                          <span v-else class="text-success">0</span>
+                          <span v-else class="text-disabled">–</span>
                         </template>
 
-                        <template #item.gap="{ item }">
-                          <span v-if="item.gap > 0" class="text-error font-weight-medium">
-                            {{ item.gap }}
+                        <template #item.demand="{ item }">
+                          <span v-if="item.demand !== '–'" class="text-warning">
+                            {{ item.demand }}
                           </span>
-                          <span v-else class="text-success">0</span>
+                          <span v-else class="text-disabled">–</span>
+                        </template>
+
+                        <template #item.net="{ item }">
+                          <span
+                            v-if="item.net !== '–'"
+                            :class="item.netValue > 0 ? 'text-success' : 'text-error'"
+                          >
+                            {{ item.netValue > 0 ? '+' : '-' }}{{ item.net }}
+                          </span>
+                          <span v-else class="text-disabled">–</span>
+                        </template>
+
+                        <template #item.importAmt="{ item }">
+                          <span v-if="item.importAmt <= 0" class="text-disabled">–</span>
+                          <span v-else :class="importColor(item)">
+                            {{ item.importAmt }}
+                          </span>
+                        </template>
+
+                        <template #item.exportAmt="{ item }">
+                          <span v-if="item.exportAmt <= 0" class="text-disabled">–</span>
+                          <span v-else :class="exportColor(item)">
+                            {{ item.exportAmt }}
+                          </span>
                         </template>
 
                         <template #no-data>
@@ -603,9 +634,9 @@
                     </v-expansion-panel-text>
                   </v-expansion-panel>
                 </v-expansion-panels>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
+              </v-card>
+            </div>
+          </template>
         </v-tabs-window-item>
 
         <!-- Materials Tab -->
@@ -631,9 +662,9 @@
                 <span v-else class="text-success">0</span>
               </template>
 
-              <template #item.sources="{ item }">
-                <v-chip v-for="src in item.sources" :key="src" size="x-small" class="mr-1">
-                  {{ getLocationDisplay(src) }}
+              <template #item.locations="{ item }">
+                <v-chip v-for="loc in item.locations" :key="loc" size="x-small" class="mr-1">
+                  {{ getLocationDisplay(loc) }}
                 </v-chip>
               </template>
 
@@ -652,8 +683,8 @@
             <v-card-text>
               <!-- 1. Source -->
               <div class="d-flex align-center ga-2 mb-3">
-                <v-chip size="small" variant="outlined" class="font-weight-medium">1</v-chip>
-                <span class="text-body-2 text-medium-emphasis" style="min-width: 75px">
+                <v-chip size="small" variant="flat" color="blue" class="font-weight-medium">1</v-chip>
+                <span class="text-body-2" style="min-width: 75px; color: rgb(var(--v-theme-blue))">
                   Source
                 </span>
                 <KeyValueAutocomplete
@@ -690,13 +721,13 @@
 
               <!-- 2. Destination -->
               <div class="d-flex align-center ga-2 mb-3">
-                <v-chip size="small" variant="outlined" class="font-weight-medium">2</v-chip>
-                <span class="text-body-2 text-medium-emphasis" style="min-width: 75px">
+                <v-chip size="small" variant="flat" color="green" class="font-weight-medium">2</v-chip>
+                <span class="text-body-2" style="min-width: 75px; color: rgb(var(--v-theme-green))">
                   Destination
                 </span>
                 <KeyValueAutocomplete
                   v-model="addForm.destinationPlanetId"
-                  :items="planetItems"
+                  :items="locationItems"
                   :favorites="settingsStore.favoritedLocations.value"
                   label="Location"
                   density="compact"
@@ -859,15 +890,26 @@
                 >
                   Edit
                 </v-btn>
-                <v-btn
-                  v-else
-                  size="small"
-                  variant="outlined"
-                  prepend-icon="mdi-close"
-                  @click="exitEditMode"
-                >
-                  Cancel
-                </v-btn>
+                <template v-else>
+                  <v-btn
+                    size="small"
+                    variant="outlined"
+                    prepend-icon="mdi-close"
+                    @click="exitEditMode"
+                  >
+                    Cancel
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    prepend-icon="mdi-content-save"
+                    :loading="savingEdits"
+                    :disabled="Object.keys(pendingEdits).length === 0"
+                    @click="saveEdits"
+                  >
+                    Save
+                  </v-btn>
+                </template>
               </div>
             </v-card-text>
           </v-card>
@@ -921,46 +963,266 @@
             :show-select="editMode"
           >
             <template #item.commodityTicker="{ item }">
-              <CommodityDisplay :ticker="item.commodityTicker" />
+              <a
+                v-if="!editMode"
+                class="text-decoration-none cell-link"
+                @click="addFilterChip('commodity', item.commodityTicker, item.commodityTicker)"
+              >
+                <CommodityDisplay :ticker="item.commodityTicker" />
+              </a>
+              <CommodityDisplay v-else :ticker="item.commodityTicker" />
             </template>
 
             <template #item.sourceLocationId="{ item }">
-              {{ getLocationDisplay(item.sourceLocationId) }}
+              <a
+                v-if="!editMode"
+                class="text-decoration-none cell-link"
+                @click="addFilterChip('source', item.sourceLocationId, getLocationDisplay(item.sourceLocationId))"
+              >
+                {{ getLocationDisplay(item.sourceLocationId) }}
+              </a>
+              <template v-else>{{ getLocationDisplay(item.sourceLocationId) }}</template>
             </template>
 
             <template #item.destinationPlanetId="{ item }">
-              {{ getLocationDisplay(item.destinationPlanetId) }}
+              <a
+                v-if="!editMode"
+                class="text-decoration-none cell-link"
+                @click="addFilterChip('destination', item.destinationPlanetId, getLocationDisplay(item.destinationPlanetId))"
+              >
+                {{ getLocationDisplay(item.destinationPlanetId) }}
+              </a>
+              <template v-else>{{ getLocationDisplay(item.destinationPlanetId) }}</template>
             </template>
 
-            <template #item.storageIcons="{ item }">
+            <template #item.srcStorage="{ item }">
               <span class="d-inline-flex">
                 <v-icon
-                  v-if="(item.destinationStorageTypes as string[]).includes('WAREHOUSE_STORE')"
+                  v-if="!editMode"
+                  :style="{
+                    visibility: (item.sourceStorageTypes as string[]).includes('WAREHOUSE_STORE')
+                      ? 'visible'
+                      : 'hidden',
+                  }"
                   size="small"
                 >
                   mdi-warehouse
                 </v-icon>
-                <span v-else style="width: 20px" />
                 <v-icon
-                  v-if="(item.destinationStorageTypes as string[]).includes('STORE')"
+                  v-else
+                  size="small"
+                  :color="
+                    (editedLine(item).sourceStorageTypes as string[]).includes('WAREHOUSE_STORE')
+                      ? 'primary'
+                      : 'grey-darken-1'
+                  "
+                  :style="{
+                    opacity: (editedLine(item).sourceStorageTypes as string[]).includes(
+                      'WAREHOUSE_STORE'
+                    )
+                      ? 1
+                      : 0.3,
+                    cursor: 'pointer',
+                  }"
+                  @click="toggleLineStorage(item, 'source', 'WAREHOUSE_STORE')"
+                >
+                  mdi-warehouse
+                </v-icon>
+                <v-icon
+                  v-if="!editMode"
+                  :style="{
+                    visibility: (item.sourceStorageTypes as string[]).includes('STORE')
+                      ? 'visible'
+                      : 'hidden',
+                  }"
                   size="small"
                   class="ml-1"
                 >
                   mdi-earth
                 </v-icon>
-                <span v-else style="width: 20px" class="ml-1" />
+                <v-icon
+                  v-else
+                  size="small"
+                  class="ml-1"
+                  :color="
+                    (editedLine(item).sourceStorageTypes as string[]).includes('STORE')
+                      ? 'primary'
+                      : 'grey-darken-1'
+                  "
+                  :style="{
+                    opacity: (editedLine(item).sourceStorageTypes as string[]).includes('STORE')
+                      ? 1
+                      : 0.3,
+                    cursor: 'pointer',
+                  }"
+                  @click="toggleLineStorage(item, 'source', 'STORE')"
+                >
+                  mdi-earth
+                </v-icon>
+              </span>
+            </template>
+
+            <template #item.destStorage="{ item }">
+              <span class="d-inline-flex">
+                <v-icon
+                  v-if="!editMode"
+                  :style="{
+                    visibility: (item.destinationStorageTypes as string[]).includes(
+                      'WAREHOUSE_STORE'
+                    )
+                      ? 'visible'
+                      : 'hidden',
+                  }"
+                  size="small"
+                >
+                  mdi-warehouse
+                </v-icon>
+                <v-icon
+                  v-else
+                  size="small"
+                  :color="
+                    (editedLine(item).destinationStorageTypes as string[]).includes(
+                      'WAREHOUSE_STORE'
+                    )
+                      ? 'primary'
+                      : 'grey-darken-1'
+                  "
+                  :style="{
+                    opacity: (editedLine(item).destinationStorageTypes as string[]).includes(
+                      'WAREHOUSE_STORE'
+                    )
+                      ? 1
+                      : 0.3,
+                    cursor: 'pointer',
+                  }"
+                  @click="toggleLineStorage(item, 'destination', 'WAREHOUSE_STORE')"
+                >
+                  mdi-warehouse
+                </v-icon>
+                <v-icon
+                  v-if="!editMode"
+                  :style="{
+                    visibility: (item.destinationStorageTypes as string[]).includes('STORE')
+                      ? 'visible'
+                      : 'hidden',
+                  }"
+                  size="small"
+                  class="ml-1"
+                >
+                  mdi-earth
+                </v-icon>
+                <v-icon
+                  v-else
+                  size="small"
+                  class="ml-1"
+                  :color="
+                    (editedLine(item).destinationStorageTypes as string[]).includes('STORE')
+                      ? 'primary'
+                      : 'grey-darken-1'
+                  "
+                  :style="{
+                    opacity: (editedLine(item).destinationStorageTypes as string[]).includes(
+                      'STORE'
+                    )
+                      ? 1
+                      : 0.3,
+                    cursor: 'pointer',
+                  }"
+                  @click="toggleLineStorage(item, 'destination', 'STORE')"
+                >
+                  mdi-earth
+                </v-icon>
               </span>
             </template>
 
             <template #item.demandInfo="{ item }">
-              {{ categoryLabel(item.demandSource) }}
+              <template v-if="!editMode">
+                <a
+                  v-if="item.lineSource"
+                  class="text-decoration-none cell-link"
+                  @click="addFilterChip('category', item.lineSource, categoryLabel(item.lineSource))"
+                >
+                  {{ categoryLabel(item.lineSource) }}
+                </a>
+                <template v-else>{{ categoryLabel(item.lineSource) }}</template>
+              </template>
+              <v-select
+                v-else
+                :model-value="editedLine(item).lineSource"
+                :items="categoryOptions"
+                item-title="title"
+                item-value="value"
+                density="compact"
+                hide-details
+                variant="plain"
+                style="min-width: 120px"
+                @update:model-value="updateLineField(item, 'lineSource', $event)"
+              />
+            </template>
+
+            <template #item.demandMode="{ item }">
+              <v-btn
+                size="x-small"
+                :disabled="!isAutoCategory(editMode ? editedLine(item).lineSource : item.lineSource)"
+                :variant="(editMode ? editedLine(item).demand : item.demand) === null ? 'flat' : 'outlined'"
+                :color="(editMode ? editedLine(item).demand : item.demand) === null ? 'primary' : undefined"
+                @click="
+                  editMode &&
+                    (editedLine(item).demand === null
+                      ? updateLineField(item, 'demand', 0)
+                      : updateLineField(item, 'demand', null))
+                "
+              >
+                {{ (editMode ? editedLine(item).demand : item.demand) === null ? 'Auto' : 'Manual' }}
+              </v-btn>
             </template>
 
             <template #item.demandAmount="{ item }">
-              <span v-if="item.demand !== null">{{ item.demand }}</span>
-              <span v-else class="text-medium-emphasis">
-                auto: {{ getCalculatedAmount(item) ?? '–' }}
-              </span>
+              <template v-if="!editMode">
+                <span v-if="item.demand !== null">
+                  {{ item.demand }}
+                  <span class="text-caption text-disabled">{{
+                    item.demandRate === 'daily' ? '/d' : ''
+                  }}</span>
+                </span>
+                <span v-else-if="isAutoCategory(item.lineSource)" class="text-medium-emphasis">
+                  {{ getCalculatedAmount(item) ?? '–' }}
+                </span>
+                <span v-else class="text-medium-emphasis">–</span>
+              </template>
+              <div v-else class="d-flex align-center ga-1">
+                <span
+                  v-if="editedLine(item).demand === null && isAutoCategory(editedLine(item).lineSource)"
+                  class="text-medium-emphasis"
+                >
+                  {{ getCalculatedAmount(item) ?? '–' }}
+                </span>
+                <template v-if="editedLine(item).demand !== null || !isAutoCategory(editedLine(item).lineSource)">
+                  <v-text-field
+                    :model-value="editedLine(item).demand"
+                    type="number"
+                    min="0"
+                    density="compact"
+                    hide-details
+                    variant="underlined"
+                    style="width: 70px; flex: 0 0 70px"
+                    @update:model-value="
+                      updateLineField(item, 'demand', $event ? Number($event) : null)
+                    "
+                  />
+                  <v-btn-toggle
+                    :model-value="editedLine(item).demandRate ?? 'daily'"
+                    density="compact"
+                    variant="outlined"
+                    color="primary"
+                    mandatory
+                    @update:model-value="updateLineField(item, 'demandRate', $event)"
+                  >
+                    <v-btn value="total" size="x-small">Total</v-btn>
+                    <v-btn value="daily" size="x-small">/Day</v-btn>
+                  </v-btn-toggle>
+                </template>
+              </div>
             </template>
 
             <template #no-data>
@@ -999,7 +1261,13 @@ import type {
   SupplyPlanetSummary,
   StorageLocationInfo,
 } from '../services/api'
-import type { SupplyDashboard, SourceDashboard, DestinationDashboard } from '@kawakawa/types'
+import type {
+  SupplyDashboard,
+  LocationDashboard,
+  ConnectionDashboard,
+  SupplyChainLineSource,
+  DemandRate,
+} from '@kawakawa/types'
 import { useSnackbar, useDisplayHelpers, usePageState } from '../composables'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
@@ -1014,6 +1282,7 @@ import CommodityDisplay from '../components/CommodityDisplay.vue'
 import CommodityIcon from '../components/CommodityIcon.vue'
 import TokenSearchInput, {
   type SearchChip,
+  type SearchChipType,
   type ExtraSuggestionType,
 } from '../components/TokenSearchInput.vue'
 
@@ -1032,6 +1301,7 @@ interface SerializedChip {
 }
 const { state: pageState } = usePageState('supply', {
   activeTab: 'planet' as string,
+  selectedLocation: '' as string,
   expandedSources: [] as string[],
   sourceCardHeight: {} as Record<string, number>,
   sourceStockSort: {} as Record<string, string>,
@@ -1047,7 +1317,93 @@ const bulkAdding = ref(false)
 const clearing = ref(false)
 const editMode = ref(false)
 const selectedLineIds = ref<number[]>([])
+const pendingEdits = reactive<
+  Record<
+    number,
+    Partial<{
+      sourceStorageTypes: string[]
+      destinationStorageTypes: string[]
+      lineSource: SupplyChainLineSource
+      demand: number | null
+      demandRate: DemandRate
+    }>
+  >
+>({})
+const savingEdits = ref(false)
+
+/** Get the effective value for a line field, overlaying pending edits */
+function editedLine(item: SupplyChainLineResponse) {
+  const edits = pendingEdits[item.id]
+  if (!edits) return item
+  return { ...item, ...edits }
+}
 const dashboard = ref<SupplyDashboard | null>(null)
+
+/** The currently viewed location from the dashboard */
+const activeLocation = computed(
+  () => dashboard.value?.locations.find(l => l.locationId === pageState.selectedLocation) ?? null
+)
+
+/** All location IDs that have supply lines touching them */
+const availableLocationIds = computed(() => {
+  const ids = new Set<string>()
+  for (const line of allLines.value) {
+    ids.add(line.sourceLocationId)
+    ids.add(line.destinationPlanetId)
+  }
+  return ids
+})
+
+/** Auto-select a location: first favorite > most connections > none */
+function autoSelectLocation() {
+  if (pageState.selectedLocation && availableLocationIds.value.has(pageState.selectedLocation))
+    return
+
+  // Try first favorited location that has supply lines
+  const favorites = settingsStore.favoritedLocations.value ?? []
+  for (const fav of favorites) {
+    if (availableLocationIds.value.has(fav)) {
+      pageState.selectedLocation = fav
+      return
+    }
+  }
+
+  // Fall back to the location with the most connections (most lines touching it)
+  const lineCounts = new Map<string, number>()
+  for (const line of allLines.value) {
+    lineCounts.set(line.sourceLocationId, (lineCounts.get(line.sourceLocationId) ?? 0) + 1)
+    lineCounts.set(line.destinationPlanetId, (lineCounts.get(line.destinationPlanetId) ?? 0) + 1)
+  }
+  let bestId = ''
+  let bestCount = 0
+  for (const [id, count] of lineCounts) {
+    if (count > bestCount) {
+      bestId = id
+      bestCount = count
+    }
+  }
+  pageState.selectedLocation = bestId
+}
+
+const availableLocationItems = computed(() =>
+  locationItems.value.filter(item => availableLocationIds.value.has(item.key))
+)
+
+// Reload dashboard when selected location changes
+watch(
+  () => pageState.selectedLocation,
+  async newLoc => {
+    if (!newLoc || loading.value) return
+    try {
+      loading.value = true
+      dashboard.value = await api.supplyDashboard.get(newLoc)
+    } catch {
+      showSnackbar('Failed to load location data', 'error')
+    } finally {
+      loading.value = false
+    }
+  }
+)
 const allLines = ref<SupplyChainLineResponse[]>([])
 const planets = ref<SupplyPlanetSummary[]>([])
 const storageLocations = ref<StorageLocationInfo[]>([])
@@ -1065,6 +1421,7 @@ const linesSearchChips = ref<SearchChip[]>([])
 const burnDays = ref(7)
 const repairDays = ref(0)
 const conditionMode = ref<'actual' | 'max'>('max')
+const stockMode = ref<'included' | 'ignored'>('included')
 
 // Add form
 const addForm = ref({
@@ -1085,6 +1442,7 @@ const categoryOptions = [
   { title: 'Consumables', value: 'consumables' },
   { title: 'Repair', value: 'repair' },
   { title: 'Inputs', value: 'inputs' },
+  { title: 'Outputs', value: 'production_output' },
   { title: 'Government', value: 'government' },
   { title: 'Other', value: 'other' },
 ]
@@ -1093,6 +1451,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   consumables: 'Consumables',
   repair: 'Repair',
   inputs: 'Inputs',
+  production_output: 'Outputs',
   government: 'Government',
   other: 'Other',
 }
@@ -1101,6 +1460,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   consumables: 'mdi-fire',
   repair: 'mdi-wrench',
   inputs: 'mdi-factory',
+  production_output: 'mdi-package-variant',
   government: 'mdi-bank',
   other: 'mdi-dots-horizontal',
 }
@@ -1109,7 +1469,10 @@ function getCategoryIcon(cat: string): string {
   return CATEGORY_ICONS[cat] ?? 'mdi-dots-horizontal'
 }
 
-const AUTO_CATEGORIES = new Set(['consumables', 'repair', 'inputs'])
+const AUTO_CATEGORIES = new Set(['consumables', 'repair', 'inputs', 'production_output'])
+function isAutoCategory(cat: string | null | undefined): boolean {
+  return !!cat && AUTO_CATEGORIES.has(cat)
+}
 
 // Search bar helpers for Supply Lines tab
 const getCommodityDisplay = (ticker: string) => {
@@ -1150,15 +1513,17 @@ function onLinesSearchChipsUpdate(chips: SearchChip[]) {
     display: c.display,
   }))
 
+  // If this callback was triggered by form→chip sync, skip the reverse sync
+  if (suppressChipSync) return
+
   // Sync chips back to form fields (so add form stays in sync)
   suppressFormSync = true
 
-  const sourceChip = chips.find(c => c.type === 'location')
+  const sourceChip = chips.find(c => c.type === 'source')
   addForm.value.sourceLocationId = sourceChip?.value ?? ''
 
-  // Second location chip = destination
-  const locationChips = chips.filter(c => c.type === 'location')
-  addForm.value.destinationPlanetId = locationChips.length > 1 ? locationChips[1].value : ''
+  const destChip = chips.find(c => c.type === 'destination')
+  addForm.value.destinationPlanetId = destChip?.value ?? ''
 
   const categoryChip = chips.find(c => c.type === 'category')
   if (categoryChip) {
@@ -1176,31 +1541,48 @@ function onLinesSearchChipsUpdate(chips: SearchChip[]) {
 const supportsAllMaterials = computed(() => AUTO_CATEGORIES.has(addForm.value.category))
 const supportsAutoAmount = computed(() => AUTO_CATEGORIES.has(addForm.value.category))
 
-const filteredCommodityItems = computed(() => {
-  if (!AUTO_CATEGORIES.has(addForm.value.category) || !dashboard.value) return commodityItems.value
+// Cached detected tickers for (category, planetId). For production_output the
+// relevant planet is the source (producing planet); for consumables/inputs/repair
+// it is the destination planet.
+const detectedTickers = ref<Set<string>>(new Set())
+const detectedTickersKey = ref('')
 
-  // Collect tickers from dashboard for this category across matching destinations
-  const tickers = new Set<string>()
-  for (const src of dashboard.value.sources) {
-    if (addForm.value.sourceLocationId && src.sourceLocationId !== addForm.value.sourceLocationId)
-      continue
-    for (const dest of src.destinations) {
-      if (addForm.value.destinationPlanetId && dest.planetId !== addForm.value.destinationPlanetId)
-        continue
-      const items =
-        addForm.value.category === 'consumables'
-          ? dest.burn
-          : addForm.value.category === 'repair'
-            ? dest.repair
-            : addForm.value.category === 'inputs'
-              ? dest.production
-              : []
-      for (const item of items) tickers.add(item.ticker)
+function detectedTickerPlanet(cat: string): string {
+  if (cat === 'production_output') return addForm.value.sourceLocationId
+  return addForm.value.destinationPlanetId
+}
+
+watch(
+  [
+    () => addForm.value.category,
+    () => addForm.value.sourceLocationId,
+    () => addForm.value.destinationPlanetId,
+  ],
+  async ([cat]) => {
+    const planetId = detectedTickerPlanet(cat)
+    if (!AUTO_CATEGORIES.has(cat) || !planetId) {
+      detectedTickers.value = new Set()
+      detectedTickersKey.value = ''
+      return
     }
-  }
+    const key = `${cat}:${planetId}`
+    if (key === detectedTickersKey.value) return
+    try {
+      const tickers = await api.supplyChain.getDetectedTickers(planetId, cat)
+      detectedTickers.value = new Set(tickers)
+      detectedTickersKey.value = key
+    } catch {
+      detectedTickers.value = new Set()
+      detectedTickersKey.value = ''
+    }
+  },
+  { immediate: true }
+)
 
-  if (tickers.size === 0) return commodityItems.value
-  return commodityItems.value.filter(c => tickers.has(c.key))
+const filteredCommodityItems = computed(() => {
+  if (!AUTO_CATEGORIES.has(addForm.value.category)) return commodityItems.value
+  if (detectedTickers.value.size === 0) return commodityItems.value
+  return commodityItems.value.filter(c => detectedTickers.value.has(c.key))
 })
 
 // Reset toggles when category changes
@@ -1221,20 +1603,20 @@ watch(
 
 function getCalculatedAmount(line: SupplyChainLineResponse): number | null {
   if (!dashboard.value) return null
-  for (const src of dashboard.value.sources) {
-    if (src.sourceLocationId !== line.sourceLocationId) continue
-    for (const dest of src.destinations) {
-      if (dest.planetId !== line.destinationPlanetId) continue
-      const lists =
-        line.demandSource === 'consumables'
-          ? dest.burn
-          : line.demandSource === 'repair'
-            ? dest.repair
-            : line.demandSource === 'inputs'
-              ? dest.production
-              : []
-      const match = lists.find(item => item.ticker === line.commodityTicker)
-      if (match) return match.need
+  for (const loc of dashboard.value.locations) {
+    if (loc.locationId !== line.sourceLocationId) continue
+    for (const conn of loc.connections) {
+      if (conn.locationId !== line.destinationPlanetId) continue
+      // Check exports (demand flowing out from source)
+      const expMatch = conn.exports.find(
+        e => e.ticker === line.commodityTicker && e.lineSource === line.lineSource
+      )
+      if (expMatch) return expMatch.amount
+      // Check imports (supply flowing in to source)
+      const impMatch = conn.imports.find(
+        i => i.ticker === line.commodityTicker && i.lineSource === line.lineSource
+      )
+      if (impMatch) return impMatch.amount
     }
   }
   return null
@@ -1243,6 +1625,21 @@ function getCalculatedAmount(line: SupplyChainLineResponse): number | null {
 function categoryLabel(source: string | null): string {
   if (!source) return '-'
   return CATEGORY_LABELS[source] ?? source
+}
+
+/** Add a filter chip if one with the same type+value doesn't already exist */
+function addFilterChip(type: SearchChipType, value: string, display: string) {
+  if (!linesSearchRef.value) return
+  const exists = linesSearchChips.value.some(c => c.type === type && c.value === value)
+  if (exists) return
+  // For source/destination, also set the dropdown so chip↔form stay in sync
+  if (type === 'source') {
+    addForm.value.sourceLocationId = value
+  } else if (type === 'destination') {
+    addForm.value.destinationPlanetId = value
+  } else {
+    linesSearchRef.value.addChip({ type, value, display })
+  }
 }
 
 // Computed
@@ -1265,15 +1662,34 @@ const filteredLines = computed(() => {
   let lines = allLines.value
   const chips = linesSearchChips.value
 
-  // Location chips: first = source, second = destination
-  const locationChips = chips.filter(c => c.type === 'location')
-  if (locationChips.length > 0) {
-    const sourceId = locationChips[0].value
+  // Location filtering: dropdowns take priority, then generic location chips
+  // fill in whichever field the dropdown doesn't cover.
+  const sourceId = addForm.value.sourceLocationId
+  const destId = addForm.value.destinationPlanetId
+  const locationChipIds = new Set(
+    chips.filter(c => c.type === 'location').map(c => c.value)
+  )
+
+  if (sourceId) {
     lines = lines.filter(l => l.sourceLocationId === sourceId)
   }
-  if (locationChips.length > 1) {
-    const destId = locationChips[1].value
+  if (destId) {
     lines = lines.filter(l => l.destinationPlanetId === destId)
+  }
+  if (locationChipIds.size > 0) {
+    if (!sourceId && !destId) {
+      // Neither dropdown set: show lines where source OR destination matches
+      lines = lines.filter(
+        l => locationChipIds.has(l.sourceLocationId) || locationChipIds.has(l.destinationPlanetId)
+      )
+    } else if (!sourceId) {
+      // Only destination set: location chips filter source
+      lines = lines.filter(l => locationChipIds.has(l.sourceLocationId))
+    } else if (!destId) {
+      // Only source set: location chips filter destination
+      lines = lines.filter(l => locationChipIds.has(l.destinationPlanetId))
+    }
+    // Both set: location chips are redundant, no extra filtering
   }
 
   // Commodity chips
@@ -1286,7 +1702,7 @@ const filteredLines = computed(() => {
   // Category chip
   const categoryChip = chips.find(c => c.type === 'category')
   if (categoryChip) {
-    lines = lines.filter(l => l.demandSource === categoryChip.value)
+    lines = lines.filter(l => l.lineSource === categoryChip.value)
   }
 
   // Storage chips
@@ -1298,7 +1714,11 @@ const filteredLines = computed(() => {
     )
   }
 
-  return lines
+  return lines.map(l => ({
+    ...l,
+    effectiveAmount: l.demand ?? getCalculatedAmount(l) ?? 0,
+    isAuto: l.demand === null,
+  }))
 })
 
 // Pre-select detected storage types when location changes, keeping user selections if already set
@@ -1330,31 +1750,24 @@ watch(
 )
 
 // Sync form fields → search chips (when dropdowns change, update the search bar)
+// Must suppress the reverse sync (chips → form) to prevent feedback loops.
+let suppressChipSync = false
+
 watch(
   () => addForm.value.sourceLocationId,
   sourceId => {
     if (suppressFormSync || !linesSearchRef.value) return
+    suppressChipSync = true
     const ref = linesSearchRef.value
-    // Remove old source location chip (first location chip)
-    const existingLocations = linesSearchChips.value.filter(c => c.type === 'location')
-    if (existingLocations.length > 0) {
-      ref.removeChipByTypeValue('location', existingLocations[0].value)
+    // Remove old source chip
+    const existing = linesSearchChips.value.find(c => c.type === 'source')
+    if (existing) {
+      ref.removeChipByTypeValue('source', existing.value)
     }
     if (sourceId) {
-      // Insert source chip before any existing destination chip
-      const destChip = linesSearchChips.value.find(c => c.type === 'location')
-      if (destChip) {
-        // Re-set all chips with source first
-        const nonLocationChips = linesSearchChips.value.filter(c => c.type !== 'location')
-        ref.setChips([
-          { type: 'location', value: sourceId, display: getLocationDisplay(sourceId) },
-          destChip,
-          ...nonLocationChips,
-        ])
-      } else {
-        ref.addChip({ type: 'location', value: sourceId, display: getLocationDisplay(sourceId) })
-      }
+      ref.addChip({ type: 'source', value: sourceId, display: getLocationDisplay(sourceId) })
     }
+    nextTick(() => (suppressChipSync = false))
   }
 )
 
@@ -1362,57 +1775,88 @@ watch(
   () => addForm.value.destinationPlanetId,
   destId => {
     if (suppressFormSync || !linesSearchRef.value) return
+    suppressChipSync = true
     const ref = linesSearchRef.value
-    // Remove old destination chip (second location chip)
-    const existingLocations = linesSearchChips.value.filter(c => c.type === 'location')
-    if (existingLocations.length > 1) {
-      ref.removeChipByTypeValue('location', existingLocations[1].value)
+    // Remove old destination chip
+    const existing = linesSearchChips.value.find(c => c.type === 'destination')
+    if (existing) {
+      ref.removeChipByTypeValue('destination', existing.value)
     }
     if (destId) {
-      ref.addChip({ type: 'location', value: destId, display: getLocationDisplay(destId) })
+      ref.addChip({ type: 'destination', value: destId, display: getLocationDisplay(destId) })
     }
+    nextTick(() => (suppressChipSync = false))
   }
 )
 
 // Table headers
 const materialHeaders = [
   { title: 'Material', key: 'ticker', sortable: true },
-  { title: 'Burn', key: 'burnNeed', sortable: true, align: 'end' as const },
-  { title: 'Repair', key: 'repairNeed', sortable: true, align: 'end' as const },
-  { title: 'Production', key: 'productionNeed', sortable: true, align: 'end' as const },
+  { title: 'Export', key: 'totalExport', sortable: true, align: 'end' as const },
+  { title: 'Import', key: 'totalImport', sortable: true, align: 'end' as const },
   { title: 'Need', key: 'totalNeed', sortable: true, align: 'end' as const },
-  { title: 'On-site', key: 'destinationStock', sortable: true, align: 'end' as const },
-  { title: 'Source', key: 'sourceStock', sortable: true, align: 'end' as const },
+  { title: 'Stock', key: 'stock', sortable: true, align: 'end' as const },
   { title: 'Gap', key: 'gap', sortable: true, align: 'end' as const },
-  { title: 'Sources', key: 'sources', sortable: false },
+  { title: 'Locations', key: 'locations', sortable: false },
 ]
 
-const planetDetailHeaders = [
+const connectionDetailHeaders = [
   { title: 'Material', key: 'ticker', sortable: true },
   { title: 'Category', key: 'category', sortable: false, width: 80 },
-  { title: 'Storage', key: 'storageIcons', sortable: false, width: 60 },
-  { title: 'Demand', key: 'need', sortable: true, align: 'end' as const },
-  { title: 'On-site', key: 'destStock', sortable: true, align: 'end' as const },
-  { title: 'Needed', key: 'needed', sortable: true, align: 'end' as const },
-  { title: 'Source', key: 'srcStock', sortable: true, align: 'end' as const },
-  { title: 'Gap', key: 'gap', sortable: true, align: 'end' as const },
+  { title: 'Production', key: 'production', sortable: false },
+  { title: 'Demand', key: 'demand', sortable: false },
+  { title: 'Net', key: 'net', sortable: true },
+  { title: 'Imports From', key: 'importAmt', sortable: true, align: 'end' as const },
+  { title: 'Exports To', key: 'exportAmt', sortable: true, align: 'end' as const },
 ]
 
-interface DestMaterialRow {
+interface ConnectionMaterialRow {
   ticker: string
   categories: string[]
-  storageTypes: string[]
-  need: number
-  destStock: number
-  needed: number
-  srcStock: number
-  gap: number
+  production: string
+  demand: string
+  net: string
+  netValue: number
+  rawImportAmt: number
+  rawExportAmt: number
+  importAmt: number
+  exportAmt: number
+  connStock: number
+  parentStock: number
 }
 
 // Per-destination category filter state
 // Track expanded source panels — initialized from pageState, synced back on change
 const expandedSourcePanels = reactive<Record<string, number[]>>({})
+const expandedConnections = reactive<Record<string, number[]>>({})
+const connectionSort = ref<'name' | 'system' | 'gaps'>('name')
 let expandedRestored = false
+
+function sortedConnections(location: LocationDashboard): ConnectionDashboard[] {
+  const conns = [...location.connections]
+  switch (connectionSort.value) {
+    case 'name':
+      return conns.sort((a, b) =>
+        getLocationDisplay(a.locationId).localeCompare(getLocationDisplay(b.locationId))
+      )
+    case 'system':
+      return conns.sort((a, b) => a.locationId.localeCompare(b.locationId))
+    case 'gaps':
+      return conns.sort(
+        (a, b) => connectionGapCount(location, b) - connectionGapCount(location, a)
+      )
+    default:
+      return conns
+  }
+}
+
+function expandAllConnections(location: LocationDashboard) {
+  expandedConnections[location.locationId] = sortedConnections(location).map((_, i) => i)
+}
+
+function collapseAllConnections(location: LocationDashboard) {
+  expandedConnections[location.locationId] = []
+}
 
 // Restore expanded state from pageState after dashboard loads
 function restoreExpandedSources() {
@@ -1449,34 +1893,32 @@ function getFilterStore(side: FilterSide) {
   return side === 'stock' ? stockFilters : orderFilters
 }
 
-function getSourceCategories(source: SourceDashboard): string[] {
+function getLocationCategories(location: LocationDashboard): string[] {
   const cats = new Set<string>()
-  for (const dest of source.destinations) {
-    if (dest.burn.length > 0) cats.add('consumables')
-    if (dest.repair.length > 0) cats.add('repair')
-    if (dest.production.length > 0) cats.add('inputs')
-    if (dest.other.length > 0) cats.add('other')
+  for (const conn of location.connections) {
+    for (const exp of conn.exports) cats.add(exp.lineSource)
+    for (const imp of conn.imports) cats.add(imp.lineSource)
   }
   return [...cats]
 }
 
-function getSourceStorageTypes(source: SourceDashboard): string[] {
+function getLocationStorageTypes(location: LocationDashboard): string[] {
   const types = new Set<string>()
-  for (const dest of source.destinations) {
-    for (const st of dest.destinationStorageTypes) types.add(st)
+  for (const conn of location.connections) {
+    for (const st of conn.storageTypes) types.add(st)
   }
   return [...types].sort()
 }
 
-function ensureSourceFilters(sourceId: string, source: SourceDashboard, side: FilterSide) {
+function ensureSourceFilters(locationId: string, location: LocationDashboard, side: FilterSide) {
   const store = getFilterStore(side)
-  if (!store[sourceId]) {
-    store[sourceId] = {
-      cats: new Set(getSourceCategories(source)),
-      storages: new Set(getSourceStorageTypes(source)),
+  if (!store[locationId]) {
+    store[locationId] = {
+      cats: new Set(getLocationCategories(location)),
+      storages: new Set(getLocationStorageTypes(location)),
     }
   }
-  return store[sourceId]
+  return store[locationId]
 }
 
 function isSourceFilterActive(
@@ -1506,16 +1948,18 @@ function toggleSourceFilter(
   }
 }
 
-/** Get tickers that pass the source-level category + storage filters */
-function getSourceFilteredTickers(source: SourceDashboard, side: FilterSide): Set<string> {
-  const f = ensureSourceFilters(source.sourceLocationId, source, side)
+/** Get tickers that pass the location-level category + storage filters */
+function getSourceFilteredTickers(location: LocationDashboard, side: FilterSide): Set<string> {
+  const f = ensureSourceFilters(location.locationId, location, side)
   const tickers = new Set<string>()
-  for (const dest of source.destinations) {
-    if (!dest.destinationStorageTypes.some(st => f.storages.has(st))) continue
-    if (f.cats.has('consumables')) for (const item of dest.burn) tickers.add(item.ticker)
-    if (f.cats.has('repair')) for (const item of dest.repair) tickers.add(item.ticker)
-    if (f.cats.has('inputs')) for (const item of dest.production) tickers.add(item.ticker)
-    if (f.cats.has('other')) for (const item of dest.other) tickers.add(item.ticker)
+  for (const conn of location.connections) {
+    if (!conn.storageTypes.some(st => f.storages.has(st))) continue
+    for (const exp of conn.exports) {
+      if (f.cats.has(exp.lineSource)) tickers.add(exp.ticker)
+    }
+    for (const imp of conn.imports) {
+      if (f.cats.has(imp.lineSource)) tickers.add(imp.ticker)
+    }
   }
   return tickers
 }
@@ -1547,10 +1991,45 @@ interface SourceStockItem {
   commodity: Commodity | null
 }
 
-function getSortedSourceStock(source: SourceDashboard): SourceStockItem[] {
-  const filteredTickers = getSourceFilteredTickers(source, 'stock')
-  const items: SourceStockItem[] = Object.entries(source.sourceStock)
-    .filter(([ticker]) => (source.aggregatedNeed[ticker] ?? 0) > 0 && filteredTickers.has(ticker))
+/**
+ * Get the effective import and gap for a ticker at a location, respecting the output filter.
+ * When the production_output filter is off, import is zeroed and gap recalculated without it.
+ */
+function effectiveSupplyAndGap(
+  location: LocationDashboard,
+  ticker: string,
+  side: FilterSide
+): { supply: number; gap: number } {
+  const f = getFilterStore(side)[location.locationId]
+  const outputActive = f ? f.cats.has('production_output') : true
+  const supply = outputActive ? (location.aggregatedImport[ticker] ?? 0) : 0
+  const need = location.aggregatedExport[ticker] ?? 0
+  const stock = stockMode.value === 'included' ? (location.stock[ticker] ?? 0) : 0
+  const gap = Math.max(0, need - stock - supply)
+  return { supply, gap }
+}
+
+function stockQtyClass(
+  item: SourceStockItem,
+  location: LocationDashboard
+): Record<string, boolean> {
+  if (item.quantity <= 0) return { 'stock-qty-zero': true }
+  const { supply, gap } = effectiveSupplyAndGap(location, item.ticker, 'stock')
+  const need = location.aggregatedExport[item.ticker] ?? 0
+  if (supply > 0 && supply >= need) return { 'stock-qty-surplus': true }
+  if (gap > 0) return { 'stock-qty-gap': true }
+  return {}
+}
+
+function getSortedSourceStock(location: LocationDashboard): SourceStockItem[] {
+  const filteredTickers = getSourceFilteredTickers(location, 'stock')
+  const items: SourceStockItem[] = Object.entries(location.stock)
+    .filter(
+      ([ticker]) =>
+        ((location.aggregatedExport[ticker] ?? 0) > 0 ||
+          (location.aggregatedImport[ticker] ?? 0) > 0) &&
+        filteredTickers.has(ticker)
+    )
     .map(([ticker, quantity]) => {
       const cat = commodityService.getCommodityCategory(ticker)
       return {
@@ -1568,11 +2047,11 @@ function getSortedSourceStock(source: SourceDashboard): SourceStockItem[] {
     })
 
   // Initialize sort default
-  if (!sourceStockSort[source.sourceLocationId]) {
-    sourceStockSort[source.sourceLocationId] = 'name'
+  if (!sourceStockSort[location.locationId]) {
+    sourceStockSort[location.locationId] = 'name'
   }
 
-  const sortMode = sourceStockSort[source.sourceLocationId]
+  const sortMode = sourceStockSort[location.locationId]
   if (sortMode === 'amount') {
     items.sort((a, b) => b.quantity - a.quantity)
   } else if (sortMode === 'category') {
@@ -1587,27 +2066,31 @@ function getSortedSourceStock(source: SourceDashboard): SourceStockItem[] {
   return items
 }
 
-function getSourceGaps(source: SourceDashboard): { ticker: string; gap: number }[] {
-  return Object.entries(source.gap)
-    .filter(([, gap]) => gap > 0)
-    .map(([ticker, gap]) => ({ ticker, gap }))
+function getSourceGaps(location: LocationDashboard): { ticker: string; gap: number }[] {
+  const allTickers = new Set([
+    ...Object.keys(location.aggregatedExport),
+    ...Object.keys(location.aggregatedImport),
+  ])
+  return [...allTickers]
+    .map(ticker => ({ ticker, gap: effectiveSupplyAndGap(location, ticker, 'order').gap }))
+    .filter(item => item.gap > 0)
     .sort((a, b) => a.ticker.localeCompare(b.ticker))
 }
 
-function getFilteredSourceGaps(source: SourceDashboard): { ticker: string; gap: number }[] {
-  const filteredTickers = getSourceFilteredTickers(source, 'order')
-  return getSourceGaps(source).filter(item => filteredTickers.has(item.ticker))
+function getFilteredSourceGaps(location: LocationDashboard): { ticker: string; gap: number }[] {
+  const filteredTickers = getSourceFilteredTickers(location, 'order')
+  return getSourceGaps(location).filter(item => filteredTickers.has(item.ticker))
 }
 
-function getGapPrice(source: SourceDashboard, ticker: string): number | null {
-  const prices = sourcePrices[source.sourceLocationId]
+function getGapPrice(location: LocationDashboard, ticker: string): number | null {
+  const prices = sourcePrices[location.locationId]
   return prices?.get(ticker) ?? null
 }
 
-function getSourceOrderTotal(source: SourceDashboard): number | null {
-  const prices = sourcePrices[source.sourceLocationId]
+function getSourceOrderTotal(location: LocationDashboard): number | null {
+  const prices = sourcePrices[location.locationId]
   if (!prices || prices.size === 0) return null
-  const gaps = getFilteredSourceGaps(source)
+  const gaps = getFilteredSourceGaps(location)
   let total = 0
   let hasAny = false
   for (const { ticker, gap } of gaps) {
@@ -1620,30 +2103,30 @@ function getSourceOrderTotal(source: SourceDashboard): number | null {
   return hasAny ? total : null
 }
 
-function getSourceOrderWeight(source: SourceDashboard): number {
+function getSourceOrderWeight(location: LocationDashboard): number {
   let total = 0
-  for (const { ticker, gap } of getFilteredSourceGaps(source)) {
+  for (const { ticker, gap } of getFilteredSourceGaps(location)) {
     const w = commodityService.getCommodityWeight(ticker)
     if (w) total += w * gap
   }
   return total
 }
 
-function getSourceOrderVolume(source: SourceDashboard): number {
+function getSourceOrderVolume(location: LocationDashboard): number {
   let total = 0
-  for (const { ticker, gap } of getFilteredSourceGaps(source)) {
+  for (const { ticker, gap } of getFilteredSourceGaps(location)) {
     const v = commodityService.getCommodityVolume(ticker)
     if (v) total += v * gap
   }
   return total
 }
 
-async function copySourceGapsCsv(source: SourceDashboard) {
-  const gaps = getFilteredSourceGaps(source)
+async function copySourceGapsCsv(location: LocationDashboard) {
+  const gaps = getFilteredSourceGaps(location)
   if (gaps.length === 0) return
   const currency = settingsStore.preferredCurrency.value
   const lines = gaps.map(item => {
-    const price = getGapPrice(source, item.ticker)
+    const price = getGapPrice(location, item.ticker)
     const total = price !== null ? (price * item.gap).toFixed(2) : ''
     const wt = commodityService.getCommodityWeight(item.ticker)
     const vol = commodityService.getCommodityVolume(item.ticker)
@@ -1658,14 +2141,14 @@ async function copySourceGapsCsv(source: SourceDashboard) {
   }
 }
 
-function createShoppingListFromGaps(source: SourceDashboard) {
-  const gaps = getFilteredSourceGaps(source)
+function createShoppingListFromGaps(location: LocationDashboard) {
+  const gaps = getFilteredSourceGaps(location)
   if (gaps.length === 0) return
   const materials: Record<string, number> = {}
   for (const item of gaps) {
     materials[item.ticker] = item.gap
   }
-  const locationName = getLocationDisplay(source.sourceLocationId)
+  const locationName = getLocationDisplay(location.locationId)
   shoppingListStore.setMaterials(materials, `Supply Order – ${locationName}`)
   router.push('/market')
 }
@@ -1701,43 +2184,43 @@ async function loadPriceLists() {
   }
 }
 
-async function loadSourcePrices(source: SourceDashboard) {
-  const priceListCode = sourceOrderPriceList[source.sourceLocationId]
+async function loadSourcePrices(location: LocationDashboard) {
+  const priceListCode = sourceOrderPriceList[location.locationId]
   if (!priceListCode) {
-    delete sourcePrices[source.sourceLocationId]
+    delete sourcePrices[location.locationId]
     return
   }
   try {
     const currency = settingsStore.preferredCurrency.value
-    const prices = await api.prices.getEffective(priceListCode, source.sourceLocationId, currency)
+    const prices = await api.prices.getEffective(priceListCode, location.locationId, currency)
     const priceMap = new Map<string, number>()
     for (const p of prices) {
       priceMap.set(p.commodityTicker, p.finalPrice)
     }
-    sourcePrices[source.sourceLocationId] = priceMap
+    sourcePrices[location.locationId] = priceMap
   } catch {
-    delete sourcePrices[source.sourceLocationId]
+    delete sourcePrices[location.locationId]
   }
 }
 
 // Watch price list changes to reload prices
 watch(sourceOrderPriceList, () => {
-  for (const source of dashboard.value?.sources ?? []) {
-    loadSourcePrices(source)
+  for (const loc of dashboard.value?.locations ?? []) {
+    loadSourcePrices(loc)
   }
 })
 
 // Per-planet filters: enabled categories and storage types (all enabled by default)
 const planetFilters = reactive<Record<string, { cats: Set<string>; storages: Set<string> }>>({})
 
-function getPlanetFilters(planetId: string, dests: DestinationDashboard[]) {
-  if (!planetFilters[planetId]) {
-    planetFilters[planetId] = {
-      cats: new Set(planetCategories(dests)),
-      storages: new Set(planetStorageTypes(dests)),
+function getPlanetFilters(connectionId: string, conn: ConnectionDashboard) {
+  if (!planetFilters[connectionId]) {
+    planetFilters[connectionId] = {
+      cats: new Set(connectionCategories(conn)),
+      storages: new Set(conn.storageTypes),
     }
   }
-  return planetFilters[planetId]
+  return planetFilters[connectionId]
 }
 
 function isPlanetFilterActive(planetId: string, type: 'cat' | 'storage', value: string): boolean {
@@ -1757,49 +2240,89 @@ function togglePlanetFilter(planetId: string, type: 'cat' | 'storage', value: st
   }
 }
 
-function planetStorageTypes(dests: DestinationDashboard[]): string[] {
-  const types = new Set<string>()
-  for (const dest of dests) {
-    for (const st of dest.destinationStorageTypes) types.add(st)
-  }
-  return [...types]
+function importColor(item: ConnectionMaterialRow): string {
+  if (item.importAmt <= 0) return 'text-success' // fully covered by destination stock
+  // Does the source (parent) have enough to ship the remaining need?
+  if (item.parentStock >= item.importAmt) return 'text-success'
+  if (item.parentStock > 0) return 'text-warning'
+  return 'text-error'
 }
 
-function getPlanetMaterials(source: SourceDashboard, planet: PlanetGroup): DestMaterialRow[] {
-  const filters = getPlanetFilters(planet.planetId, planet.dests)
-  const agg = new Map<string, DestMaterialRow>()
+function exportColor(item: ConnectionMaterialRow): string {
+  if (item.exportAmt <= 0) return 'text-success' // nothing to export
+  // Does this connection have enough stock to cover the export?
+  if (item.connStock >= item.exportAmt) return 'text-success'
+  if (item.connStock > 0) return 'text-warning'
+  return 'text-error'
+}
 
-  for (const dest of planet.dests) {
-    // Check storage type filter
-    if (!dest.destinationStorageTypes.some(st => filters.storages.has(st))) continue
+function formatRate(total: number, daily: number): string {
+  if (total <= 0) return '–'
+  const d = daily % 1 === 0 ? daily.toFixed(0) : daily.toFixed(1)
+  return `${Math.ceil(total)} (${d}/d)`
+}
 
-    const rows = getDestMaterials(source, dest)
+function getConnectionMaterials(
+  location: LocationDashboard,
+  conn: ConnectionDashboard
+): ConnectionMaterialRow[] {
+  const filters = getPlanetFilters(conn.locationId, conn)
+  const burnDays = dashboard.value?.settings.burnDays ?? 7
+  const agg = new Map<string, { categories: string[]; exportAmt: number; importAmt: number }>()
 
-    for (const row of rows) {
-      if (!row.categories.some(c => filters.cats.has(c))) continue
-      const existing = agg.get(row.ticker)
-      if (existing) {
-        existing.need += row.need
-        existing.destStock += row.destStock
-        existing.needed = Math.max(0, existing.need - existing.destStock)
-        existing.gap = Math.max(0, existing.needed - existing.srcStock)
-        for (const st of row.storageTypes) {
-          if (!existing.storageTypes.includes(st)) existing.storageTypes.push(st)
-        }
-        for (const cat of row.categories) {
-          if (!existing.categories.includes(cat)) existing.categories.push(cat)
-        }
-      } else {
-        agg.set(row.ticker, {
-          ...row,
-          storageTypes: [...row.storageTypes],
-          categories: [...row.categories],
-        })
-      }
+  // Flip perspective: parent's exports = connection's imports, parent's imports = connection's exports
+  for (const exp of conn.exports) {
+    if (!filters.cats.has(exp.lineSource)) continue
+    const existing = agg.get(exp.ticker)
+    if (existing) {
+      existing.importAmt += exp.amount
+      if (!existing.categories.includes(exp.lineSource)) existing.categories.push(exp.lineSource)
+    } else {
+      agg.set(exp.ticker, { categories: [exp.lineSource], exportAmt: 0, importAmt: exp.amount })
     }
   }
 
-  return [...agg.values()]
+  for (const imp of conn.imports) {
+    if (!filters.cats.has(imp.lineSource)) continue
+    const existing = agg.get(imp.ticker)
+    if (existing) {
+      existing.exportAmt += imp.amount
+      if (!existing.categories.includes(imp.lineSource)) existing.categories.push(imp.lineSource)
+    } else {
+      agg.set(imp.ticker, { categories: [imp.lineSource], exportAmt: imp.amount, importAmt: 0 })
+    }
+  }
+
+  return [...agg.entries()].map(([ticker, row]) => {
+    const rates = conn.rates?.[ticker]
+    const dailyProd = rates?.dailyProduction ?? 0
+    const dailyDem = rates?.dailyDemand ?? 0
+    const dailyNet = dailyProd - dailyDem
+    const totalNet = dailyNet * burnDays
+
+    const connStock = conn.connectionStock[ticker] ?? 0
+    const parentStock = location.stock[ticker] ?? 0
+    const includeStock = stockMode.value === 'included'
+
+    // When stock included: imports reduced by destination stock, exports reduced by source stock
+    const adjustedImport = includeStock ? Math.max(0, row.importAmt - connStock) : row.importAmt
+    const adjustedExport = includeStock ? Math.max(0, row.exportAmt - parentStock) : row.exportAmt
+
+    return {
+      ticker,
+      categories: row.categories,
+      production: formatRate(dailyProd * burnDays, dailyProd),
+      demand: formatRate(dailyDem * burnDays, dailyDem),
+      net: totalNet === 0 ? '–' : formatRate(Math.abs(totalNet), Math.abs(dailyNet)),
+      netValue: totalNet,
+      rawImportAmt: row.importAmt,
+      rawExportAmt: row.exportAmt,
+      importAmt: adjustedImport,
+      exportAmt: adjustedExport,
+      connStock,
+      parentStock,
+    }
+  })
 }
 const expandedCats = reactive<Record<string, boolean>>({})
 
@@ -1812,161 +2335,58 @@ function isCatExpanded(planetId: string, cat: string): boolean {
   return !!expandedCats[`${planetId}:${cat}`]
 }
 
-interface PlanetGroup {
-  planetId: string
-  dests: DestinationDashboard[]
-}
-
-function maxPlanetNameWidth(source: SourceDashboard): number {
+function maxConnectionNameWidth(location: LocationDashboard): number {
   let max = 0
-  const seen = new Set<string>()
-  for (const dest of source.destinations) {
-    if (seen.has(dest.planetId)) continue
-    seen.add(dest.planetId)
-    const name = getLocationDisplay(dest.planetId)
+  for (const conn of location.connections) {
+    const name = getLocationDisplay(conn.locationId)
     if (name.length > max) max = name.length
   }
   return max
 }
 
-function groupDestsByPlanet(source: SourceDashboard): PlanetGroup[] {
-  const groups = new Map<string, DestinationDashboard[]>()
-  for (const dest of source.destinations) {
-    const dests = groups.get(dest.planetId) ?? []
-    dests.push(dest)
-    groups.set(dest.planetId, dests)
-  }
-  return [...groups.entries()].map(([planetId, dests]) => ({ planetId, dests }))
-}
-
-function planetCategories(dests: DestinationDashboard[]): string[] {
+function connectionCategories(conn: ConnectionDashboard): string[] {
   const cats = new Set<string>()
-  for (const dest of dests) {
-    for (const cat of destCategories(dest)) cats.add(cat)
-  }
+  for (const exp of conn.exports) cats.add(exp.lineSource)
+  for (const imp of conn.imports) cats.add(imp.lineSource)
   return [...cats]
 }
 
-function planetCategoryTickers(dests: DestinationDashboard[], cat: string): Commodity[] {
+function connectionCategoryTickers(conn: ConnectionDashboard, cat: string): Commodity[] {
   const seen = new Set<string>()
   const result: Commodity[] = []
-  for (const dest of dests) {
-    for (const item of destCategoryTickers(dest, cat)) {
-      if (!seen.has(item.ticker)) {
-        seen.add(item.ticker)
-        result.push(item)
-      }
+  const items = [
+    ...conn.exports.filter(e => e.lineSource === cat),
+    ...conn.imports.filter(i => i.lineSource === cat),
+  ]
+  for (const item of items) {
+    if (!seen.has(item.ticker)) {
+      seen.add(item.ticker)
+      result.push({
+        ticker: item.ticker,
+        name: commodityService.getCommodityDisplay(item.ticker, 'name-only'),
+        category: commodityService.getCommodityCategory(item.ticker) ?? undefined,
+      })
     }
   }
   return result
 }
 
-function planetGapCount(source: SourceDashboard, dests: DestinationDashboard[]): number {
+function connectionGapCount(location: LocationDashboard, conn: ConnectionDashboard): number {
   const tickers = new Set<string>()
-  for (const dest of dests) {
-    for (const cat of destCategories(dest)) {
-      for (const item of destCategoryTickers(dest, cat)) {
-        tickers.add(item.ticker)
-      }
-    }
-  }
-  return [...tickers].filter(t => (source.gap[t] ?? 0) > 0).length
-}
-
-function getGovTickers(dest: DestinationDashboard): Set<string> {
-  return new Set(
-    allLines.value
-      .filter(l => l.destinationPlanetId === dest.planetId && l.demandSource === 'government')
-      .map(l => l.commodityTicker)
-  )
-}
-
-function destCategories(dest: DestinationDashboard): string[] {
-  const cats: string[] = []
-  if (dest.burn.some(b => b.need > 0)) cats.push('consumables')
-  if (dest.repair.some(r => r.need > 0)) cats.push('repair')
-  if (dest.production.some(p => p.need > 0)) cats.push('inputs')
-  if (dest.other.some(o => o.need > 0)) {
-    const govTickers = getGovTickers(dest)
-    if (dest.other.some(o => o.need > 0 && govTickers.has(o.ticker))) cats.push('government')
-    if (dest.other.some(o => o.need > 0 && !govTickers.has(o.ticker))) cats.push('other')
-  }
-  return cats
-}
-
-function destCategoryTickers(dest: DestinationDashboard, cat: string): Commodity[] {
-  let items: { ticker: string; need: number }[]
-  if (cat === 'consumables') {
-    items = dest.burn
-  } else if (cat === 'repair') {
-    items = dest.repair
-  } else if (cat === 'inputs') {
-    items = dest.production
-  } else if (cat === 'government') {
-    const govTickers = getGovTickers(dest)
-    items = dest.other.filter(o => govTickers.has(o.ticker))
-  } else {
-    const govTickers = getGovTickers(dest)
-    items = dest.other.filter(o => !govTickers.has(o.ticker))
-  }
-  return items
-    .filter(i => i.need > 0)
-    .map(i => ({
-      ticker: i.ticker,
-      name: commodityService.getCommodityDisplay(i.ticker, 'name-only'),
-      category: commodityService.getCommodityCategory(i.ticker) ?? undefined,
-    }))
-}
-
-function getDestMaterials(
-  source: SourceDashboard,
-  dest: DestinationDashboard,
-  filter?: string | null
-): DestMaterialRow[] {
-  const rows: DestMaterialRow[] = []
-
-  function addRows(items: { ticker: string; need: number }[], category: string) {
-    if (filter && filter !== category) return
-    for (const item of items) {
-      if (item.need <= 0) continue
-      const destStock = dest.destinationStock[item.ticker] ?? 0
-      const needed = Math.max(0, item.need - destStock)
-      const srcStock = source.sourceStock[item.ticker] ?? 0
-      rows.push({
-        ticker: item.ticker,
-        categories: [category],
-        storageTypes: [...dest.destinationStorageTypes],
-        need: item.need,
-        destStock,
-        needed,
-        srcStock,
-        gap: Math.max(0, needed - srcStock),
-      })
-    }
-  }
-
-  addRows(dest.burn, 'consumables')
-  addRows(dest.repair, 'repair')
-  addRows(dest.production, 'inputs')
-  const govTickers = getGovTickers(dest)
-  addRows(
-    dest.other.filter(o => govTickers.has(o.ticker)),
-    'government'
-  )
-  addRows(
-    dest.other.filter(o => !govTickers.has(o.ticker)),
-    'other'
-  )
-  return rows
+  for (const exp of conn.exports) tickers.add(exp.ticker)
+  for (const imp of conn.imports) tickers.add(imp.ticker)
+  return [...tickers].filter(t => effectiveSupplyAndGap(location, t, 'order').gap > 0).length
 }
 
 const configHeaders = [
   { title: 'Material', key: 'commodityTicker', sortable: true },
   { title: 'Source', key: 'sourceLocationId', sortable: true },
+  { title: 'Source Storage', key: 'srcStorage', sortable: false, width: 70 },
   { title: 'Destination', key: 'destinationPlanetId', sortable: true },
-  { title: 'Storage', key: 'storageIcons', sortable: false, width: 70 },
-  { title: 'Category', key: 'demandInfo', sortable: true },
-  { title: 'Amount', key: 'demandAmount', sortable: false },
+  { title: 'Dest Storage', key: 'destStorage', sortable: false, width: 70 },
+  { title: 'Category', key: 'demandInfo', sortable: true, value: 'lineSource' },
+  { title: 'Mode', key: 'demandMode', sortable: true, value: 'isAuto', width: 70 },
+  { title: 'Amount', key: 'demandAmount', sortable: true, value: 'effectiveAmount' },
 ]
 
 // Helpers
@@ -2016,29 +2436,35 @@ async function loadLocationItems() {
 async function loadDashboard() {
   try {
     loading.value = true
-    const [dashData, planetData, lineData, locData] = await Promise.all([
-      api.supplyDashboard.get(),
+    // First load lines and metadata (needed for auto-selection)
+    const [planetData, lineData, locData] = await Promise.all([
       api.supplyDashboard.getPlanets(),
       api.supplyChain.list(),
       api.supplyChain.getLocations(),
     ])
-    dashboard.value = dashData
     planets.value = planetData
     allLines.value = lineData
     storageLocations.value = locData
     await Promise.all([loadLocationItems(), loadCommodityItems(), loadPriceLists()])
 
-    // Initialize price list defaults for each source
+    // Auto-select location if none persisted
+    autoSelectLocation()
+
+    // Now load dashboard for the selected location
+    const dashData = await api.supplyDashboard.get(pageState.selectedLocation || undefined)
+    dashboard.value = dashData
+
+    // Initialize price list defaults for each location
     const defaultPL = settingsStore.defaultPriceList.value
-    for (const src of dashData.sources) {
-      if (!(src.sourceLocationId in sourceOrderPriceList)) {
-        sourceOrderPriceList[src.sourceLocationId] = defaultPL
+    for (const loc of dashData.locations) {
+      if (!(loc.locationId in sourceOrderPriceList)) {
+        sourceOrderPriceList[loc.locationId] = defaultPL
       }
     }
-    // Load prices for sources with a selected price list
-    for (const src of dashData.sources) {
-      if (sourceOrderPriceList[src.sourceLocationId]) {
-        loadSourcePrices(src)
+    // Load prices for locations with a selected price list
+    for (const loc of dashData.locations) {
+      if (sourceOrderPriceList[loc.locationId]) {
+        loadSourcePrices(loc)
       }
     }
     burnDays.value = dashData.settings.burnDays
@@ -2091,7 +2517,7 @@ function saveSettingDebounced(key: string, value: unknown) {
 }
 
 // Config dialog actions
-async function bulkAdd(type: 'consumables' | 'repair' | 'inputs') {
+async function bulkAdd(type: 'consumables' | 'repair' | 'inputs' | 'production_output') {
   try {
     bulkAdding.value = true
     const request = {
@@ -2105,12 +2531,13 @@ async function bulkAdd(type: 'consumables' | 'repair' | 'inputs') {
     let result
     if (type === 'consumables') result = await api.supplyChain.addConsumables(request)
     else if (type === 'repair') result = await api.supplyChain.addRepair(request)
+    else if (type === 'production_output') result = await api.supplyChain.addOutputs(request)
     else result = await api.supplyChain.addInputs(request)
 
     showSnackbar(`Added ${result.created} lines, skipped ${result.skipped}`)
     allLines.value = await api.supplyChain.list()
     // Reload dashboard to reflect changes
-    dashboard.value = await api.supplyDashboard.get()
+    dashboard.value = await api.supplyDashboard.get(pageState.selectedLocation || undefined)
   } catch (error) {
     showSnackbar(error instanceof Error ? error.message : `Failed to add ${type} lines`, 'error')
   } finally {
@@ -2121,23 +2548,91 @@ async function bulkAdd(type: 'consumables' | 'repair' | 'inputs') {
 function enterEditMode() {
   editMode.value = true
   selectedLineIds.value = []
+  // Clear any stale edits
+  for (const key of Object.keys(pendingEdits)) delete pendingEdits[Number(key)]
 }
 
 function exitEditMode() {
   editMode.value = false
   selectedLineIds.value = []
+  for (const key of Object.keys(pendingEdits)) delete pendingEdits[Number(key)]
+}
+
+async function saveEdits() {
+  const entries = Object.entries(pendingEdits).filter(([, v]) => Object.keys(v).length > 0)
+  if (entries.length === 0) {
+    exitEditMode()
+    return
+  }
+  try {
+    savingEdits.value = true
+    await Promise.all(entries.map(([id, updates]) => api.supplyChain.update(Number(id), updates)))
+    showSnackbar(`Updated ${entries.length} ${entries.length === 1 ? 'line' : 'lines'}`)
+    allLines.value = await api.supplyChain.list()
+    dashboard.value = await api.supplyDashboard.get(pageState.selectedLocation || undefined)
+    exitEditMode()
+  } catch {
+    showSnackbar('Failed to save changes', 'error')
+  } finally {
+    savingEdits.value = false
+  }
 }
 
 function selectAllLines() {
   selectedLineIds.value = filteredLines.value.map(l => l.id)
 }
 
+/** Get the IDs to apply an edit to: the edited item + all selected lines */
+function editTargetIds(item: SupplyChainLineResponse): number[] {
+  if (selectedLineIds.value.includes(item.id)) return [...selectedLineIds.value]
+  return [item.id]
+}
+
+function toggleLineStorage(
+  item: SupplyChainLineResponse,
+  side: 'source' | 'destination',
+  storageType: string
+) {
+  const effective = editedLine(item)
+  const field = side === 'source' ? 'sourceStorageTypes' : 'destinationStorageTypes'
+  const current = [...(effective[field] as string[])]
+  const idx = current.indexOf(storageType)
+  if (idx >= 0) {
+    if (current.length <= 1) return // Must keep at least one
+    current.splice(idx, 1)
+  } else {
+    current.push(storageType)
+  }
+  // Apply the resulting storage array to all target lines (overwrite)
+  for (const id of editTargetIds(item)) {
+    if (!pendingEdits[id]) pendingEdits[id] = {}
+    pendingEdits[id][field] = [...current]
+  }
+}
+
+function updateLineField(
+  item: SupplyChainLineResponse,
+  field: 'lineSource' | 'demand' | 'demandRate',
+  value: unknown
+) {
+  for (const id of editTargetIds(item)) {
+    if (!pendingEdits[id]) pendingEdits[id] = {}
+    ;(pendingEdits[id] as Record<string, unknown>)[field] = value
+  }
+}
+
 async function handleAdd() {
-  const cat = addForm.value.category as 'consumables' | 'inputs' | 'repair' | 'government' | 'other'
+  const cat = addForm.value.category as
+    | 'consumables'
+    | 'inputs'
+    | 'repair'
+    | 'production_output'
+    | 'government'
+    | 'other'
 
   // Bulk add (All materials, auto amount)
   if (addForm.value.materialAll && AUTO_CATEGORIES.has(cat)) {
-    await bulkAdd(cat as 'consumables' | 'repair' | 'inputs')
+    await bulkAdd(cat as 'consumables' | 'repair' | 'inputs' | 'production_output')
     return
   }
 
@@ -2151,14 +2646,14 @@ async function handleAdd() {
       sourceStorageTypes: addForm.value.sourceStorageTypes,
       destinationStorageTypes: addForm.value.addStorageTypes,
       mode: 'demand',
-      demandSource: cat,
+      lineSource: cat,
       demand: addForm.value.amountAuto ? undefined : (addForm.value.addAmount ?? undefined),
     })
     showSnackbar('Line added')
     addForm.value.addTicker = ''
     addForm.value.addAmount = null
     allLines.value = await api.supplyChain.list()
-    dashboard.value = await api.supplyDashboard.get()
+    dashboard.value = await api.supplyDashboard.get(pageState.selectedLocation || undefined)
   } catch (error) {
     showSnackbar(error instanceof Error ? error.message : 'Failed to add line', 'error')
   } finally {
@@ -2175,7 +2670,7 @@ async function deleteSelectedLines() {
     selectedLineIds.value = []
     editMode.value = false
     allLines.value = await api.supplyChain.list()
-    dashboard.value = await api.supplyDashboard.get()
+    dashboard.value = await api.supplyDashboard.get(pageState.selectedLocation || undefined)
   } catch (error) {
     showSnackbar(error instanceof Error ? error.message : 'Failed to delete lines', 'error')
   } finally {
@@ -2201,6 +2696,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.settings-label-btn {
+  cursor: default !important;
+  pointer-events: none;
+  opacity: 0.6 !important;
+}
+
 :deep(.v-data-table) tbody tr td {
   padding-top: 4px !important;
   padding-bottom: 4px !important;
@@ -2215,6 +2716,17 @@ onMounted(async () => {
 
 :deep(input[type='number']) {
   -moz-appearance: textfield;
+}
+
+.cell-link {
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.cell-link:hover {
+  opacity: 1;
+  text-decoration: underline !important;
 }
 
 .source-panel :deep(.v-expansion-panel-text__wrapper) {
@@ -2309,6 +2821,10 @@ onMounted(async () => {
 
 .stock-qty-zero {
   color: #ef5350 !important;
+}
+
+.stock-qty-surplus {
+  color: #4caf50 !important;
 }
 
 .stock-qty-gap {

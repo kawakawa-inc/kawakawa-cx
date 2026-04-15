@@ -27,7 +27,7 @@ vi.mock('../db/index.js', () => ({
     destinationPlanetId: 'destinationPlanetId',
     destinationStorageTypes: 'destinationStorageTypes',
     mode: 'mode',
-    demandSource: 'demandSource',
+    lineSource: 'lineSource',
     demand: 'demand',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
@@ -80,7 +80,7 @@ describe('SupplyChainController', () => {
       destinationPlanetId: 'UV-351a',
       destinationStorageTypes: ['STORE'],
       mode: 'demand' as const,
-      demandSource: 'consumables' as const,
+      lineSource: 'consumables' as const,
       demand: null,
       createdAt: now,
       updatedAt: now,
@@ -146,7 +146,7 @@ describe('SupplyChainController', () => {
   // ==================== POST /supply-chain/lines ====================
 
   describe('createLine', () => {
-    it('should create a demand line with demandSource', async () => {
+    it('should create a demand line with lineSource', async () => {
       // commodity exists
       mockSelectWhere.mockResolvedValueOnce([{ ticker: 'DW' }])
       // location exists
@@ -162,21 +162,21 @@ describe('SupplyChainController', () => {
           destinationPlanetId: 'UV-351a',
           destinationStorageTypes: ['STORE'],
           mode: 'demand',
-          demandSource: 'consumables',
+          lineSource: 'consumables',
         },
         mockRequest
       )
 
       expect(result.id).toBe(1)
       expect(result.mode).toBe('demand')
-      expect(result.demandSource).toBe('consumables')
+      expect(result.lineSource).toBe('consumables')
     })
 
     it('should create a demand line with fixed demand', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ ticker: 'DW' }])
       mockSelectWhere.mockResolvedValueOnce([{ naturalId: 'BEN' }])
 
-      const line = makeLine({ demandSource: null, demand: 500 })
+      const line = makeLine({ lineSource: null, demand: 500 })
       mockInsertReturning.mockResolvedValueOnce([line])
 
       const result = await controller.createLine(
@@ -193,14 +193,14 @@ describe('SupplyChainController', () => {
       )
 
       expect(result.demand).toBe(500)
-      expect(result.demandSource).toBeNull()
+      expect(result.lineSource).toBeNull()
     })
 
     it('should create a reserve line', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ ticker: 'DW' }])
       mockSelectWhere.mockResolvedValueOnce([{ naturalId: 'BEN' }])
 
-      const line = makeLine({ mode: 'reserve', demandSource: null, demand: 2000 })
+      const line = makeLine({ mode: 'reserve', lineSource: null, demand: 2000 })
       mockInsertReturning.mockResolvedValueOnce([line])
 
       const result = await controller.createLine(
@@ -232,7 +232,7 @@ describe('SupplyChainController', () => {
             destinationPlanetId: 'UV-351a',
             destinationStorageTypes: ['STORE'],
             mode: 'demand',
-            demandSource: 'consumables',
+            lineSource: 'consumables',
           },
           mockRequest
         )
@@ -252,14 +252,14 @@ describe('SupplyChainController', () => {
             destinationPlanetId: 'UV-351a',
             destinationStorageTypes: ['STORE'],
             mode: 'demand',
-            demandSource: 'consumables',
+            lineSource: 'consumables',
           },
           mockRequest
         )
       ).rejects.toThrow('Invalid source location')
     })
 
-    it('should reject reserve line with demandSource', async () => {
+    it('should reject reserve line with lineSource', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ ticker: 'DW' }])
       mockSelectWhere.mockResolvedValueOnce([{ naturalId: 'BEN' }])
 
@@ -272,14 +272,14 @@ describe('SupplyChainController', () => {
             destinationPlanetId: 'UV-351a',
             destinationStorageTypes: ['STORE'],
             mode: 'reserve',
-            demandSource: 'consumables',
+            lineSource: 'consumables',
           },
           mockRequest
         )
-      ).rejects.toThrow('Reserve lines cannot have a demandSource')
+      ).rejects.toThrow('Reserve lines cannot have a lineSource')
     })
 
-    it('should reject demand line without demandSource or demand', async () => {
+    it('should reject demand line without lineSource or demand', async () => {
       mockSelectWhere.mockResolvedValueOnce([{ ticker: 'DW' }])
       mockSelectWhere.mockResolvedValueOnce([{ naturalId: 'BEN' }])
 
@@ -311,7 +311,7 @@ describe('SupplyChainController', () => {
             destinationPlanetId: 'UV-351a',
             destinationStorageTypes: ['STORE'],
             mode: 'demand',
-            demandSource: 'consumables',
+            lineSource: 'consumables',
           },
           mockRequest
         )
@@ -591,9 +591,9 @@ describe('SupplyChainController', () => {
       mockSelectWhere.mockResolvedValueOnce([]) // no existing lines
 
       const inserted = [
-        makeLine({ id: 1, commodityTicker: 'BBH', demandSource: 'repair' as const }),
-        makeLine({ id: 2, commodityTicker: 'MCG', demandSource: 'repair' as const }),
-        makeLine({ id: 3, commodityTicker: 'INS', demandSource: 'repair' as const }),
+        makeLine({ id: 1, commodityTicker: 'BBH', lineSource: 'repair' as const }),
+        makeLine({ id: 2, commodityTicker: 'MCG', lineSource: 'repair' as const }),
+        makeLine({ id: 3, commodityTicker: 'INS', lineSource: 'repair' as const }),
       ]
       mockInsertReturning.mockResolvedValueOnce(inserted)
 
@@ -657,9 +657,7 @@ describe('SupplyChainController', () => {
 
       mockSelectWhere.mockResolvedValueOnce([]) // no existing lines
 
-      const inserted = [
-        makeLine({ id: 1, commodityTicker: 'BBH', demandSource: 'repair' as const }),
-      ]
+      const inserted = [makeLine({ id: 1, commodityTicker: 'BBH', lineSource: 'repair' as const })]
       mockInsertReturning.mockResolvedValueOnce(inserted)
 
       const result = await controller.addRepairLines(
@@ -697,8 +695,8 @@ describe('SupplyChainController', () => {
       mockSelectWhere.mockResolvedValueOnce([]) // no existing
 
       const inserted = [
-        makeLine({ id: 1, commodityTicker: 'H2O', demandSource: 'inputs' as const }),
-        makeLine({ id: 2, commodityTicker: 'GRN', demandSource: 'inputs' as const }),
+        makeLine({ id: 1, commodityTicker: 'H2O', lineSource: 'inputs' as const }),
+        makeLine({ id: 2, commodityTicker: 'GRN', lineSource: 'inputs' as const }),
       ]
       mockInsertReturning.mockResolvedValueOnce(inserted)
 
@@ -737,6 +735,72 @@ describe('SupplyChainController', () => {
 
       const result = await controller.addInputLines(
         { sourceLocationId: 'BEN', destinationPlanetId: 'UV-351a' },
+        mockRequest
+      )
+
+      expect(result.created).toBe(0)
+    })
+  })
+
+  // ==================== POST /supply-chain/add-outputs ====================
+
+  describe('addOutputLines', () => {
+    it('should create lines for production output materials from recurring orders', async () => {
+      // source = planet (producer), destination = hub (ships to)
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet resolved from sourceLocationId
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage (planet)
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'WAREHOUSE_STORE' }]) // dest storage (hub)
+      mockSelectWhere.mockResolvedValueOnce([
+        {
+          orders: [
+            {
+              Recurring: true,
+              Outputs: [{ MaterialTicker: 'STL' }, { MaterialTicker: 'FE' }],
+            },
+            {
+              Recurring: false, // should be skipped
+              Outputs: [{ MaterialTicker: 'SKIP' }],
+            },
+          ],
+        },
+      ])
+      mockSelectWhere.mockResolvedValueOnce([]) // no existing
+
+      const inserted = [
+        makeLine({
+          id: 1,
+          commodityTicker: 'STL',
+          lineSource: 'production_output' as const,
+          sourceLocationId: 'UV-351a',
+          destinationPlanetId: 'BEN',
+        }),
+        makeLine({
+          id: 2,
+          commodityTicker: 'FE',
+          lineSource: 'production_output' as const,
+          sourceLocationId: 'UV-351a',
+          destinationPlanetId: 'BEN',
+        }),
+      ]
+      mockInsertReturning.mockResolvedValueOnce(inserted)
+
+      const result = await controller.addOutputLines(
+        { sourceLocationId: 'UV-351a', destinationPlanetId: 'BEN' },
+        mockRequest
+      )
+
+      expect(result.created).toBe(2)
+      expect(result.skipped).toBe(0)
+    })
+
+    it('should return empty when no production lines', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 10 }]) // planet resolved from sourceLocationId
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'STORE' }]) // source storage
+      mockSelectWhere.mockResolvedValueOnce([{ type: 'WAREHOUSE_STORE' }]) // dest storage
+      mockSelectWhere.mockResolvedValueOnce([]) // no production
+
+      const result = await controller.addOutputLines(
+        { sourceLocationId: 'UV-351a', destinationPlanetId: 'BEN' },
         mockRequest
       )
 

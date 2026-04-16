@@ -47,6 +47,17 @@ import type {
   SupplyChainLineSource,
   DemandRate,
   SupplyDashboard,
+  LogisticsGraph,
+  LogisticsFlow,
+  CreateLogisticsFlowRequest,
+  UpdateLogisticsFlowRequest,
+  BulkCreateLogisticsFlowsRequest,
+  BulkCreateLogisticsFlowsResponse,
+  BulkMultiCreateLogisticsFlowsRequest,
+  BulkMultiCreateLogisticsFlowsResponse,
+  LocationDemandClaim,
+  CreateLocationDemandClaimRequest,
+  UpdateLocationDemandClaimRequest,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -4532,6 +4543,154 @@ const realApi = {
     return response.json()
   },
 
+  // ==================== LOGISTICS ====================
+
+  getLogisticsGraph: async (): Promise<LogisticsGraph> => {
+    const response = await fetchWithLogging('/api/logistics/graph', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get logistics graph: ${response.statusText}`)
+    return response.json()
+  },
+
+  listLogisticsFlows: async (): Promise<LogisticsFlow[]> => {
+    const response = await fetchWithLogging('/api/logistics/flows', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list logistics flows: ${response.statusText}`)
+    return response.json()
+  },
+
+  createLogisticsFlow: async (body: CreateLogisticsFlowRequest): Promise<LogisticsFlow> => {
+    const response = await fetchWithLogging('/api/logistics/flows', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create logistics flow')
+    }
+    return response.json()
+  },
+
+  bulkCreateLogisticsFlows: async (
+    body: BulkCreateLogisticsFlowsRequest
+  ): Promise<BulkCreateLogisticsFlowsResponse> => {
+    const response = await fetchWithLogging('/api/logistics/flows/bulk', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to bulk create logistics flows')
+    }
+    return response.json()
+  },
+
+  bulkMultiCreateLogisticsFlows: async (
+    body: BulkMultiCreateLogisticsFlowsRequest
+  ): Promise<BulkMultiCreateLogisticsFlowsResponse> => {
+    const response = await fetchWithLogging('/api/logistics/flows/bulk-multi', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to bulk-multi create logistics flows')
+    }
+    return response.json()
+  },
+
+  updateLogisticsFlow: async (
+    id: number,
+    body: UpdateLogisticsFlowRequest
+  ): Promise<LogisticsFlow> => {
+    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update logistics flow')
+    }
+    return response.json()
+  },
+
+  deleteLogisticsFlow: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete logistics flow: ${response.statusText}`)
+    return response.json()
+  },
+
+  listLogisticsClaims: async (): Promise<LocationDemandClaim[]> => {
+    const response = await fetchWithLogging('/api/logistics/claims', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list logistics claims: ${response.statusText}`)
+    return response.json()
+  },
+
+  createLogisticsClaim: async (
+    body: CreateLocationDemandClaimRequest
+  ): Promise<LocationDemandClaim> => {
+    const response = await fetchWithLogging('/api/logistics/claims', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create claim')
+    }
+    return response.json()
+  },
+
+  updateLogisticsClaim: async (
+    id: number,
+    body: UpdateLocationDemandClaimRequest
+  ): Promise<LocationDemandClaim> => {
+    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update claim')
+    }
+    return response.json()
+  },
+
+  deleteLogisticsClaim: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete claim: ${response.statusText}`)
+    return response.json()
+  },
+
   getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
     const response = await fetchWithLogging('/api/supply-planning/planets', {
       method: 'GET',
@@ -4914,6 +5073,23 @@ export const api = {
     getPlanets: () => realApi.getSupplyPlanets(),
     sync: () => realApi.syncSupplyPlanets(),
     syncInventory: () => realApi.syncFioInventory(),
+  },
+  logistics: {
+    graph: () => realApi.getLogisticsGraph(),
+    listFlows: () => realApi.listLogisticsFlows(),
+    createFlow: (body: CreateLogisticsFlowRequest) => realApi.createLogisticsFlow(body),
+    bulkCreateFlows: (body: BulkCreateLogisticsFlowsRequest) =>
+      realApi.bulkCreateLogisticsFlows(body),
+    bulkMultiCreateFlows: (body: BulkMultiCreateLogisticsFlowsRequest) =>
+      realApi.bulkMultiCreateLogisticsFlows(body),
+    updateFlow: (id: number, body: UpdateLogisticsFlowRequest) =>
+      realApi.updateLogisticsFlow(id, body),
+    deleteFlow: (id: number) => realApi.deleteLogisticsFlow(id),
+    listClaims: () => realApi.listLogisticsClaims(),
+    createClaim: (body: CreateLocationDemandClaimRequest) => realApi.createLogisticsClaim(body),
+    updateClaim: (id: number, body: UpdateLocationDemandClaimRequest) =>
+      realApi.updateLogisticsClaim(id, body),
+    deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
   },
 }
 

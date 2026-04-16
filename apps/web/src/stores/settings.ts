@@ -241,6 +241,11 @@ export const useSettingsStore = () => {
     set: (value: string[]) => updateSetting('fio.excludedLocations', value),
   })
 
+  const logisticsExcludedPlanets = computed({
+    get: () => (settingsValues.value['logistics.excludedPlanets'] as string[]) ?? [],
+    set: (value: string[]) => updateSetting('logistics.excludedPlanets', value),
+  })
+
   // Discord settings
   const discordMessageVisibility = computed({
     get: () => settingsValues.value['discord.messageVisibility'] as MessageVisibility,
@@ -319,6 +324,9 @@ export const useSettingsStore = () => {
     hasFioCredentials,
     fioAutoSync,
     fioExcludedLocations,
+
+    // Typed computed properties - Logistics
+    logisticsExcludedPlanets,
 
     // Typed computed properties - Discord
     discordMessageVisibility,

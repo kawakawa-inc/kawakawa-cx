@@ -295,6 +295,27 @@ export const SETTING_DEFINITIONS = {
     description: 'Use actual building conditions or assume max (100%) for production calculations',
   } satisfies SettingDef<string, 'enum'>,
 
+  'supply.stockMode': {
+    key: 'supply.stockMode',
+    type: 'enum',
+    defaultValue: 'included',
+    enumOptions: ['included', 'ignored'] as const,
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Stock',
+    description:
+      'Include current stock when computing balances and shopping lists, or ignore it for raw projection runs',
+  } satisfies SettingDef<string, 'enum'>,
+
+  'logistics.excludedPlanets': {
+    key: 'logistics.excludedPlanets',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.SUPPLY,
+    label: 'Excluded Planets (Logistics)',
+    description:
+      'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and supply.excludedPlanets (legacy supply page).',
+  } satisfies SettingDef<string[], 'string[]'>,
+
   'supply.includeProduction': {
     key: 'supply.includeProduction',
     type: 'boolean',

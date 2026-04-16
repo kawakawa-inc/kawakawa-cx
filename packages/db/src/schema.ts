@@ -91,6 +91,15 @@ export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'p
 export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
 export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
 export const demandSourceEnum = pgEnum('demand_source', ['burn', 'repair'])
+export const logisticsFlowKindEnum = pgEnum('logistics_flow_kind', ['demand', 'surplus', 'fixed'])
+export const logisticsClaimCategoryEnum = pgEnum('logistics_claim_category', [
+  'government',
+  'contract',
+  'reserve',
+  'other',
+])
+export const logisticsClaimSourceEnum = pgEnum('logistics_claim_source', ['manual', 'auto'])
+
 export const supplyChainLineSourceEnum = pgEnum('supply_chain_line_source', [
   'consumables',
   'inputs',
@@ -544,6 +553,92 @@ export const supplyChainLines = pgTable(
   })
 )
 
+// ==================== LOGISTICS FLOWS (directed graph edges) ====================
+// See docs/guides/logistics-plan.md. One row = one physical flow of a material
+// between two real locations. Solver sizes the edge based on `kind`:
+//   - demand:  amount = destination's required inflow (downstream pull)
+//   - surplus: amount = source's leftover after demand commitments (upstream push)
+//   - fixed:   amount = amountOverride (user-specified)
+export const logisticsFlows = pgTable(
+  'logistics_flows',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    fromLocationId: varchar('from_location_id', { length: 20 }).notNull(),
+    fromStorageTypes: jsonb('from_storage_types').notNull(), // string[]
+    toLocationId: varchar('to_location_id', { length: 20 }).notNull(),
+    toStorageTypes: jsonb('to_storage_types').notNull(), // string[]
+    kind: logisticsFlowKindEnum('kind').notNull(),
+    amountOverride: integer('amount_override'), // required when kind='fixed'
+    rate: demandRateEnum('rate').notNull().default('daily'),
+    priority: integer('priority'), // null = fall through to jump-distance ordering
+    note: text('note'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('logistics_flows_user_idx').on(table.userId),
+    fromIdx: index('logistics_flows_from_idx').on(table.userId, table.fromLocationId),
+    toIdx: index('logistics_flows_to_idx').on(table.userId, table.toLocationId),
+    commodityFk: foreignKey({
+      name: 'logistics_flows_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    fromLocationFk: foreignKey({
+      name: 'logistics_flows_from_location_fk',
+      columns: [table.fromLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    toLocationFk: foreignKey({
+      name: 'logistics_flows_to_location_fk',
+      columns: [table.toLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// ==================== LOCATION DEMAND CLAIMS (manual node augmentations) ====================
+// Manual demand entries that are not auto-derivable from FIO: government/COGC/upkeep,
+// contract deliveries, safety-stock reserves. Each row adds to nativeConsumption at
+// its location; the solver treats them identically to workforce burn once they've been
+// converted to a daily rate against burnDays.
+export const locationDemandClaims = pgTable(
+  'location_demand_claims',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    quantity: integer('quantity').notNull(),
+    rate: demandRateEnum('rate').notNull(),
+    category: logisticsClaimCategoryEnum('category').notNull(),
+    note: text('note'),
+    source: logisticsClaimSourceEnum('source').notNull().default('manual'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('location_demand_claims_user_idx').on(table.userId),
+    locationIdx: index('location_demand_claims_location_idx').on(table.userId, table.locationId),
+    commodityFk: foreignKey({
+      name: 'ldc_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    locationFk: foreignKey({
+      name: 'ldc_location_fk',
+      columns: [table.locationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
 // ==================== NOTIFICATIONS ====================
 export const notifications = pgTable(
   'notifications',
@@ -828,6 +923,8 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   fioUserStorage: many(fioUserStorage),
   fioUserPlanets: many(fioUserPlanets),
   supplyChainLines: many(supplyChainLines),
+  logisticsFlows: many(logisticsFlows),
+  locationDemandClaims: many(locationDemandClaims),
   sellOrders: many(sellOrders),
   buyOrders: many(buyOrders),
   notifications: many(notifications),
@@ -1000,6 +1097,40 @@ export const supplyChainLinesRelations = relations(supplyChainLines, ({ one }) =
   }),
   sourceLocation: one(fioLocations, {
     fields: [supplyChainLines.sourceLocationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const logisticsFlowsRelations = relations(logisticsFlows, ({ one }) => ({
+  user: one(users, {
+    fields: [logisticsFlows.userId],
+    references: [users.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [logisticsFlows.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+  fromLocation: one(fioLocations, {
+    fields: [logisticsFlows.fromLocationId],
+    references: [fioLocations.naturalId],
+  }),
+  toLocation: one(fioLocations, {
+    fields: [logisticsFlows.toLocationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const locationDemandClaimsRelations = relations(locationDemandClaims, ({ one }) => ({
+  user: one(users, {
+    fields: [locationDemandClaims.userId],
+    references: [users.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [locationDemandClaims.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+  location: one(fioLocations, {
+    fields: [locationDemandClaims.locationId],
     references: [fioLocations.naturalId],
   }),
 }))

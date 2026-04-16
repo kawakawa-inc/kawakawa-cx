@@ -182,7 +182,6 @@ async function main() {
                   userId: user.userId,
                   inventoryItems: result.inventory.inserted,
                   planetsSynced: result.planets.planetsSynced,
-                  demandOrdersUpdated: result.demandOrders.ordersUpdated,
                 },
                 'Sync completed for user'
               )

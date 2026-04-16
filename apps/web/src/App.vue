@@ -49,14 +49,6 @@
         </v-tooltip>
         <v-tooltip location="bottom">
           <template #activator="{ props }">
-            <v-btn v-bind="props" to="/supply" icon size="small" class="mx-1">
-              <v-icon>mdi-truck-delivery</v-icon>
-            </v-btn>
-          </template>
-          Supply
-        </v-tooltip>
-        <v-tooltip location="bottom">
-          <template #activator="{ props }">
             <v-btn v-bind="props" to="/account" icon size="small" class="mx-1">
               <v-icon>mdi-account-cog</v-icon>
             </v-btn>

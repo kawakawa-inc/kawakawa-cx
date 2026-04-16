@@ -52,10 +52,6 @@ vi.mock('../services/price-calculator.js', () => ({
   calculateEffectivePriceBatch: vi.fn().mockResolvedValue(new Map()),
 }))
 
-vi.mock('../services/demand-calculator.js', () => ({
-  recalculateSingleDemandOrder: vi.fn().mockResolvedValue(100),
-}))
-
 describe('BuyOrdersController', () => {
   let controller: BuyOrdersController
   const mockRequest = { user: { userId: 1, username: 'testuser', roles: ['member'] } }
@@ -161,33 +157,4 @@ describe('BuyOrdersController', () => {
     })
   })
 
-  describe('recalculateOrder', () => {
-    it('should recalculate a demand order', async () => {
-      // The select chain: select().from().where() — need both the from().where() path
-      // recalculateOrder queries with and(eq(id), eq(userId))
-      mockSelectWhere.mockResolvedValueOnce([{ id: 1, sourceMode: 'demand' }])
-
-      const result = await controller.recalculateOrder(1, mockRequest)
-
-      expect(result.quantity).toBe(100)
-    })
-
-    it('should reject recalculating a manual order', async () => {
-      mockSelectWhere.mockReset()
-      mockSelectWhere.mockResolvedValueOnce([{ id: 1, sourceMode: 'manual' }])
-
-      await expect(controller.recalculateOrder(1, mockRequest)).rejects.toThrow(
-        'Only demand orders can be recalculated'
-      )
-    })
-
-    it('should throw NotFound for non-existent order', async () => {
-      mockSelectWhere.mockReset()
-      mockSelectWhere.mockResolvedValueOnce([])
-
-      await expect(controller.recalculateOrder(999, mockRequest)).rejects.toThrow(
-        'Buy order not found'
-      )
-    })
-  })
 })

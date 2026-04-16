@@ -9,20 +9,8 @@ export type ReserveSource = 'manual' | 'demand'
 /** Demand source: burn (rate * days) or repair (absolute cost) */
 export type DemandSource = 'burn' | 'repair'
 
-/** Supply chain line mode: demand (consumption) or reserve (held stock) */
-export type SupplyChainMode = 'demand' | 'reserve'
-
 /** Whether a fixed demand amount is a total or daily rate */
 export type DemandRate = 'total' | 'daily'
-
-/** Supply chain line source — determines how demand or supply is calculated */
-export type SupplyChainLineSource =
-  | 'consumables'
-  | 'inputs'
-  | 'repair'
-  | 'government'
-  | 'other'
-  | 'production_output'
 
 /** Linked planet info for demand orders/reserves */
 export interface LinkedPlanetInfo {
@@ -127,48 +115,6 @@ export interface SupplyCalculationResult {
   burnMaterials: Record<string, number>
   /** Aggregated production materials by ticker */
   productionMaterials: Record<string, number>
-}
-
-// ==================== Supply Dashboard ====================
-
-/** Dashboard data organized by location */
-export interface SupplyDashboard {
-  settings: { burnDays: number; repairDays: number; conditionMode: 'actual' | 'max' }
-  locations: LocationDashboard[]
-  materials: MaterialDashboard[]
-}
-
-/** Per-location dashboard data (any location touched by supply chain lines) */
-export interface LocationDashboard {
-  locationId: string
-  stock: Record<string, number>
-  connections: ConnectionDashboard[]
-  aggregatedExport: Record<string, number>
-  aggregatedImport: Record<string, number>
-  gap: Record<string, number>
-}
-
-/** Flow data between two connected locations */
-export interface ConnectionDashboard {
-  locationId: string
-  locationName: string
-  storageTypes: string[]
-  exports: { ticker: string; amount: number; lineSource: string }[]
-  imports: { ticker: string; amount: number; lineSource: string }[]
-  connectionStock: Record<string, number>
-  /** Per-ticker production/demand rates at this connection (planets only, null for stations) */
-  rates: Record<string, { dailyProduction: number; dailyDemand: number }> | null
-}
-
-/** Per-material aggregated dashboard data */
-export interface MaterialDashboard {
-  ticker: string
-  totalExport: number
-  totalImport: number
-  totalNeed: number
-  stock: number
-  gap: number
-  locations: string[]
 }
 
 // ==================== Logistics Flow Graph ====================

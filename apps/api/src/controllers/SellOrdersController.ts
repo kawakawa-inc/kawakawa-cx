@@ -30,7 +30,6 @@ import {
   calculateEffectivePriceBatch,
 } from '../services/price-calculator.js'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
-import { recalculateSingleDemandReserve } from '../services/demand-calculator.js'
 
 // Sell order with calculated availability
 interface SellOrderResponse {
@@ -398,16 +397,6 @@ export class SellOrdersController extends Controller {
       })
       .returning()
 
-    // Recalculate reserve quantity for demand orders
-    if (reserveSource === 'demand') {
-      await recalculateSingleDemandReserve(newOrder.id)
-      const [refreshed] = await db
-        .select({ limitQuantity: sellOrders.limitQuantity })
-        .from(sellOrders)
-        .where(eq(sellOrders.id, newOrder.id))
-      if (refreshed) newOrder.limitQuantity = refreshed.limitQuantity
-    }
-
     this.setStatus(201)
 
     // Use centralized function to get quantity info (new order has no reservations)
@@ -558,16 +547,6 @@ export class SellOrdersController extends Controller {
       .where(eq(sellOrders.id, id))
       .returning()
 
-    // Recalculate if demand reserve and relevant fields changed
-    if (existing.reserveSource === 'demand' && body.reserveTargetDays !== undefined) {
-      await recalculateSingleDemandReserve(id)
-      const [refreshed] = await db
-        .select({ limitQuantity: sellOrders.limitQuantity })
-        .from(sellOrders)
-        .where(eq(sellOrders.id, id))
-      if (refreshed) updated.limitQuantity = refreshed.limitQuantity
-    }
-
     // Use centralized function to get quantity info with proper expiration logic
     const quantityMap = await enrichSellOrdersWithQuantities([
       {
@@ -662,33 +641,4 @@ export class SellOrdersController extends Controller {
     this.setStatus(204)
   }
 
-  /**
-   * Manually recalculate a demand reserve sell order's limitQuantity
-   */
-  @Post('{id}/recalculate')
-  public async recalculateReserve(
-    @Path() id: number,
-    @Request() request: { user: JwtPayload }
-  ): Promise<{ limitQuantity: number }> {
-    const userId = request.user.userId
-
-    const [existing] = await db
-      .select({ id: sellOrders.id, reserveSource: sellOrders.reserveSource })
-      .from(sellOrders)
-      .where(and(eq(sellOrders.id, id), eq(sellOrders.userId, userId)))
-
-    if (!existing) {
-      this.setStatus(404)
-      throw NotFound('Sell order not found')
-    }
-
-    if (existing.reserveSource !== 'demand') {
-      this.setStatus(400)
-      throw BadRequest('Only demand reserve orders can be recalculated')
-    }
-
-    const newQuantity = await recalculateSingleDemandReserve(id)
-
-    return { limitQuantity: newQuantity ?? 0 }
-  }
 }

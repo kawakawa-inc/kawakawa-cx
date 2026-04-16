@@ -16,7 +16,6 @@ import NotificationsView from '../views/NotificationsView.vue'
 import PriceListView from '../views/PriceListView.vue'
 import PriceAdjustmentsView from '../views/PriceAdjustmentsView.vue'
 import PricingCalculatorView from '../views/PricingCalculatorView.vue'
-import SupplyManagementView from '../views/SupplyManagementView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 
 const router = createRouter({
@@ -122,13 +121,7 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {
-      path: '/supply',
-      name: 'supply',
-      component: SupplyManagementView,
-      meta: { requiresAuth: true, requiresVerified: true },
-    },
-    {
-      path: '/supply/logistics',
+      path: '/logistics',
       name: 'logistics',
       component: LogisticsView,
       meta: { requiresAuth: true, requiresVerified: true },

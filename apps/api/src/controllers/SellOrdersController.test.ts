@@ -51,10 +51,6 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
-vi.mock('../services/demand-calculator.js', () => ({
-  recalculateSingleDemandReserve: vi.fn().mockResolvedValue(100),
-}))
-
 vi.mock('../utils/permissionService.js', () => ({
   hasPermission: vi.fn(),
 }))

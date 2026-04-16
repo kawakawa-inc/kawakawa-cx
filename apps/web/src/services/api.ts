@@ -43,10 +43,6 @@ import type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
-  SupplyChainMode,
-  SupplyChainLineSource,
-  DemandRate,
-  SupplyDashboard,
   LogisticsGraph,
   LogisticsFlow,
   CreateLogisticsFlowRequest,
@@ -4382,167 +4378,6 @@ const realApi = {
     return response.json()
   },
 
-  // ==================== Supply Chain ====================
-
-  getSupplyChainLines: async (): Promise<SupplyChainLineResponse[]> => {
-    const response = await fetchWithLogging('/api/supply-chain', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to get supply chain lines: ${response.statusText}`)
-    return response.json()
-  },
-
-  createSupplyChainLine: async (
-    request: CreateSupplyChainLineRequest
-  ): Promise<SupplyChainLineResponse> => {
-    const response = await fetchWithLogging('/api/supply-chain/lines', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to create supply chain line')
-    }
-    return response.json()
-  },
-
-  updateSupplyChainLine: async (
-    id: number,
-    request: UpdateSupplyChainLineRequest
-  ): Promise<SupplyChainLineResponse> => {
-    const response = await fetchWithLogging(`/api/supply-chain/lines/${id}`, {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to update supply chain line')
-    }
-    return response.json()
-  },
-
-  deleteSupplyChainLine: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/supply-chain/lines/${id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to delete supply chain line: ${response.statusText}`)
-  },
-
-  clearSupplyChainLines: async (
-    sourceLocationId: string,
-    destinationPlanetId: string,
-    storageTypes?: string[]
-  ): Promise<{ deleted: number }> => {
-    const params = storageTypes ? `?storageTypes=${storageTypes.join(',')}` : ''
-    const response = await fetchWithLogging(
-      `/api/supply-chain/source/${sourceLocationId}/${destinationPlanetId}${params}`,
-      { method: 'DELETE', headers: getAuthHeaders() }
-    )
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to clear supply chain lines: ${response.statusText}`)
-    return response.json()
-  },
-
-  addConsumableLines: async (request: BulkAddLinesRequest): Promise<BulkAddLinesResponse> => {
-    const response = await fetchWithLogging('/api/supply-chain/add-consumables', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to add consumable lines')
-    }
-    return response.json()
-  },
-
-  addRepairLines: async (request: BulkAddLinesRequest): Promise<BulkAddLinesResponse> => {
-    const response = await fetchWithLogging('/api/supply-chain/add-repair', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to add repair lines')
-    }
-    return response.json()
-  },
-
-  addInputLines: async (request: BulkAddLinesRequest): Promise<BulkAddLinesResponse> => {
-    const response = await fetchWithLogging('/api/supply-chain/add-inputs', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to add input lines')
-    }
-    return response.json()
-  },
-
-  getOutputTickers: async (planetId: string): Promise<string[]> => {
-    const response = await fetchWithLogging(`/api/supply-chain/output-tickers/${planetId}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) return []
-    return response.json()
-  },
-
-  getDetectedTickers: async (planetId: string, category: string): Promise<string[]> => {
-    const response = await fetchWithLogging(
-      `/api/supply-chain/detected-tickers/${planetId}/${category}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-    handleRefreshedToken(response)
-    if (!response.ok) return []
-    return response.json()
-  },
-
-  addOutputLines: async (request: BulkAddLinesRequest): Promise<BulkAddLinesResponse> => {
-    const response = await fetchWithLogging('/api/supply-chain/add-outputs', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to add output lines')
-    }
-    return response.json()
-  },
-
-  // ==================== Supply Dashboard ====================
-
-  getSupplyDashboard: async (locationId?: string): Promise<SupplyDashboard> => {
-    const params = locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''
-    const response = await fetchWithLogging(`/api/supply-planning/dashboard${params}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to get supply dashboard: ${response.statusText}`)
-    return response.json()
-  },
-
   // ==================== LOGISTICS ====================
 
   getLogisticsGraph: async (): Promise<LogisticsGraph> => {
@@ -4713,65 +4548,6 @@ const realApi = {
     }
   },
 
-  getSupplyChainLocations: async (): Promise<StorageLocationInfo[]> => {
-    const response = await fetchWithLogging('/api/supply-chain/locations', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to get storage locations: ${response.statusText}`)
-    return response.json()
-  },
-}
-
-// ==================== Supply Chain types ====================
-
-interface SupplyChainLineResponse {
-  id: number
-  commodityTicker: string
-  sourceLocationId: string
-  sourceStorageTypes: string[]
-  destinationPlanetId: string
-  destinationStorageTypes: string[]
-  mode: SupplyChainMode
-  lineSource: SupplyChainLineSource | null
-  demand: number | null
-  demandRate: DemandRate | null
-  createdAt: string
-  updatedAt: string
-}
-
-interface CreateSupplyChainLineRequest {
-  commodityTicker: string
-  sourceLocationId: string
-  sourceStorageTypes: string[]
-  destinationPlanetId: string
-  destinationStorageTypes: string[]
-  mode: SupplyChainMode
-  lineSource?: SupplyChainLineSource
-  demand?: number
-  demandRate?: DemandRate
-}
-
-interface UpdateSupplyChainLineRequest {
-  sourceStorageTypes?: string[]
-  destinationStorageTypes?: string[]
-  lineSource?: SupplyChainLineSource
-  demand?: number | null
-  demandRate?: DemandRate
-}
-
-interface BulkAddLinesRequest {
-  sourceLocationId: string
-  destinationPlanetId: string
-  sourceStorageTypes?: string[]
-  destinationStorageTypes?: string[]
-}
-
-interface BulkAddLinesResponse {
-  created: number
-  skipped: number
-  lines: SupplyChainLineResponse[]
 }
 
 interface SupplyPlanetSummary {
@@ -4779,11 +4555,6 @@ interface SupplyPlanetSummary {
   planetNaturalId: string
   planetName: string
   lastSyncedAt: string
-}
-
-interface StorageLocationInfo {
-  locationId: string
-  storageTypes: string[]
 }
 
 // Types for KAWA sheet preview and sync
@@ -5051,25 +4822,7 @@ export const api = {
     delete: (id: number) => realApi.deleteSavedFilter(id),
     togglePin: (id: number) => realApi.togglePinSavedFilter(id),
   },
-  supplyChain: {
-    list: () => realApi.getSupplyChainLines(),
-    create: (request: CreateSupplyChainLineRequest) => realApi.createSupplyChainLine(request),
-    update: (id: number, request: UpdateSupplyChainLineRequest) =>
-      realApi.updateSupplyChainLine(id, request),
-    delete: (id: number) => realApi.deleteSupplyChainLine(id),
-    clear: (sourceLocationId: string, destinationPlanetId: string, storageTypes?: string[]) =>
-      realApi.clearSupplyChainLines(sourceLocationId, destinationPlanetId, storageTypes),
-    addConsumables: (request: BulkAddLinesRequest) => realApi.addConsumableLines(request),
-    addRepair: (request: BulkAddLinesRequest) => realApi.addRepairLines(request),
-    addInputs: (request: BulkAddLinesRequest) => realApi.addInputLines(request),
-    addOutputs: (request: BulkAddLinesRequest) => realApi.addOutputLines(request),
-    getOutputTickers: (planetId: string) => realApi.getOutputTickers(planetId),
-    getDetectedTickers: (planetId: string, category: string) =>
-      realApi.getDetectedTickers(planetId, category),
-    getLocations: () => realApi.getSupplyChainLocations(),
-  },
-  supplyDashboard: {
-    get: (locationId?: string) => realApi.getSupplyDashboard(locationId),
+  supplyPlanning: {
     getPlanets: () => realApi.getSupplyPlanets(),
     sync: () => realApi.syncSupplyPlanets(),
     syncInventory: () => realApi.syncFioInventory(),
@@ -5167,11 +4920,5 @@ export type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
-  // Supply chain types
-  SupplyChainLineResponse,
-  CreateSupplyChainLineRequest,
-  BulkAddLinesRequest,
-  BulkAddLinesResponse,
   SupplyPlanetSummary,
-  StorageLocationInfo,
 }

@@ -13,7 +13,6 @@ vi.mock('../services/fio/sync-user-all.js', () => ({
     success: true,
     inventory: { inserted: 10, errors: [] },
     planets: { planetsSynced: 2, errors: [] },
-    demandOrders: { ordersUpdated: 1, errors: [] },
     errors: [],
   }),
 }))

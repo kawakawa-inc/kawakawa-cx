@@ -100,15 +100,6 @@ export const logisticsClaimCategoryEnum = pgEnum('logistics_claim_category', [
 ])
 export const logisticsClaimSourceEnum = pgEnum('logistics_claim_source', ['manual', 'auto'])
 
-export const supplyChainLineSourceEnum = pgEnum('supply_chain_line_source', [
-  'consumables',
-  'inputs',
-  'repair',
-  'government',
-  'other',
-  'production_output',
-])
-export const supplyChainModeEnum = pgEnum('supply_chain_mode', ['demand', 'reserve'])
 export const demandRateEnum = pgEnum('demand_rate', ['total', 'daily'])
 
 // ==================== SETTINGS (Generic key-value with history) ====================
@@ -516,43 +507,6 @@ export const buyOrders = pgTable(
   })
 )
 
-// ==================== SUPPLY CHAIN LINES (material flow definitions) ====================
-export const supplyChainLines = pgTable(
-  'supply_chain_lines',
-  {
-    id: serial('id').primaryKey(),
-    userId: integer('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
-    sourceLocationId: varchar('source_location_id', { length: 20 }).notNull(),
-    sourceStorageTypes: jsonb('source_storage_types').notNull(), // string[] e.g. ['STORE', 'WAREHOUSE_STORE']
-    destinationPlanetId: varchar('destination_planet_id', { length: 20 }).notNull(),
-    destinationStorageTypes: jsonb('destination_storage_types').notNull(), // string[]
-    mode: supplyChainModeEnum('mode').notNull(), // 'demand' or 'reserve'
-    lineSource: supplyChainLineSourceEnum('line_source'), // 'consumables' | 'inputs' | 'repair' | 'production_output' | null
-    demand: integer('demand'), // fixed amount (overrides lineSource calculation if set)
-    demandRate: demandRateEnum('demand_rate').default('daily'), // 'total' = fixed, 'daily' = per day * burnDays
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-    updatedAt: timestamp('updated_at').defaultNow().notNull(),
-  },
-  table => ({
-    userIdx: index('supply_chain_lines_user_idx').on(table.userId),
-    sourceIdx: index('supply_chain_lines_source_idx').on(table.userId, table.sourceLocationId),
-    destIdx: index('supply_chain_lines_dest_idx').on(table.userId, table.destinationPlanetId),
-    commodityFk: foreignKey({
-      name: 'scl_commodity_fk',
-      columns: [table.commodityTicker],
-      foreignColumns: [fioCommodities.ticker],
-    }),
-    sourceLocationFk: foreignKey({
-      name: 'scl_source_location_fk',
-      columns: [table.sourceLocationId],
-      foreignColumns: [fioLocations.naturalId],
-    }),
-  })
-)
-
 // ==================== LOGISTICS FLOWS (directed graph edges) ====================
 // See docs/guides/logistics-plan.md. One row = one physical flow of a material
 // between two real locations. Solver sizes the edge based on `kind`:
@@ -922,7 +876,6 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   passwordResetTokens: many(passwordResetTokens),
   fioUserStorage: many(fioUserStorage),
   fioUserPlanets: many(fioUserPlanets),
-  supplyChainLines: many(supplyChainLines),
   logisticsFlows: many(logisticsFlows),
   locationDemandClaims: many(locationDemandClaims),
   sellOrders: many(sellOrders),
@@ -1084,21 +1037,6 @@ export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
-}))
-
-export const supplyChainLinesRelations = relations(supplyChainLines, ({ one }) => ({
-  user: one(users, {
-    fields: [supplyChainLines.userId],
-    references: [users.id],
-  }),
-  commodity: one(fioCommodities, {
-    fields: [supplyChainLines.commodityTicker],
-    references: [fioCommodities.ticker],
-  }),
-  sourceLocation: one(fioLocations, {
-    fields: [supplyChainLines.sourceLocationId],
-    references: [fioLocations.naturalId],
-  }),
 }))
 
 export const logisticsFlowsRelations = relations(logisticsFlows, ({ one }) => ({

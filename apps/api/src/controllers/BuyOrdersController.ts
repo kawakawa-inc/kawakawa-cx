@@ -28,7 +28,6 @@ import {
   calculateEffectivePriceWithFallback,
   calculateEffectivePriceBatch,
 } from '../services/price-calculator.js'
-import { recalculateSingleDemandOrder } from '../services/demand-calculator.js'
 
 interface BuyOrderResponse {
   id: number
@@ -429,17 +428,6 @@ export class BuyOrdersController extends Controller {
       })
       .returning()
 
-    // Recalculate quantity for demand orders
-    if (sourceMode === 'demand') {
-      await recalculateSingleDemandOrder(newOrder.id)
-      // Re-fetch to get updated quantity
-      const [updated] = await db
-        .select({ quantity: buyOrders.quantity })
-        .from(buyOrders)
-        .where(eq(buyOrders.id, newOrder.id))
-      if (updated) newOrder.quantity = updated.quantity
-    }
-
     this.setStatus(201)
 
     // Calculate effective price for dynamic pricing orders
@@ -565,11 +553,6 @@ export class BuyOrdersController extends Controller {
     // Update
     await db.update(buyOrders).set(updateData).where(eq(buyOrders.id, id))
 
-    // Recalculate if demand order and relevant fields changed
-    if (existing.sourceMode === 'demand' && body.targetDays !== undefined) {
-      await recalculateSingleDemandOrder(id)
-    }
-
     // Fetch updated order with reservation stats via JOIN
     const reservationStats = db
       .select({
@@ -685,33 +668,4 @@ export class BuyOrdersController extends Controller {
     this.setStatus(204)
   }
 
-  /**
-   * Manually recalculate a demand buy order's quantity
-   */
-  @Post('{id}/recalculate')
-  public async recalculateOrder(
-    @Path() id: number,
-    @Request() request: { user: JwtPayload }
-  ): Promise<{ quantity: number }> {
-    const userId = request.user.userId
-
-    const [existing] = await db
-      .select({ id: buyOrders.id, sourceMode: buyOrders.sourceMode })
-      .from(buyOrders)
-      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId)))
-
-    if (!existing) {
-      this.setStatus(404)
-      throw NotFound('Buy order not found')
-    }
-
-    if (existing.sourceMode !== 'demand') {
-      this.setStatus(400)
-      throw BadRequest('Only demand orders can be recalculated')
-    }
-
-    const newQuantity = await recalculateSingleDemandOrder(id)
-
-    return { quantity: newQuantity ?? 0 }
-  }
 }

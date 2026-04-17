@@ -132,17 +132,115 @@ export function calculateWorkforceBurn(
 }
 
 /**
+ * Build a recipe key from a list of materials (ticker:amount pairs, sorted).
+ * Used to deduplicate orders that are the same recipe queued multiple times.
+ */
+function recipeKey(materials: { ticker: string; amount: number }[]): string {
+  return materials
+    .map(m => `${m.ticker}:${m.amount}`)
+    .sort()
+    .join(',')
+}
+
+interface RecipeGroup {
+  count: number
+  totalDurationMs: number
+  inputs: { ticker: string; amount: number }[]
+  outputs: { ticker: string; amount: number }[]
+}
+
+/**
+ * Compute production throughput for a single line, capped at capacity.
+ *
+ * FIO returns every queued order — a line with capacity 28 may have 1000+ orders
+ * queued. Only `capacity` orders run concurrently. This function:
+ *
+ * 1. Groups orders by recipe (same input/output tickers+amounts)
+ * 2. Allocates capacity proportionally across recipes
+ * 3. Uses average duration per recipe (durations vary by building condition)
+ * 4. Returns the daily throughput for inputs and/or outputs
+ *
+ * Includes both recurring and non-recurring orders — non-recurring is how
+ * players without PRO run production (high batch count instead of recurring).
+ */
+function calculateLineProduction(
+  line: ProductionData,
+  days: number,
+  willRepair: boolean,
+  mode: 'inputs' | 'outputs' | 'both'
+): Map<string, number> {
+  const totals = new Map<string, number>()
+  const hoursInPeriod = 24 * days
+
+  // Group orders by recipe
+  const recipes = new Map<string, RecipeGroup>()
+
+  for (const order of line.orders) {
+    if (order.durationMs <= 0) continue
+
+    // Build recipe key from BOTH inputs and outputs so two different recipes
+    // producing the same output but from different inputs are distinguished
+    const key = recipeKey(order.inputs) + '>' + recipeKey(order.outputs)
+
+    const effectiveDurationMs = willRepair ? order.durationMs * line.condition : order.durationMs
+
+    if (!recipes.has(key)) {
+      recipes.set(key, {
+        count: 0,
+        totalDurationMs: 0,
+        inputs: order.inputs,
+        outputs: order.outputs,
+      })
+    }
+    const recipe = recipes.get(key)!
+    recipe.count++
+    recipe.totalDurationMs += effectiveDurationMs
+  }
+
+  if (recipes.size === 0) return totals
+
+  const totalOrders = [...recipes.values()].reduce((sum, r) => sum + r.count, 0)
+  const capacity = line.capacity || 1
+
+  for (const recipe of recipes.values()) {
+    // Allocate capacity proportionally to this recipe's share of queued orders
+    const capacityShare = Math.min(recipe.count, (capacity * recipe.count) / totalOrders)
+    const avgDurationMs = recipe.totalDurationMs / recipe.count
+    const avgDurationHours = avgDurationMs / MS_PER_HOUR
+    if (avgDurationHours <= 0) continue
+
+    // Each building running this recipe: amount / duration * hours
+    // With capacityShare buildings running it:
+    const runs = (capacityShare * hoursInPeriod) / avgDurationHours
+
+    if (mode === 'inputs' || mode === 'both') {
+      for (const mat of recipe.inputs) {
+        const need = Math.ceil(mat.amount * runs)
+        if (need > 0) {
+          totals.set(mat.ticker, (totals.get(mat.ticker) ?? 0) + need)
+        }
+      }
+    }
+
+    if (mode === 'outputs' || mode === 'both') {
+      for (const mat of recipe.outputs) {
+        const produced = Math.floor(mat.amount * runs)
+        if (produced > 0) {
+          totals.set(mat.ticker, (totals.get(mat.ticker) ?? 0) + produced)
+        }
+      }
+    }
+  }
+
+  return totals
+}
+
+/**
  * Calculate production input needs for a planet.
  *
- * If repairing (repairDays >= 0 and we're including repair):
- *   post_repair_duration = current_duration * current_condition
- * Otherwise:
- *   use DurationMs as-is
- *
- * runs = (24 * days) / (duration_ms / 3_600_000)
- * material_need = ceil(amount_per_run * runs)
- *
- * Only recurring orders are included.
+ * Groups orders by recipe and caps concurrent runs at line capacity
+ * to avoid over-counting queued orders. Includes both recurring and
+ * non-recurring orders.
  *
  * @param production - Production line data
  * @param days - Number of days to calculate for
@@ -156,30 +254,39 @@ export function calculateProductionNeeds(
   if (days <= 0) return []
 
   const totals = new Map<string, number>()
-  const hoursInPeriod = 24 * days
-
   for (const line of production) {
-    for (const order of line.orders) {
-      if (!order.recurring) continue
-      if (order.durationMs <= 0) continue
-
-      // If repairing, remove condition factor from duration
-      const effectiveDurationMs = willRepair ? order.durationMs * line.condition : order.durationMs
-
-      const durationHours = effectiveDurationMs / MS_PER_HOUR
-      if (durationHours <= 0) continue
-
-      const runs = hoursInPeriod / durationHours
-
-      for (const input of order.inputs) {
-        const need = Math.ceil(input.amount * runs)
-        if (need > 0) {
-          totals.set(input.ticker, (totals.get(input.ticker) ?? 0) + need)
-        }
-      }
+    const lineResults = calculateLineProduction(line, days, willRepair, 'inputs')
+    for (const [ticker, amount] of lineResults) {
+      totals.set(ticker, (totals.get(ticker) ?? 0) + amount)
     }
   }
+  return Array.from(totals.entries()).map(([ticker, amount]) => ({ ticker, amount }))
+}
 
+/**
+ * Calculate production outputs for a planet.
+ *
+ * Groups orders by recipe and caps concurrent runs at line capacity.
+ * Includes both recurring and non-recurring orders.
+ *
+ * @param production - Production line data
+ * @param days - Number of days to calculate for
+ * @param willRepair - If true, use post-repair (100% condition) duration
+ */
+export function calculateProductionOutputs(
+  production: ProductionData[],
+  days: number,
+  willRepair: boolean
+): { ticker: string; amount: number }[] {
+  if (days <= 0) return []
+
+  const totals = new Map<string, number>()
+  for (const line of production) {
+    const lineResults = calculateLineProduction(line, days, willRepair, 'outputs')
+    for (const [ticker, amount] of lineResults) {
+      totals.set(ticker, (totals.get(ticker) ?? 0) + amount)
+    }
+  }
   return Array.from(totals.entries()).map(([ticker, amount]) => ({ ticker, amount }))
 }
 

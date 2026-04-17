@@ -25,9 +25,7 @@
               :disabled="editing"
               density="compact"
               hide-details
-              @update:favorites="
-                settingsStore.updateSetting('market.favoritedCommodities', $event)
-              "
+              @update:favorites="settingsStore.updateSetting('market.favoritedCommodities', $event)"
             />
           </v-col>
 
@@ -58,9 +56,7 @@
               :disabled="editing"
               density="compact"
               hide-details
-              @update:favorites="
-                settingsStore.updateSetting('market.favoritedLocations', $event)
-              "
+              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
             />
             <v-btn-toggle
               v-model="form.fromStorageTypes"
@@ -95,9 +91,7 @@
               :disabled="editing"
               density="compact"
               hide-details
-              @update:favorites="
-                settingsStore.updateSetting('market.favoritedLocations', $event)
-              "
+              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
             />
             <v-btn-toggle
               v-model="form.toStorageTypes"
@@ -353,14 +347,14 @@ watch(
 // which manually swaps the storage arrays alongside the location ids.)
 watch(
   () => form.value.fromLocationId,
-  (loc) => {
+  loc => {
     if (editing.value || suppressLocationWatchers) return
     form.value.fromStorageTypes = defaultStorageFor(loc)
   }
 )
 watch(
   () => form.value.toLocationId,
-  (loc) => {
+  loc => {
     if (editing.value || suppressLocationWatchers) return
     form.value.toStorageTypes = defaultStorageFor(loc)
   }

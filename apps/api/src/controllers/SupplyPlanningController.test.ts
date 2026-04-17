@@ -257,10 +257,10 @@ describe('SupplyPlanningController', () => {
 
     function setupSettingsMock() {
       vi.mocked(userSettingsService.getSetting)
-        .mockResolvedValueOnce(0) // supply.repairDays
-        .mockResolvedValueOnce(7) // supply.burnDays
-        .mockResolvedValueOnce(false) // supply.includeProduction
-        .mockResolvedValueOnce('{}') // supply.planetOverrides
+        .mockResolvedValueOnce(0) // burnRepair.repairDays
+        .mockResolvedValueOnce(7) // burnRepair.burnDays
+        .mockResolvedValueOnce(false) // burnRepair.includeProduction
+        .mockResolvedValueOnce('{}') // burnRepair.planetOverrides
     }
 
     it('should calculate supply using saved settings', async () => {
@@ -332,10 +332,10 @@ describe('SupplyPlanningController', () => {
   describe('calculateSupplyCustom', () => {
     function setupSettingsMock() {
       vi.mocked(userSettingsService.getSetting)
-        .mockResolvedValueOnce(0) // supply.repairDays
-        .mockResolvedValueOnce(7) // supply.burnDays
-        .mockResolvedValueOnce(false) // supply.includeProduction
-        .mockResolvedValueOnce('{}') // supply.planetOverrides
+        .mockResolvedValueOnce(0) // burnRepair.repairDays
+        .mockResolvedValueOnce(7) // burnRepair.burnDays
+        .mockResolvedValueOnce(false) // burnRepair.includeProduction
+        .mockResolvedValueOnce('{}') // burnRepair.planetOverrides
     }
 
     it('should override settings with body params', async () => {
@@ -378,10 +378,10 @@ describe('SupplyPlanningController', () => {
   describe('calculatePlanetSupplyEndpoint', () => {
     function setupSettingsMock() {
       vi.mocked(userSettingsService.getSetting)
-        .mockResolvedValueOnce(0) // supply.repairDays
-        .mockResolvedValueOnce(7) // supply.burnDays
-        .mockResolvedValueOnce(false) // supply.includeProduction
-        .mockResolvedValueOnce('{}') // supply.planetOverrides
+        .mockResolvedValueOnce(0) // burnRepair.repairDays
+        .mockResolvedValueOnce(7) // burnRepair.burnDays
+        .mockResolvedValueOnce(false) // burnRepair.includeProduction
+        .mockResolvedValueOnce('{}') // burnRepair.planetOverrides
     }
 
     it('should throw NotFound when planet not synced', async () => {

@@ -54,6 +54,12 @@ import type {
   LocationDemandClaim,
   CreateLocationDemandClaimRequest,
   UpdateLocationDemandClaimRequest,
+  BurnRepairMyBasesResponse,
+  BurnRepairCorpResponse,
+  BurnRepairCorpBuildingsResponse,
+  BurnRepairCorpWorkforceResponse,
+  BurnRepairShoppingListRequest,
+  BurnRepairShoppingListResponse,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -4548,6 +4554,60 @@ const realApi = {
     }
   },
 
+  // ==================== BURN & REPAIR ====================
+
+  getBurnRepairMyBases: async (): Promise<BurnRepairMyBasesResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/my-bases', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get burn/repair data: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorp: async (): Promise<BurnRepairCorpResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/corp', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp burn/repair: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorpBuildings: async (): Promise<BurnRepairCorpBuildingsResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/corp/buildings', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp buildings: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorpWorkforce: async (): Promise<BurnRepairCorpWorkforceResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/corp/workforce', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairShoppingList: async (
+    body: BurnRepairShoppingListRequest
+  ): Promise<BurnRepairShoppingListResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/shopping-list', {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get shopping list: ${response.statusText}`)
+    return response.json()
+  },
 }
 
 interface SupplyPlanetSummary {
@@ -4826,6 +4886,13 @@ export const api = {
     getPlanets: () => realApi.getSupplyPlanets(),
     sync: () => realApi.syncSupplyPlanets(),
     syncInventory: () => realApi.syncFioInventory(),
+  },
+  burnRepair: {
+    myBases: () => realApi.getBurnRepairMyBases(),
+    corp: () => realApi.getBurnRepairCorp(),
+    corpBuildings: () => realApi.getBurnRepairCorpBuildings(),
+    corpWorkforce: () => realApi.getBurnRepairCorpWorkforce(),
+    shoppingList: (body: BurnRepairShoppingListRequest) => realApi.getBurnRepairShoppingList(body),
   },
   logistics: {
     graph: () => realApi.getLogisticsGraph(),

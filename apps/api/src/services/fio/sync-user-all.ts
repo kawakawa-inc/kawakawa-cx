@@ -6,6 +6,7 @@ import { syncUserInventory } from './sync-user-inventory.js'
 import { syncUserPlanets } from './sync-user-planets.js'
 import type { UserInventorySyncResult } from './sync-user-inventory.js'
 import type { PlanetSyncResult } from './sync-user-planets.js'
+import { computeBurnRepairCache } from '../burn-repair-cache.js'
 import { createLogger } from '../../utils/logger.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'user-all' })
@@ -53,6 +54,14 @@ export async function syncUserAll(
   })
   if (planetsResult.errors.length > 0) {
     allErrors.push(...planetsResult.errors)
+  }
+
+  // 3. Recompute burn/repair cache (non-fatal — don't fail the sync)
+  try {
+    await computeBurnRepairCache(userId)
+  } catch (err) {
+    log.error({ userId, err }, 'Failed to compute burn/repair cache')
+    allErrors.push('Burn/repair cache computation failed')
   }
 
   const success = allErrors.length === 0

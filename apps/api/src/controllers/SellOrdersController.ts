@@ -640,5 +640,4 @@ export class SellOrdersController extends Controller {
     await db.delete(sellOrders).where(eq(sellOrders.id, id))
     this.setStatus(204)
   }
-
 }

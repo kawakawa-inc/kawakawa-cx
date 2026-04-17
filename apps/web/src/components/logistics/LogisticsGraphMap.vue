@@ -44,12 +44,7 @@
         >
           Back
         </v-btn>
-        <v-btn
-          size="x-small"
-          variant="text"
-          prepend-icon="mdi-fit-to-page"
-          @click="fitView"
-        >
+        <v-btn size="x-small" variant="text" prepend-icon="mdi-fit-to-page" @click="fitView">
           Fit
         </v-btn>
       </div>
@@ -57,15 +52,9 @@
 
     <!-- Legend -->
     <div class="graph-legend pa-2 text-caption">
-      <span class="legend-item">
-        <span class="swatch swatch-demand"></span> Demand
-      </span>
-      <span class="legend-item">
-        <span class="swatch swatch-surplus"></span> Surplus
-      </span>
-      <span class="legend-item">
-        <span class="swatch swatch-fixed"></span> Fixed
-      </span>
+      <span class="legend-item"> <span class="swatch swatch-demand"></span> Demand </span>
+      <span class="legend-item"> <span class="swatch swatch-surplus"></span> Surplus </span>
+      <span class="legend-item"> <span class="swatch swatch-fixed"></span> Fixed </span>
       <span class="legend-item text-medium-emphasis ml-4">
         Node color: red = shortfall · green = surplus · grey = balanced
       </span>
@@ -255,7 +244,10 @@ interface AggEdge {
 }
 
 function buildSystemEdges(systems: Map<string, SystemAgg>): AggEdge[] {
-  const edgeMap = new Map<string, { amount: number; materials: Set<string>; kinds: Map<string, number> }>()
+  const edgeMap = new Map<
+    string,
+    { amount: number; materials: Set<string>; kinds: Map<string, number> }
+  >()
   for (const e of visibleEdges.value) {
     const fromSys = systemForNode(e.fromLocationId)
     const toSys = systemForNode(e.toLocationId)
@@ -277,7 +269,10 @@ function buildSystemEdges(systems: Map<string, SystemAgg>): AggEdge[] {
     let dominantKind = 'demand'
     let maxKindAmt = 0
     for (const [k, v] of entry.kinds) {
-      if (v > maxKindAmt) { dominantKind = k; maxKindAmt = v }
+      if (v > maxKindAmt) {
+        dominantKind = k
+        maxKindAmt = v
+      }
     }
     agg.push({
       fromSystem,
@@ -436,7 +431,10 @@ function buildUniverseElements(): ElementDefinition[] {
   // comfortable viewport range so nodes spread out even if they cluster
   // in a small region of the universe.
   const positioned = [...systems.values()].filter(s => s.x != null && s.z != null)
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+  let minX = Infinity,
+    maxX = -Infinity,
+    minZ = Infinity,
+    maxZ = -Infinity
   for (const s of positioned) {
     if (s.x! < minX) minX = s.x!
     if (s.x! > maxX) maxX = s.x!
@@ -464,9 +462,7 @@ function buildUniverseElements(): ElementDefinition[] {
         planetCount: sys.nodes.length,
       },
       position:
-        sys.x != null && sys.z != null
-          ? { x: normalizeX(sys.x), y: normalizeZ(sys.z) }
-          : undefined,
+        sys.x != null && sys.z != null ? { x: normalizeX(sys.x), y: normalizeZ(sys.z) } : undefined,
     })
   }
   for (let i = 0; i < sysEdges.length; i++) {
@@ -717,15 +713,22 @@ watch(
   () => rebuildElements(),
   { deep: false }
 )
-watch(() => chips.value, () => rebuildElements(), { deep: true })
+watch(
+  () => chips.value,
+  () => rebuildElements(),
+  { deep: true }
+)
 watch(
   () => layoutName.value,
-  (newLayout) => {
+  newLayout => {
     if (newLayout !== 'universe') focusedSystem.value = null
     rebuildElements()
   }
 )
-watch(() => props.selectedLocationId, () => applySelection())
+watch(
+  () => props.selectedLocationId,
+  () => applySelection()
+)
 </script>
 
 <style scoped>

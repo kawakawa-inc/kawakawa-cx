@@ -5,7 +5,18 @@ import { Body, Controller, Delete, Get, Put, Route, Security, Tags, Request, Pat
 import type { JwtPayload } from '../utils/jwt.js'
 import { SETTING_DEFINITIONS } from '@kawakawa/types/settings'
 import * as userSettingsService from '../services/userSettingsService.js'
+import { computeBurnRepairCache } from '../services/burn-repair-cache.js'
 import { BadRequest } from '../utils/errors.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger({ service: 'user-settings' })
+
+/** Settings keys that trigger a burn/repair cache recompute when changed */
+const BURN_REPAIR_SETTINGS = new Set([
+  'burnRepair.repairDays',
+  'burnRepair.planetOverrides',
+  'burnRepair.excludedPlanets',
+])
 
 // ==================== REQUEST/RESPONSE TYPES ====================
 
@@ -78,6 +89,14 @@ export class UserSettingsController extends Controller {
     } catch (error) {
       this.setStatus(400)
       throw BadRequest(error instanceof Error ? error.message : 'Invalid settings')
+    }
+
+    // Trigger burn/repair cache recompute if any relevant settings changed
+    const changedKeys = Object.keys(body.settings)
+    if (changedKeys.some(k => BURN_REPAIR_SETTINGS.has(k))) {
+      computeBurnRepairCache(userId, { force: true }).catch(err => {
+        log.error({ userId, err }, 'Failed to recompute burn/repair cache after settings change')
+      })
     }
 
     return this.getSettings(request)

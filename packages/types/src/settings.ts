@@ -20,7 +20,7 @@ export const SETTING_CATEGORIES = {
   NOTIFICATIONS: 'notifications',
   FIO: 'fio',
   DISCORD: 'discord',
-  SUPPLY: 'supply',
+  BURN_REPAIR: 'burnRepair',
 } as const
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[keyof typeof SETTING_CATEGORIES]
@@ -54,9 +54,9 @@ export const SETTING_CATEGORY_INFO: Record<
     label: 'Discord',
     description: 'Discord bot preferences',
   },
-  [SETTING_CATEGORIES.SUPPLY]: {
-    label: 'Supply Planning',
-    description: 'Repair, burn, and production planning settings',
+  [SETTING_CATEGORIES.BURN_REPAIR]: {
+    label: 'Burn & Repair',
+    description: 'Workforce burn, production inputs, and building repair settings',
   },
 }
 
@@ -266,41 +266,41 @@ export const SETTING_DEFINITIONS = {
     description: 'Locations to exclude from FIO inventory sync (by ID or name)',
   } satisfies SettingDef<string[], 'string[]'>,
 
-  // ==================== SUPPLY PLANNING SETTINGS ====================
-  'supply.repairDays': {
-    key: 'supply.repairDays',
+  // ==================== BURN & REPAIR SETTINGS ====================
+  'burnRepair.repairDays': {
+    key: 'burnRepair.repairDays',
     type: 'number',
     defaultValue: 0,
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Repair Days',
     description: 'Plan repairs N days ahead (0 = repair now)',
   } satisfies SettingDef<number, 'number'>,
 
-  'supply.burnDays': {
-    key: 'supply.burnDays',
+  'burnRepair.burnDays': {
+    key: 'burnRepair.burnDays',
     type: 'number',
     defaultValue: 7,
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Burn Days',
     description: 'Stock consumables for N days',
   } satisfies SettingDef<number, 'number'>,
 
-  'supply.conditionMode': {
-    key: 'supply.conditionMode',
+  'burnRepair.conditionMode': {
+    key: 'burnRepair.conditionMode',
     type: 'enum',
     defaultValue: 'max',
     enumOptions: ['actual', 'max'] as const,
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Condition',
     description: 'Use actual building conditions or assume max (100%) for production calculations',
   } satisfies SettingDef<string, 'enum'>,
 
-  'supply.stockMode': {
-    key: 'supply.stockMode',
+  'burnRepair.stockMode': {
+    key: 'burnRepair.stockMode',
     type: 'enum',
     defaultValue: 'included',
     enumOptions: ['included', 'ignored'] as const,
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Stock',
     description:
       'Include current stock when computing balances and shopping lists, or ignore it for raw projection runs',
@@ -310,40 +310,48 @@ export const SETTING_DEFINITIONS = {
     key: 'logistics.excludedPlanets',
     type: 'string[]',
     defaultValue: [] as string[],
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Excluded Planets (Logistics)',
     description:
-      'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and supply.excludedPlanets (legacy supply page).',
+      'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and burnRepair.excludedPlanets (supply page).',
   } satisfies SettingDef<string[], 'string[]'>,
 
-  'supply.includeProduction': {
-    key: 'supply.includeProduction',
+  'burnRepair.includeProduction': {
+    key: 'burnRepair.includeProduction',
     type: 'boolean',
     defaultValue: false,
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Include Production Inputs',
     description: 'Include production input materials in supply calculations',
   } satisfies SettingDef<boolean, 'boolean'>,
 
-  'supply.excludedPlanets': {
-    key: 'supply.excludedPlanets',
+  'burnRepair.excludedPlanets': {
+    key: 'burnRepair.excludedPlanets',
     type: 'string[]',
     defaultValue: [] as string[],
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Excluded Planets',
-    description:
-      'Planets to exclude from supply planning sync and calculations (by NaturalId or name)',
+    description: 'Planets to exclude from burn/repair calculations and sync (by NaturalId or name)',
   } satisfies SettingDef<string[], 'string[]'>,
 
-  'supply.planetOverrides': {
-    key: 'supply.planetOverrides',
+  'burnRepair.planetOverrides': {
+    key: 'burnRepair.planetOverrides',
     type: 'string',
     defaultValue: '{}',
-    category: SETTING_CATEGORIES.SUPPLY,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
     label: 'Planet Overrides',
     description:
       'Per-planet setting overrides as JSON: { "planetId": { "repairDays": N, "burnDays": N, "includeProduction": bool } }',
   } satisfies SettingDef<string, 'string'>,
+
+  'burnRepair.includedRoles': {
+    key: 'burnRepair.includedRoles',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Included Roles (Corp Burn/Repair)',
+    description: 'Roles whose burn/repair data is included in corp-wide aggregation',
+  } satisfies SettingDef<string[], 'string[]'>,
 
   // ==================== DISCORD SETTINGS ====================
   'discord.messageVisibility': {

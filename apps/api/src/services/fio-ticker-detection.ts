@@ -4,11 +4,7 @@
 // endpoint to avoid duplicating the same scanning logic in two places.
 
 import { db } from '../db/index.js'
-import {
-  fioPlanetProduction,
-  fioPlanetWorkforce,
-  fioPlanetBuildings,
-} from '@kawakawa/db'
+import { fioPlanetProduction, fioPlanetWorkforce, fioPlanetBuildings } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import type { BuildingData } from '@kawakawa/types'
 import { calculateBuildingRepairNeeds } from './supply-calculator.js'
@@ -86,7 +82,7 @@ export async function getRepairMaterialTickers(
   userPlanetDbId: number
 ): Promise<Set<string>> {
   const userRepairDays =
-    ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
+    ((await userSettingsService.getSetting(userId, 'burnRepair.repairDays')) as number) ?? 0
   const projectionDays = Math.max(45, userRepairDays)
   const now = new Date()
 

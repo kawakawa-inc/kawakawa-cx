@@ -52,6 +52,7 @@ function makeWorkforce(overrides: Partial<WorkforceData> = {}): WorkforceData {
 function makeProduction(overrides: Partial<ProductionData> = {}): ProductionData {
   return {
     lineType: 'chemPlant',
+    capacity: 1,
     condition: 0.8,
     efficiency: 1.0,
     orders: [
@@ -323,13 +324,13 @@ describe('calculateProductionNeeds', () => {
     expect(hal!.amount).toBe(53)
   })
 
-  it('should skip non-recurring orders', () => {
+  it('should include non-recurring orders (players without PRO use these)', () => {
     const production = [
       makeProduction({
         orders: [
           {
             recurring: false,
-            durationMs: 3_600_000,
+            durationMs: 3_600_000, // 1 hour
             inputs: [{ ticker: 'HAL', amount: 3 }],
             outputs: [{ ticker: 'NA', amount: 2 }],
           },
@@ -337,7 +338,8 @@ describe('calculateProductionNeeds', () => {
       }),
     ]
     const needs = calculateProductionNeeds(production, 7, false)
-    expect(needs).toEqual([])
+    // 1 capacity * 7 days * 24h / 1h = 168 runs → ceil(3 * 168) = 504
+    expect(needs).toContainEqual({ ticker: 'HAL', amount: 504 })
   })
 
   it('should return empty for 0 days', () => {

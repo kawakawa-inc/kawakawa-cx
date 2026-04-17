@@ -29,9 +29,7 @@
               :disabled="editing || locationLocked"
               density="compact"
               hide-details
-              @update:favorites="
-                settingsStore.updateSetting('market.favoritedLocations', $event)
-              "
+              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
             />
           </v-col>
 
@@ -46,9 +44,7 @@
               :disabled="editing"
               density="compact"
               hide-details
-              @update:favorites="
-                settingsStore.updateSetting('market.favoritedCommodities', $event)
-              "
+              @update:favorites="settingsStore.updateSetting('market.favoritedCommodities', $event)"
             />
           </v-col>
 
@@ -217,7 +213,7 @@ const categoryDescription = computed(() => {
     case 'reserve':
       return 'Safety stock floor at this node. Acts like a pinned consumption the solver will keep filled.'
     case 'other':
-      return 'Catch-all for anything that doesn\'t fit the above.'
+      return "Catch-all for anything that doesn't fit the above."
     default:
       return ''
   }

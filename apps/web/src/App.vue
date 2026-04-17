@@ -49,6 +49,14 @@
         </v-tooltip>
         <v-tooltip location="bottom">
           <template #activator="{ props }">
+            <v-btn v-bind="props" to="/burn-repair" icon size="small" class="mx-1">
+              <v-icon>mdi-fire</v-icon>
+            </v-btn>
+          </template>
+          Burn &amp; Repair
+        </v-tooltip>
+        <v-tooltip location="bottom">
+          <template #activator="{ props }">
             <v-btn v-bind="props" to="/account" icon size="small" class="mx-1">
               <v-icon>mdi-account-cog</v-icon>
             </v-btn>

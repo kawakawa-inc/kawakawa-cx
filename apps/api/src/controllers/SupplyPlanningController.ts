@@ -18,15 +18,13 @@ import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
 import { syncUserPlanets } from '../services/fio/sync-user-planets.js'
 import { getUserPlanetData } from '../services/fio/sync-user-planets.js'
-import { FioClient } from '../services/fio/client.js'
-import type { FioBuilding } from '../services/fio/types.js'
 import { calculateSupply, calculatePlanetSupply } from '../services/supply-calculator.js'
+import { toPlanetInput, getRepairableTickers } from '../services/planet-data-helpers.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 import type {
-  PlanetSupplyInput,
-  PlanetSupplyResult,
   PlanetOverride,
   PlanetOverrides,
+  PlanetSupplyResult,
   SupplyCalculationOptions,
   SupplyCalculationResult,
 } from '@kawakawa/types'
@@ -75,7 +73,7 @@ export class SupplyPlanningController extends Controller {
 
     const excludedPlanets = ((await userSettingsService.getSetting(
       userId,
-      'supply.excludedPlanets'
+      'burnRepair.excludedPlanets'
     )) ?? []) as string[]
 
     const result = await syncUserPlanets(userId, fioApiKey, fioUsername, {
@@ -220,8 +218,8 @@ export class SupplyPlanningController extends Controller {
       throw NotFound(`Planet ${planetId} not found. Have you synced your planet data?`)
     }
 
-    const repairableTickers = await this.getRepairableTickers()
-    const input = this.toPlanetInput(planetData)
+    const repairableTickers = await getRepairableTickers()
+    const input = toPlanetInput(planetData)
     return calculatePlanetSupply(input, options, repairableTickers)
   }
 
@@ -230,15 +228,16 @@ export class SupplyPlanningController extends Controller {
    */
   private async resolveCalculationOptions(userId: number): Promise<SupplyCalculationOptions> {
     const repairDays =
-      ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
+      ((await userSettingsService.getSetting(userId, 'burnRepair.repairDays')) as number) ?? 0
     const burnDays =
-      ((await userSettingsService.getSetting(userId, 'supply.burnDays')) as number) ?? 7
+      ((await userSettingsService.getSetting(userId, 'burnRepair.burnDays')) as number) ?? 7
     const includeProduction =
-      ((await userSettingsService.getSetting(userId, 'supply.includeProduction')) as boolean) ??
+      ((await userSettingsService.getSetting(userId, 'burnRepair.includeProduction')) as boolean) ??
       false
 
     const overridesRaw =
-      ((await userSettingsService.getSetting(userId, 'supply.planetOverrides')) as string) ?? '{}'
+      ((await userSettingsService.getSetting(userId, 'burnRepair.planetOverrides')) as string) ??
+      '{}'
     let planetOverrides: PlanetOverrides = {}
     try {
       planetOverrides = typeof overridesRaw === 'string' ? JSON.parse(overridesRaw) : overridesRaw
@@ -267,89 +266,9 @@ export class SupplyPlanningController extends Controller {
       }
     }
 
-    const repairableTickers = await this.getRepairableTickers()
-    const inputs = planetData.map(p => this.toPlanetInput(p))
+    const repairableTickers = await getRepairableTickers()
+    const inputs = planetData.map(p => toPlanetInput(p))
     return calculateSupply(inputs, options, repairableTickers)
-  }
-
-  /**
-   * Fetch building definitions from FIO and return the set of tickers
-   * that have workforce > 0 (and therefore need repairs)
-   */
-  private async getRepairableTickers(): Promise<Set<string>> {
-    const client = new FioClient()
-    const buildings = (await client.getBuildings()) as FioBuilding[]
-    const repairable = new Set<string>()
-    for (const b of buildings) {
-      const totalWorkforce = b.Pioneers + b.Settlers + b.Technicians + b.Engineers + b.Scientists
-      if (totalWorkforce > 0) {
-        repairable.add(b.Ticker)
-      }
-    }
-    return repairable
-  }
-
-  /**
-   * Convert DB planet data to calculator input format
-   */
-  private toPlanetInput(
-    planetData: Awaited<ReturnType<typeof getUserPlanetData>>[number]
-  ): PlanetSupplyInput {
-    return {
-      planetId: planetData.planetNaturalId,
-      planetName: planetData.planetName,
-      buildings: planetData.buildings.map(b => ({
-        buildingTicker: b.buildingTicker,
-        buildingCreated: b.buildingCreated,
-        buildingLastRepair: b.buildingLastRepair,
-        condition: Number(b.condition),
-        repairMaterials: (
-          b.repairMaterials as { MaterialTicker: string; MaterialAmount: number }[]
-        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
-        reclaimableMaterials: (
-          b.reclaimableMaterials as { MaterialTicker: string; MaterialAmount: number }[]
-        ).map(m => ({ ticker: m.MaterialTicker, amount: m.MaterialAmount })),
-      })),
-      workforce: planetData.workforce.map(w => ({
-        workforceType: w.workforceType,
-        population: w.population,
-        needs: (
-          w.needs as {
-            MaterialTicker: string
-            UnitsPerInterval: number
-            Essential: boolean
-          }[]
-        ).map(n => ({
-          ticker: n.MaterialTicker,
-          unitsPerInterval: n.UnitsPerInterval,
-          essential: n.Essential,
-        })),
-      })),
-      production: planetData.production.map(p => ({
-        lineType: p.lineType,
-        condition: Number(p.condition),
-        efficiency: Number(p.efficiency),
-        orders: (
-          p.orders as {
-            Recurring: boolean
-            DurationMs: number
-            Inputs: { MaterialTicker: string; MaterialAmount: number }[]
-            Outputs: { MaterialTicker: string; MaterialAmount: number }[]
-          }[]
-        ).map(o => ({
-          recurring: o.Recurring,
-          durationMs: o.DurationMs,
-          inputs: o.Inputs.map(i => ({
-            ticker: i.MaterialTicker,
-            amount: i.MaterialAmount,
-          })),
-          outputs: o.Outputs.map(out => ({
-            ticker: out.MaterialTicker,
-            amount: out.MaterialAmount,
-          })),
-        })),
-      })),
-    }
   }
 
   /**

@@ -59,12 +59,7 @@
                 <v-icon :color="nodeIconColor(node)">{{ nodeIcon(node) }}</v-icon>
               </template>
               <template #append>
-                <v-chip
-                  v-if="shoppingCount(node) > 0"
-                  size="x-small"
-                  color="error"
-                  variant="flat"
-                >
+                <v-chip v-if="shoppingCount(node) > 0" size="x-small" color="error" variant="flat">
                   {{ shoppingCount(node) }}
                 </v-chip>
               </template>
@@ -96,248 +91,266 @@
             <!-- ==================== Inspector tab ==================== -->
             <v-tabs-window-item value="inspector">
               <template v-if="selectedNode">
-          <v-card-title class="d-flex align-center flex-wrap ga-2">
-            <v-icon start :color="nodeIconColor(selectedNode)">
-              {{ nodeIcon(selectedNode) }}
-            </v-icon>
-            <span class="mr-2">{{ selectedNode.locationName }}</span>
-            <v-chip size="x-small" variant="outlined">
-              {{ selectedNode.locationId }}
-            </v-chip>
-            <v-spacer />
-            <v-btn
-              size="small"
-              variant="outlined"
-              prepend-icon="mdi-bank"
-              @click="openCreateClaim"
-            >
-              Add Claim
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="outlined"
-              prepend-icon="mdi-auto-fix"
-              @click="openBulkFlow"
-            >
-              Bulk Add
-            </v-btn>
-            <v-btn
-              size="small"
-              variant="outlined"
-              color="primary"
-              prepend-icon="mdi-plus"
-              @click="openCreateFlow"
-            >
-              Add Flow
-            </v-btn>
-            <v-btn
-              v-if="shoppingCount(selectedNode) > 0"
-              color="primary"
-              prepend-icon="mdi-cart-plus"
-              @click="handleShoppingList(selectedNode)"
-            >
-              Shopping List ({{ shoppingCount(selectedNode) }})
-            </v-btn>
-          </v-card-title>
+                <v-card-title class="d-flex align-center flex-wrap ga-2">
+                  <v-icon start :color="nodeIconColor(selectedNode)">
+                    {{ nodeIcon(selectedNode) }}
+                  </v-icon>
+                  <span class="mr-2">{{ selectedNode.locationName }}</span>
+                  <v-chip size="x-small" variant="outlined">
+                    {{ selectedNode.locationId }}
+                  </v-chip>
+                  <v-spacer />
+                  <v-btn
+                    size="small"
+                    variant="outlined"
+                    prepend-icon="mdi-bank"
+                    @click="openCreateClaim"
+                  >
+                    Add Claim
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    variant="outlined"
+                    prepend-icon="mdi-auto-fix"
+                    @click="openBulkFlow"
+                  >
+                    Bulk Add
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    variant="outlined"
+                    color="primary"
+                    prepend-icon="mdi-plus"
+                    @click="openCreateFlow"
+                  >
+                    Add Flow
+                  </v-btn>
+                  <v-btn
+                    v-if="shoppingCount(selectedNode) > 0"
+                    color="primary"
+                    prepend-icon="mdi-cart-plus"
+                    @click="handleShoppingList(selectedNode)"
+                  >
+                    Shopping List ({{ shoppingCount(selectedNode) }})
+                  </v-btn>
+                </v-card-title>
 
-          <v-divider />
+                <v-divider />
 
-          <!-- Balance table -->
-          <v-card-text>
-            <div class="text-subtitle-2 mb-2">Per-material balance</div>
-            <v-data-table
-              v-model:expanded="expandedTickers"
-              :headers="balanceHeaders"
-              :items="balanceRows(selectedNode)"
-              :items-per-page="-1"
-              density="compact"
-              hide-default-footer
-              class="elevation-0"
-              item-value="ticker"
-              show-expand
-            >
-              <template #item.ticker="{ item }">
-                <CommodityDisplay :ticker="item.ticker" />
-              </template>
-              <template #expanded-row="{ columns, item }">
-                <tr class="breakdown-row">
-                  <td :colspan="columns.length">
-                    <div class="pa-3">
-                      <div class="text-caption text-medium-emphasis mb-2">
-                        Consumption breakdown for {{ item.ticker }}
-                      </div>
-                      <div
-                        v-if="consumptionBreakdownParts(selectedNode, item.ticker).length > 0"
-                        class="d-flex flex-wrap ga-2"
+                <!-- Balance table -->
+                <v-card-text>
+                  <div class="text-subtitle-2 mb-2">Per-material balance</div>
+                  <v-data-table
+                    v-model:expanded="expandedTickers"
+                    :headers="balanceHeaders"
+                    :items="balanceRows(selectedNode)"
+                    :items-per-page="-1"
+                    density="compact"
+                    hide-default-footer
+                    class="elevation-0"
+                    item-value="ticker"
+                    show-expand
+                  >
+                    <template #item.ticker="{ item }">
+                      <CommodityDisplay :ticker="item.ticker" />
+                    </template>
+                    <template #expanded-row="{ columns, item }">
+                      <tr class="breakdown-row">
+                        <td :colspan="columns.length">
+                          <div class="pa-3">
+                            <div class="text-caption text-medium-emphasis mb-2">
+                              Consumption breakdown for {{ item.ticker }}
+                            </div>
+                            <div
+                              v-if="consumptionBreakdownParts(selectedNode, item.ticker).length > 0"
+                              class="d-flex flex-wrap ga-2"
+                            >
+                              <div
+                                v-for="part in consumptionBreakdownParts(selectedNode, item.ticker)"
+                                :key="part.label"
+                                class="breakdown-chip"
+                              >
+                                <v-icon size="x-small" class="mr-1">{{ part.icon }}</v-icon>
+                                <span class="text-caption">{{ part.label }}</span>
+                                <span class="text-body-2 font-weight-medium ml-2">
+                                  {{ fmt(part.amount) }}
+                                </span>
+                              </div>
+                            </div>
+                            <div v-else class="text-caption text-medium-emphasis">
+                              No consumption at this node.
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </template>
+                    <template #item.nativeProduction="{ item }">
+                      <span v-if="item.nativeProduction > 0" class="text-success">
+                        {{ fmt(item.nativeProduction) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.nativeConsumption="{ item }">
+                      <span v-if="item.nativeConsumption > 0" class="text-warning">
+                        {{ fmt(item.nativeConsumption) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.stock="{ item }">
+                      <span v-if="item.stock > 0">{{ fmt(item.stock) }}</span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.inflow="{ item }">
+                      <span v-if="item.inflow > 0" class="text-success">{{
+                        fmt(item.inflow)
+                      }}</span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.outflow="{ item }">
+                      <span v-if="item.outflow > 0" class="text-warning">{{
+                        fmt(item.outflow)
+                      }}</span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.balance="{ item }">
+                      <span
+                        :class="{
+                          'text-error font-weight-medium': item.balance < 0,
+                          'text-success font-weight-medium': item.balance > 0,
+                          'text-disabled': item.balance === 0,
+                        }"
                       >
-                        <div
-                          v-for="part in consumptionBreakdownParts(selectedNode, item.ticker)"
-                          :key="part.label"
-                          class="breakdown-chip"
-                        >
-                          <v-icon size="x-small" class="mr-1">{{ part.icon }}</v-icon>
-                          <span class="text-caption">{{ part.label }}</span>
-                          <span class="text-body-2 font-weight-medium ml-2">
-                            {{ fmt(part.amount) }}
-                          </span>
-                        </div>
+                        {{ item.balance < 0 ? item.balance : '+' + item.balance }}
+                      </span>
+                    </template>
+                    <template #no-data>
+                      <div class="text-center py-4 text-medium-emphasis">
+                        No material activity at this node yet.
                       </div>
-                      <div v-else class="text-caption text-medium-emphasis">
-                        No consumption at this node.
+                    </template>
+                  </v-data-table>
+                </v-card-text>
+
+                <v-divider />
+
+                <!-- Manual claims at this node -->
+                <v-card-text v-if="claimsByLocation.get(selectedNode.locationId)?.length">
+                  <div class="text-subtitle-2 mb-2">
+                    Manual claims ({{ claimsByLocation.get(selectedNode.locationId)?.length ?? 0 }})
+                  </div>
+                  <v-data-table
+                    :headers="claimHeaders"
+                    :items="claimsByLocation.get(selectedNode.locationId) ?? []"
+                    :items-per-page="-1"
+                    density="compact"
+                    hide-default-footer
+                    class="elevation-0"
+                  >
+                    <template #item.category="{ item }">
+                      <v-chip
+                        size="x-small"
+                        :color="claimCategoryColor(item.category)"
+                        variant="tonal"
+                      >
+                        <v-icon start size="x-small">{{ claimCategoryIcon(item.category) }}</v-icon>
+                        {{ claimCategoryLabel(item.category) }}
+                      </v-chip>
+                    </template>
+                    <template #item.ticker="{ item }">
+                      <CommodityDisplay :ticker="item.commodityTicker" />
+                    </template>
+                    <template #item.quantity="{ item }">
+                      {{ fmt(item.quantity) }}
+                    </template>
+                    <template #item.rate="{ item }">
+                      <span class="text-caption text-medium-emphasis">
+                        {{ item.rate === 'daily' ? '/day' : 'total' }}
+                      </span>
+                    </template>
+                    <template #item.note="{ item }">
+                      <span class="text-caption">{{ item.note ?? '—' }}</span>
+                    </template>
+                    <template #item.actions="{ item }">
+                      <v-btn size="x-small" icon variant="text" @click="openEditClaim(item.id)">
+                        <v-icon size="small">mdi-pencil</v-icon>
+                      </v-btn>
+                    </template>
+                  </v-data-table>
+                </v-card-text>
+
+                <v-divider v-if="claimsByLocation.get(selectedNode.locationId)?.length" />
+
+                <!-- Edges touching this node -->
+                <v-card-text>
+                  <div class="text-subtitle-2 mb-2">Flows touching this node</div>
+                  <v-data-table
+                    :headers="edgeHeaders"
+                    :items="edgesForNode(selectedNode.locationId)"
+                    :items-per-page="-1"
+                    density="compact"
+                    hide-default-footer
+                    class="elevation-0"
+                  >
+                    <template #item.direction="{ item }">
+                      <v-icon
+                        :color="
+                          item.fromLocationId === selectedNode.locationId ? 'warning' : 'success'
+                        "
+                        size="small"
+                      >
+                        {{
+                          item.fromLocationId === selectedNode.locationId
+                            ? 'mdi-arrow-right'
+                            : 'mdi-arrow-left'
+                        }}
+                      </v-icon>
+                    </template>
+                    <template #item.other="{ item }">
+                      {{
+                        nodeNameFor(
+                          item.fromLocationId === selectedNode.locationId
+                            ? item.toLocationId
+                            : item.fromLocationId
+                        )
+                      }}
+                    </template>
+                    <template #item.ticker="{ item }">
+                      <CommodityDisplay :ticker="item.commodityTicker" />
+                    </template>
+                    <template #item.kind="{ item }">
+                      <v-chip size="x-small" :color="kindColor(item.kind)" variant="tonal">
+                        {{ item.kind }}
+                      </v-chip>
+                    </template>
+                    <template #item.amount="{ item }">
+                      <span v-if="item.amount > 0">{{ fmt(item.amount) }}</span>
+                      <span
+                        v-else
+                        class="text-disabled"
+                        title="Solver computed 0 — destination doesn't need this material"
+                      >
+                        0
+                        <v-icon size="x-small" class="ml-1">mdi-information-outline</v-icon>
+                      </span>
+                    </template>
+                    <template #item.actions="{ item }">
+                      <v-btn
+                        size="x-small"
+                        icon
+                        variant="text"
+                        :disabled="!flowsById.get(item.id)"
+                        @click="openEditFlow(item.id)"
+                      >
+                        <v-icon size="small">mdi-pencil</v-icon>
+                      </v-btn>
+                    </template>
+                    <template #no-data>
+                      <div class="text-center py-4 text-medium-emphasis">
+                        No flows on this node yet.
                       </div>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-              <template #item.nativeProduction="{ item }">
-                <span v-if="item.nativeProduction > 0" class="text-success">
-                  {{ fmt(item.nativeProduction) }}
-                </span>
-                <span v-else class="text-disabled">–</span>
-              </template>
-              <template #item.nativeConsumption="{ item }">
-                <span v-if="item.nativeConsumption > 0" class="text-warning">
-                  {{ fmt(item.nativeConsumption) }}
-                </span>
-                <span v-else class="text-disabled">–</span>
-              </template>
-              <template #item.stock="{ item }">
-                <span v-if="item.stock > 0">{{ fmt(item.stock) }}</span>
-                <span v-else class="text-disabled">–</span>
-              </template>
-              <template #item.inflow="{ item }">
-                <span v-if="item.inflow > 0" class="text-success">{{ fmt(item.inflow) }}</span>
-                <span v-else class="text-disabled">–</span>
-              </template>
-              <template #item.outflow="{ item }">
-                <span v-if="item.outflow > 0" class="text-warning">{{ fmt(item.outflow) }}</span>
-                <span v-else class="text-disabled">–</span>
-              </template>
-              <template #item.balance="{ item }">
-                <span
-                  :class="{
-                    'text-error font-weight-medium': item.balance < 0,
-                    'text-success font-weight-medium': item.balance > 0,
-                    'text-disabled': item.balance === 0,
-                  }"
-                >
-                  {{ item.balance < 0 ? item.balance : '+' + item.balance }}
-                </span>
-              </template>
-              <template #no-data>
-                <div class="text-center py-4 text-medium-emphasis">
-                  No material activity at this node yet.
-                </div>
-              </template>
-            </v-data-table>
-          </v-card-text>
-
-          <v-divider />
-
-          <!-- Manual claims at this node -->
-          <v-card-text v-if="claimsByLocation.get(selectedNode.locationId)?.length">
-            <div class="text-subtitle-2 mb-2">
-              Manual claims ({{ claimsByLocation.get(selectedNode.locationId)?.length ?? 0 }})
-            </div>
-            <v-data-table
-              :headers="claimHeaders"
-              :items="claimsByLocation.get(selectedNode.locationId) ?? []"
-              :items-per-page="-1"
-              density="compact"
-              hide-default-footer
-              class="elevation-0"
-            >
-              <template #item.category="{ item }">
-                <v-chip size="x-small" :color="claimCategoryColor(item.category)" variant="tonal">
-                  <v-icon start size="x-small">{{ claimCategoryIcon(item.category) }}</v-icon>
-                  {{ claimCategoryLabel(item.category) }}
-                </v-chip>
-              </template>
-              <template #item.ticker="{ item }">
-                <CommodityDisplay :ticker="item.commodityTicker" />
-              </template>
-              <template #item.quantity="{ item }">
-                {{ fmt(item.quantity) }}
-              </template>
-              <template #item.rate="{ item }">
-                <span class="text-caption text-medium-emphasis">
-                  {{ item.rate === 'daily' ? '/day' : 'total' }}
-                </span>
-              </template>
-              <template #item.note="{ item }">
-                <span class="text-caption">{{ item.note ?? '—' }}</span>
-              </template>
-              <template #item.actions="{ item }">
-                <v-btn size="x-small" icon variant="text" @click="openEditClaim(item.id)">
-                  <v-icon size="small">mdi-pencil</v-icon>
-                </v-btn>
-              </template>
-            </v-data-table>
-          </v-card-text>
-
-          <v-divider v-if="claimsByLocation.get(selectedNode.locationId)?.length" />
-
-          <!-- Edges touching this node -->
-          <v-card-text>
-            <div class="text-subtitle-2 mb-2">Flows touching this node</div>
-            <v-data-table
-              :headers="edgeHeaders"
-              :items="edgesForNode(selectedNode.locationId)"
-              :items-per-page="-1"
-              density="compact"
-              hide-default-footer
-              class="elevation-0"
-            >
-              <template #item.direction="{ item }">
-                <v-icon
-                  :color="item.fromLocationId === selectedNode.locationId ? 'warning' : 'success'"
-                  size="small"
-                >
-                  {{ item.fromLocationId === selectedNode.locationId ? 'mdi-arrow-right' : 'mdi-arrow-left' }}
-                </v-icon>
-              </template>
-              <template #item.other="{ item }">
-                {{
-                  nodeNameFor(
-                    item.fromLocationId === selectedNode.locationId
-                      ? item.toLocationId
-                      : item.fromLocationId
-                  )
-                }}
-              </template>
-              <template #item.ticker="{ item }">
-                <CommodityDisplay :ticker="item.commodityTicker" />
-              </template>
-              <template #item.kind="{ item }">
-                <v-chip size="x-small" :color="kindColor(item.kind)" variant="tonal">
-                  {{ item.kind }}
-                </v-chip>
-              </template>
-              <template #item.amount="{ item }">
-                <span v-if="item.amount > 0">{{ fmt(item.amount) }}</span>
-                <span v-else class="text-disabled" title="Solver computed 0 — destination doesn't need this material">
-                  0
-                  <v-icon size="x-small" class="ml-1">mdi-information-outline</v-icon>
-                </span>
-              </template>
-              <template #item.actions="{ item }">
-                <v-btn
-                  size="x-small"
-                  icon
-                  variant="text"
-                  :disabled="!flowsById.get(item.id)"
-                  @click="openEditFlow(item.id)"
-                >
-                  <v-icon size="small">mdi-pencil</v-icon>
-                </v-btn>
-              </template>
-              <template #no-data>
-                <div class="text-center py-4 text-medium-emphasis">
-                  No flows on this node yet.
-                </div>
-              </template>
-            </v-data-table>
-          </v-card-text>
+                    </template>
+                  </v-data-table>
+                </v-card-text>
               </template>
               <v-card-text v-else class="text-center text-medium-emphasis py-8">
                 Select a node to inspect.
@@ -643,7 +656,8 @@ function nodeSubtitle(node: NodeState): string {
   const deficit = shoppingCount(node)
   if (deficit > 0) return `${deficit} material${deficit === 1 ? '' : 's'} short`
   const balanceKeys = Object.keys(node.balance).filter(k => node.balance[k] > 0)
-  if (balanceKeys.length > 0) return `${balanceKeys.length} material${balanceKeys.length === 1 ? '' : 's'} surplus`
+  if (balanceKeys.length > 0)
+    return `${balanceKeys.length} material${balanceKeys.length === 1 ? '' : 's'} surplus`
   return 'balanced'
 }
 

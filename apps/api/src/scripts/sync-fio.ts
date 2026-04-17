@@ -146,7 +146,7 @@ async function main() {
 
         const excludedPlanets = (await userSettingsService.getSetting(
           user.userId,
-          'supply.excludedPlanets'
+          'burnRepair.excludedPlanets'
         )) as string[]
 
         usersToSync.push({

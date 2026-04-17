@@ -3,6 +3,7 @@ import { syncUserAll } from './sync-user-all.js'
 
 const mockSyncUserInventory = vi.fn()
 const mockSyncUserPlanets = vi.fn()
+const mockComputeBurnRepairCache = vi.fn()
 
 vi.mock('./sync-user-inventory.js', () => ({
   syncUserInventory: (...args: unknown[]) => mockSyncUserInventory(...args),
@@ -10,6 +11,10 @@ vi.mock('./sync-user-inventory.js', () => ({
 
 vi.mock('./sync-user-planets.js', () => ({
   syncUserPlanets: (...args: unknown[]) => mockSyncUserPlanets(...args),
+}))
+
+vi.mock('../burn-repair-cache.js', () => ({
+  computeBurnRepairCache: (...args: unknown[]) => mockComputeBurnRepairCache(...args),
 }))
 
 describe('syncUserAll', () => {

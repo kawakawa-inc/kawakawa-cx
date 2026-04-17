@@ -103,17 +103,13 @@ export function solve(input: SolverInput): LogisticsGraph {
     const unresolved = nodes
       .filter(n => !demandTopoOrder.includes(n.locationId))
       .map(n => n.locationId)
-    warnings.push(
-      `Demand-edge graph contains cycles; unresolved nodes: ${unresolved.join(', ')}`
-    )
+    warnings.push(`Demand-edge graph contains cycles; unresolved nodes: ${unresolved.join(', ')}`)
   }
   if (surplusTopoOrder.length < nodes.length) {
     const unresolved = nodes
       .filter(n => !surplusTopoOrder.includes(n.locationId))
       .map(n => n.locationId)
-    warnings.push(
-      `Surplus-edge graph contains cycles; unresolved nodes: ${unresolved.join(', ')}`
-    )
+    warnings.push(`Surplus-edge graph contains cycles; unresolved nodes: ${unresolved.join(', ')}`)
   }
   if (orphanEdges.length > 0) {
     warnings.push(`${orphanEdges.length} edge(s) reference unknown locations and were ignored`)
@@ -137,7 +133,7 @@ export function solve(input: SolverInput): LogisticsGraph {
     for (const ticker of tickers) {
       const consumption = node.nativeConsumption[ticker] ?? 0
       const production = node.nativeProduction[ticker] ?? 0
-      const stock = settings.stockMode === 'included' ? node.stock[ticker] ?? 0 : 0
+      const stock = settings.stockMode === 'included' ? (node.stock[ticker] ?? 0) : 0
       const committedOut = outDemand.get(loc)![ticker] ?? 0
 
       const required = Math.max(0, consumption + committedOut - production - stock)
@@ -200,7 +196,8 @@ export function solve(input: SolverInput): LogisticsGraph {
     const stockForReport = settings.stockMode === 'included' ? n.stock : {}
 
     const derivedInflow: Record<string, number> = {}
-    for (const [t, v] of Object.entries(inDemand.get(loc)!)) derivedInflow[t] = (derivedInflow[t] ?? 0) + v
+    for (const [t, v] of Object.entries(inDemand.get(loc)!))
+      derivedInflow[t] = (derivedInflow[t] ?? 0) + v
     for (const [t, v] of Object.entries(inSurplus.get(loc)!))
       derivedInflow[t] = (derivedInflow[t] ?? 0) + v
 
@@ -345,7 +342,7 @@ function computeBalance(
 ): number {
   const production = node.nativeProduction[ticker] ?? 0
   const consumption = node.nativeConsumption[ticker] ?? 0
-  const stock = settings.stockMode === 'included' ? node.stock[ticker] ?? 0 : 0
+  const stock = settings.stockMode === 'included' ? (node.stock[ticker] ?? 0) : 0
   const inflowD = inD[ticker] ?? 0
   const inflowS = inS[ticker] ?? 0
   const outflowD = outD[ticker] ?? 0

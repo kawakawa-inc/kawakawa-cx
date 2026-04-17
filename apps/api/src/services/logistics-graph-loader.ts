@@ -99,9 +99,10 @@ let systemCoordsCache: Map<string, { x: number; z: number }> | null = null
 async function getSystemCoordinates(): Promise<Map<string, { x: number; z: number }>> {
   if (systemCoordsCache) return systemCoordsCache
   const client = new FioClient()
-  const systems = await client.fetchJson<
-    Array<{ NaturalId: string; PositionX: number; PositionZ: number }>
-  >('/systemstars')
+  const systems =
+    await client.fetchJson<Array<{ NaturalId: string; PositionX: number; PositionZ: number }>>(
+      '/systemstars'
+    )
   const map = new Map<string, { x: number; z: number }>()
   for (const s of systems) {
     map.set(s.NaturalId, { x: s.PositionX, z: s.PositionZ })
@@ -128,9 +129,7 @@ async function loadStockByLocation(
     })
     .from(fioInventory)
     .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
-    .where(
-      and(eq(fioUserStorage.userId, userId), inArray(fioUserStorage.locationId, locationIds))
-    )
+    .where(and(eq(fioUserStorage.userId, userId), inArray(fioUserStorage.locationId, locationIds)))
 
   for (const row of rows) {
     if (!row.locationId) continue
@@ -167,23 +166,22 @@ function makeJumpDistance(): JumpDistanceFn {
 
 export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph> {
   // ---- Load settings ----
-  const burnDays = ((await userSettingsService.getSetting(userId, 'supply.burnDays')) as number) ?? 7
+  const burnDays =
+    ((await userSettingsService.getSetting(userId, 'burnRepair.burnDays')) as number) ?? 7
   const repairDays =
-    ((await userSettingsService.getSetting(userId, 'supply.repairDays')) as number) ?? 0
+    ((await userSettingsService.getSetting(userId, 'burnRepair.repairDays')) as number) ?? 0
   const conditionMode =
-    ((await userSettingsService.getSetting(userId, 'supply.conditionMode')) as
+    ((await userSettingsService.getSetting(userId, 'burnRepair.conditionMode')) as
       | 'actual'
       | 'max') ?? 'max'
   const stockMode =
-    ((await userSettingsService.getSetting(userId, 'supply.stockMode')) as 'included' | 'ignored') ??
-    'included'
+    ((await userSettingsService.getSetting(userId, 'burnRepair.stockMode')) as
+      | 'included'
+      | 'ignored') ?? 'included'
   const settings: SolverSettings = { burnDays, repairDays, conditionMode, stockMode }
 
   // ---- Load flows ----
-  const flowRows = await db
-    .select()
-    .from(logisticsFlows)
-    .where(eq(logisticsFlows.userId, userId))
+  const flowRows = await db.select().from(logisticsFlows).where(eq(logisticsFlows.userId, userId))
 
   // ---- Load claims ----
   const claimRows = await db
@@ -212,8 +210,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   // shouldn't show up as standalone nodes in the graph. If a flow or claim
   // explicitly touches one, we still include it below (union rule).
   const fioExcludedLocations =
-    ((await userSettingsService.getSetting(userId, 'fio.excludedLocations')) as string[]) ??
-    []
+    ((await userSettingsService.getSetting(userId, 'fio.excludedLocations')) as string[]) ?? []
   const fioExcluded = new Set(fioExcludedLocations)
 
   // ---- Determine the set of nodes in the graph ----
@@ -358,11 +355,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
         }
 
         // Production rates — dailyInput becomes consumption, dailyOutput becomes production.
-        const prodRates = await getAllProductionRates(
-          planetDbId,
-          tickers,
-          conditionMode === 'max'
-        )
+        const prodRates = await getAllProductionRates(planetDbId, tickers, conditionMode === 'max')
         for (const [t, { dailyInput, dailyOutput }] of Object.entries(prodRates)) {
           const netConsumption = Math.max(0, dailyInput - dailyOutput) * burnDays
           const netProduction = Math.max(0, dailyOutput - dailyInput) * burnDays
@@ -458,11 +451,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   }
 
   // ---- Load stock ----
-  const stockByLoc = await loadStockByLocation(
-    userId,
-    [...nodeLocIds],
-    storageTypesByLocation
-  )
+  const stockByLoc = await loadStockByLocation(userId, [...nodeLocIds], storageTypesByLocation)
   for (const node of solverNodes) {
     node.stock = stockByLoc.get(node.locationId) ?? {}
   }
@@ -473,7 +462,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
       row.kind === 'fixed'
         ? row.rate === 'daily'
           ? (row.amountOverride ?? 0) * burnDays
-          : row.amountOverride ?? 0
+          : (row.amountOverride ?? 0)
         : null
     return {
       id: row.id,

@@ -80,10 +80,7 @@ interface GroupedAdjacency {
  * adjacency map. Cheap enough to rebuild on demand — the bulk endpoint preloads
  * once then mutates incrementally as it inserts.
  */
-async function loadAdjacency(
-  userId: number,
-  excludeFlowId?: number
-): Promise<GroupedAdjacency> {
+async function loadAdjacency(userId: number, excludeFlowId?: number): Promise<GroupedAdjacency> {
   const rows = await db
     .select({
       id: logisticsFlows.id,
@@ -127,12 +124,7 @@ function addToAdjacency(
  * Detect whether adding `from → to` for `ticker` would create a cycle in the
  * given kind-group's adjacency map. BFS from `to`; if we reach `from`, it's a cycle.
  */
-function hasCycle(
-  adjacency: TickerAdjacency,
-  from: string,
-  to: string,
-  ticker: string
-): boolean {
+function hasCycle(adjacency: TickerAdjacency, from: string, to: string, ticker: string): boolean {
   if (from === to) return true
   const tickerMap = adjacency.get(ticker)
   if (!tickerMap) return false
@@ -171,12 +163,7 @@ async function wouldCreateCycle(
 ): Promise<boolean> {
   if (fromLocationId === toLocationId) return true
   const adjacency = await loadAdjacency(userId, excludeFlowId)
-  return hasCycle(
-    adjacency[groupForKind(kind)],
-    fromLocationId,
-    toLocationId,
-    commodityTicker
-  )
+  return hasCycle(adjacency[groupForKind(kind)], fromLocationId, toLocationId, commodityTicker)
 }
 
 /**
@@ -192,10 +179,7 @@ async function lookupUserPlanetDbId(
     .select({ id: fioUserPlanets.id })
     .from(fioUserPlanets)
     .where(
-      and(
-        eq(fioUserPlanets.userId, userId),
-        eq(fioUserPlanets.planetNaturalId, planetNaturalId)
-      )
+      and(eq(fioUserPlanets.userId, userId), eq(fioUserPlanets.planetNaturalId, planetNaturalId))
     )
   return planet?.id ?? null
 }

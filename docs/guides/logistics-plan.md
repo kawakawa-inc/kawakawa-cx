@@ -62,6 +62,7 @@ createdAt / updatedAt
 **Claims always add to `nativeConsumption`** at the node (see §3.1). The solver treats them identically to workforce burn once they're converted to a per-ticker-per-node daily figure — the only difference is the data source. No new term in the balance formula; no stock-reservation semantics; no fulfillment state machine.
 
 **Category semantics:**
+
 - `government` — recurring obligations like COGC (4 mats per 10d, scales with workforce) and population upkeep (per 7d). Currently manual-entry because we don't auto-calculate these from FIO yet. When we do, new rows become `source='auto'` and get regenerated on planet sync.
 - `contract` — specific deliveries, typically one-off (`rate='total'`). Potential future integration point: the contract category can be wired to the invoices feature so contract claims auto-generate from outstanding invoices.
 - `reserve` — safety stock floor. Almost always `rate='total'`. The per-node balance formula naturally treats this as a floor: if `stock + inflow ≥ reserve + other demand`, reserve is held; otherwise the shortfall hits the shopping list.
@@ -77,7 +78,7 @@ createdAt / updatedAt
 
 ### 2.3 What goes away
 
-- `lineSource` enum: deleted. The four "auto" values (consumables/inputs/repair/production_output) become *derived* properties of a node, computed by the solver from FIO data. The two "manual" values (government/other) become `location_demand_claims` rows.
+- `lineSource` enum: deleted. The four "auto" values (consumables/inputs/repair/production*output) become \_derived* properties of a node, computed by the solver from FIO data. The two "manual" values (government/other) become `location_demand_claims` rows.
 - `mode` column (`demand`/`reserve`): deleted. Reserves move to node-level settings.
 - The per-category branching throughout the codebase.
 
@@ -98,15 +99,15 @@ Dev only — no production data. Offer two paths:
 For each location, compute per-ticker:
 
 - **`nativeConsumption(n, t)`** =
-    - FIO workforce consumables
-    - \+ FIO recurring production inputs (net of on-site production of the same material)
-    - \+ projected repair cost over `repairDays`
-    - \+ `Σ location_demand_claims(n, t)` converted to daily rate against `burnDays`
+  - FIO workforce consumables
+  - \+ FIO recurring production inputs (net of on-site production of the same material)
+  - \+ projected repair cost over `repairDays`
+  - \+ `Σ location_demand_claims(n, t)` converted to daily rate against `burnDays`
 - **`nativeProduction(n, t)`** = FIO recurring production outputs (net of on-site consumption).
 
 These feed the same `getAllProductionRates` / `getAllBurnRates` / `calculateBuildingRepairNeeds` primitives used today. That code survives. Claims are a new, small query against `location_demand_claims`.
 
-The node inspector UI (§5.1) surfaces the breakdown so the user can see *which* bucket contributed what:
+The node inspector UI (§5.1) surfaces the breakdown so the user can see _which_ bucket contributed what:
 
 - Workforce burn (auto, daily)
 - Repair (auto, projected over `repairDays`)
@@ -172,6 +173,7 @@ Distances are computed once per solve (they don't change between solves) and cac
 ### 3.4 Worked example — the CAF scenario
 
 Setup:
+
 - Pyrgos produces 500 CAF/interval, consumes 0
 - CH-771b consumes 100 CAF/interval, produces 0
 - BEN is a hub, all zeros
@@ -192,7 +194,7 @@ Solver walk:
    - Pyrgos `nodeGap(CAF) = 0`, `derivedOutflow = 500`
    - CH-771b `nodeGap(CAF) = 0`, `derivedInflow = 100`
    - BEN `derivedInflow(CAF) = 400`, no demand claim on it, surplus visible as held stock
-5. Shopping list at BEN: does *not* include CAF. Everything BEN owes downstream that CAF isn't involved in gets computed normally; CAF is fully network-supplied.
+5. Shopping list at BEN: does _not_ include CAF. Everything BEN owes downstream that CAF isn't involved in gets computed normally; CAF is fully network-supplied.
 
 ### 3.5 Shopping list
 
@@ -204,7 +206,7 @@ shopping(n, t) = max(0, requiredInflow(n, t) - networkSuppliedInflow(n, t))
 
 where `networkSuppliedInflow` is the portion of inbound `demand` edges the solver has determined the upstream chain can actually fulfill from its own `nativeProduction + stock + transitively-propagated network supply`.
 
-This is *not* an opt-in filter. It's the definition of `nodeGap`. If Pyrgos produces 500 CAF and is only partially saturated by downstream demand, BEN's shopping list for CAF is zero automatically. If Pyrgos is over-committed (demand > production) the shortfall propagates to BEN's shopping list.
+This is _not_ an opt-in filter. It's the definition of `nodeGap`. If Pyrgos produces 500 CAF and is only partially saturated by downstream demand, BEN's shopping list for CAF is zero automatically. If Pyrgos is over-committed (demand > production) the shortfall propagates to BEN's shopping list.
 
 ### 3.6 Where the math lives
 
@@ -220,7 +222,7 @@ New module: `apps/api/src/services/logistics-solver.ts`. Owns `buildGraph`, `com
 **Helpers that get retired:**
 
 - `calculateLineDemand` with its `skipOutputDeduction` flag and `getOutputSupplyAtDest`. The edge-peer-awareness pattern is replaced by the solver.
-- `calculateOutputSupply` with its fair-share allocation. The *policy* survives in §3.3.
+- `calculateOutputSupply` with its fair-share allocation. The _policy_ survives in §3.3.
 - `calculateDeficit`. Replaced by `nodeGap` + `shoppingListFor`.
 
 ## 4. Dashboard response shape
@@ -260,11 +262,11 @@ One endpoint, one response. Frontend derives per-node, per-material, and per-edg
 
 ## 5. UI
 
-The user asked for *fresh* vision. Don't patch the existing three tabs; rethink from scratch around the graph.
+The user asked for _fresh_ vision. Don't patch the existing three tabs; rethink from scratch around the graph.
 
 ### 5.1 Views
 
-1. **Graph map (new, primary).** SVG or Cytoscape.js force-directed / layered layout. Nodes sized by throughput, colored by health (red = `nodeGap > 0`, green = surplus, neutral = balanced). Edges by volume, with `kind` encoded as line style (solid=demand, dashed=surplus, bold=fixed). Filter by material to see that ticker's full network. This is where `Pyrgos → BEN → CH-771b` and the CAF spillover become *visible at a glance*. Click a node to open the inspector; click an edge to edit inline.
+1. **Graph map (new, primary).** SVG or Cytoscape.js force-directed / layered layout. Nodes sized by throughput, colored by health (red = `nodeGap > 0`, green = surplus, neutral = balanced). Edges by volume, with `kind` encoded as line style (solid=demand, dashed=surplus, bold=fixed). Filter by material to see that ticker's full network. This is where `Pyrgos → BEN → CH-771b` and the CAF spillover become _visible at a glance_. Click a node to open the inspector; click an edge to edit inline.
 2. **Node inspector** (replaces Connections tab). Native consumption / production, stock, derived inflow / outflow, per-ticker gap, **Shopping List** button. Underneath, a simple table: inbound edges on the left, outbound edges on the right, each with the solver-computed amount and inline edit.
 3. **Material network** (replaces Materials tab). For a chosen ticker: the subgraph of every node and edge touching it, with per-node gaps. Essentially a filtered view of the graph map.
 4. **Edge editor** (replaces Supply Lines tab). Table of all edges, inline CRUD, TokenSearchInput filtering, bulk ops. Edge creation picks `kind` (demand default, surplus, fixed) and optionally `priority`.
@@ -287,7 +289,7 @@ Minimum viable cut: prove the Pyrgos → BEN → CH-771b chain end-to-end with a
 
 1. **Solver skeleton.** Standalone `logistics-solver.ts`. Unit-test against existing schema by internally mapping `production_output` to a reversed surplus edge and `inputs/consumables/repair` to demand edges. Math validated in isolation before touching DB.
 2. **Graph endpoint.** `GET /supply-planning/graph` returning `LogisticsGraph`. Old `/dashboard` stays alive temporarily.
-3. **New node inspector view.** Don't touch `SupplyManagementView.vue` yet — ship a *new* view (`/supply/logistics` or similar) driven by the graph endpoint. Visually verify BEN's derived demand matches expectations for the CAF scenario.
+3. **New node inspector view.** Don't touch `SupplyManagementView.vue` yet — ship a _new_ view (`/supply/logistics` or similar) driven by the graph endpoint. Visually verify BEN's derived demand matches expectations for the CAF scenario.
 4. **Shopping list button on the new inspector.** Calls existing `shoppingListStore.setMaterials` → router push `/market`. End-to-end validated.
 5. **Schema migration.** Rename columns, drop `lineSource`, create `location_demand_claims`. `recalculateDemandOrders` switches to `solve()`.
 6. **Replace the three tabs.** Rewrite `SupplyManagementView.vue` around the new views. Biggest UI diff.
@@ -322,6 +324,7 @@ All previously-open questions have been resolved. Recorded here for traceability
 ## Files touched (expected)
 
 ### New
+
 - `apps/api/src/services/logistics-solver.ts`
 - `apps/api/src/services/logistics-solver.test.ts`
 - `apps/web/src/views/LogisticsView.vue` (eventual replacement for SupplyManagementView)
@@ -331,6 +334,7 @@ All previously-open questions have been resolved. Recorded here for traceability
 - `apps/web/src/components/logistics/NodeClaimsEditor.vue`
 
 ### Heavy rewrites
+
 - `packages/db/src/schema.ts` — new `logistics_flows`, `location_demand_claims`; drop `supply_chain_lines` + enum
 - `packages/types/src/supply.ts` — new `LogisticsGraph`, `NodeState`, `EdgeState`, `EdgeKind`, `NodeClaim`
 - `apps/api/src/controllers/SupplyPlanningController.ts` — new `/graph` endpoint; old dashboard retired
@@ -339,6 +343,7 @@ All previously-open questions have been resolved. Recorded here for traceability
 - `apps/web/src/views/SupplyManagementView.vue` — replaced by `LogisticsView.vue`
 
 ### Keep as-is
+
 - FIO sync infrastructure (`services/fio/*`, `services/planet-sync.ts`, repair calc)
 - Shopping list store (`stores/shoppingList.ts`) + market handoff
 - `KeyValueAutocomplete`, `TokenSearchInput`, `CommodityDisplay`

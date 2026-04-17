@@ -156,5 +156,4 @@ describe('BuyOrdersController', () => {
       ).rejects.toThrow('targetDays must be > 0')
     })
   })
-
 })

@@ -88,7 +88,7 @@ export class FioSyncController extends Controller {
     )) ?? []) as string[]
     const excludedPlanets = ((await userSettingsService.getSetting(
       userId,
-      'supply.excludedPlanets'
+      'burnRepair.excludedPlanets'
     )) ?? []) as string[]
 
     // Create job

@@ -69,6 +69,8 @@ export interface WorkforceData {
 /** Production line data as stored in the database */
 export interface ProductionData {
   lineType: string
+  /** Number of buildings of this type (max concurrent orders) */
+  capacity: number
   condition: number
   efficiency: number
   orders: {
@@ -115,6 +117,95 @@ export interface SupplyCalculationResult {
   burnMaterials: Record<string, number>
   /** Aggregated production materials by ticker */
   productionMaterials: Record<string, number>
+}
+
+// ==================== Burn & Repair (corp-wide cache) ====================
+
+/** A single cached burn/repair row for one user-planet-ticker combination */
+export interface BurnRepairCacheRow {
+  planetNaturalId: string
+  planetName: string
+  commodityTicker: string
+  burnDaily: number
+  inputsDaily: number
+  repairTotal: number
+  productionDaily: number
+}
+
+/** Per-planet summary returned by GET /burn-repair/my-bases */
+export interface BurnRepairPlanetSummary {
+  planetNaturalId: string
+  planetName: string
+  userPlanetId: number
+  materials: BurnRepairCacheRow[]
+  buildingCount: number
+  workforceSummary: { type: string; population: number; required: number }[]
+  computedAt: string
+}
+
+/** Response for GET /burn-repair/my-bases */
+export interface BurnRepairMyBasesResponse {
+  planets: BurnRepairPlanetSummary[]
+}
+
+/** Aggregated ticker totals for corp-wide views */
+export interface BurnRepairCorpMaterial {
+  commodityTicker: string
+  burnDaily: number
+  inputsDaily: number
+  repairTotal: number
+  productionDaily: number
+}
+
+/** Response for GET /burn-repair/corp */
+export interface BurnRepairCorpResponse {
+  materials: BurnRepairCorpMaterial[]
+  includedUserCount: number
+  /** Users with matching roles whose data is older than 30 days (excluded from aggregation) */
+  staleUserCount: number
+}
+
+/** Response for GET /burn-repair/corp/buildings */
+export interface BurnRepairCorpBuildingsResponse {
+  buildings: Record<string, number>
+  totalBuildings: number
+}
+
+/** Workforce summary entry */
+export interface BurnRepairWorkforceEntry {
+  type: string
+  totalPopulation: number
+  totalRequired: number
+}
+
+/** Response for GET /burn-repair/corp/workforce */
+export interface BurnRepairCorpWorkforceResponse {
+  workforce: BurnRepairWorkforceEntry[]
+}
+
+/** Request body for POST /burn-repair/shopping-list */
+export interface BurnRepairShoppingListRequest {
+  originLocationId: string
+  basePlanetId: string
+  days: number
+}
+
+/** A single shopping list item */
+export interface BurnRepairShoppingListItem {
+  commodityTicker: string
+  demand: number
+  production: number
+  originStock: number
+  baseStock: number
+  gap: number
+}
+
+/** Response for POST /burn-repair/shopping-list */
+export interface BurnRepairShoppingListResponse {
+  items: BurnRepairShoppingListItem[]
+  days: number
+  originLocationId: string
+  basePlanetId: string
 }
 
 // ==================== Logistics Flow Graph ====================

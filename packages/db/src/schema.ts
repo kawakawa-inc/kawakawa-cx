@@ -593,6 +593,40 @@ export const locationDemandClaims = pgTable(
   })
 )
 
+// ==================== BURN/REPAIR CACHE (pre-computed supply needs per user per planet per ticker) ====================
+// Populated during FIO sync. Corp-wide aggregation is a plain SQL SUM query.
+export const burnRepairCache = pgTable(
+  'burn_repair_cache',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    planetNaturalId: varchar('planet_natural_id', { length: 20 }).notNull(),
+    planetName: varchar('planet_name', { length: 100 }).notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    burnDaily: decimal('burn_daily', { precision: 12, scale: 4 }).notNull().default('0'),
+    inputsDaily: decimal('inputs_daily', { precision: 12, scale: 4 }).notNull().default('0'),
+    repairTotal: decimal('repair_total', { precision: 12, scale: 4 }).notNull().default('0'),
+    productionDaily: decimal('production_daily', { precision: 12, scale: 4 })
+      .notNull()
+      .default('0'),
+    computedAt: timestamp('computed_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetTickerIdx: uniqueIndex('burn_repair_cache_user_planet_ticker_idx').on(
+      table.userId,
+      table.planetNaturalId,
+      table.commodityTicker
+    ),
+    userIdx: index('burn_repair_cache_user_idx').on(table.userId),
+    userPlanetIdx: index('burn_repair_cache_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
 // ==================== NOTIFICATIONS ====================
 export const notifications = pgTable(
   'notifications',
@@ -890,6 +924,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [userDiscordProfiles.userId],
   }),
   createdPriceAdjustments: many(priceAdjustments), // Adjustments created by this user
+  burnRepairCache: many(burnRepairCache), // Pre-computed burn/repair needs
 }))
 
 export const userSettingsRelations = relations(userSettings, ({ one }) => ({
@@ -984,6 +1019,7 @@ export const fioUserPlanetsRelations = relations(fioUserPlanets, ({ one, many })
   buildings: many(fioPlanetBuildings),
   workforce: many(fioPlanetWorkforce),
   production: many(fioPlanetProduction),
+  burnRepairCache: many(burnRepairCache),
 }))
 
 export const fioPlanetBuildingsRelations = relations(fioPlanetBuildings, ({ one }) => ({
@@ -1003,6 +1039,17 @@ export const fioPlanetWorkforceRelations = relations(fioPlanetWorkforce, ({ one 
 export const fioPlanetProductionRelations = relations(fioPlanetProduction, ({ one }) => ({
   userPlanet: one(fioUserPlanets, {
     fields: [fioPlanetProduction.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const burnRepairCacheRelations = relations(burnRepairCache, ({ one }) => ({
+  user: one(users, {
+    fields: [burnRepairCache.userId],
+    references: [users.id],
+  }),
+  userPlanet: one(fioUserPlanets, {
+    fields: [burnRepairCache.userPlanetId],
     references: [fioUserPlanets.id],
   }),
 }))

@@ -17,7 +17,8 @@
 
           <div class="text-caption text-medium-emphasis mb-3">
             Connects a single hub to any number of planets. Consumption categories become
-            <strong>demand</strong> edges hub→planet. Production outputs become <strong>surplus</strong>
+            <strong>demand</strong> edges hub→planet. Production outputs become
+            <strong>surplus</strong>
             edges planet→hub. Direction auto-orients per category — you don't need to swap.
           </div>
 
@@ -33,9 +34,7 @@
             label="Hub location"
             density="compact"
             hide-details
-            @update:favorites="
-              settingsStore.updateSetting('market.favoritedLocations', $event)
-            "
+            @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
           />
           <v-btn-toggle
             v-model="hubStorageTypes"
@@ -65,12 +64,8 @@
               </span>
             </div>
             <v-spacer />
-            <v-btn size="x-small" variant="text" @click="selectAllAvailable">
-              Select all
-            </v-btn>
-            <v-btn size="x-small" variant="text" @click="clearSelection">
-              Clear
-            </v-btn>
+            <v-btn size="x-small" variant="text" @click="selectAllAvailable"> Select all </v-btn>
+            <v-btn size="x-small" variant="text" @click="clearSelection"> Clear </v-btn>
             <v-btn
               size="x-small"
               variant="text"
@@ -89,9 +84,7 @@
             label="Select planets"
             density="compact"
             hide-details
-            @update:favorites="
-              settingsStore.updateSetting('market.favoritedLocations', $event)
-            "
+            @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
           />
           <div v-if="availablePlanets.length === 0" class="text-caption text-medium-emphasis mt-2">
             No synced planets yet. Run a planet sync from the old Supply page.
@@ -158,7 +151,8 @@
             </v-btn>
           </div>
           <div class="text-caption text-medium-emphasis mt-2">
-            Direction auto-orients: consumption → hub→planet (demand). Outputs → planet→hub (surplus).
+            Direction auto-orients: consumption → hub→planet (demand). Outputs → planet→hub
+            (surplus).
           </div>
         </v-card-text>
 
@@ -167,12 +161,7 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" :disabled="submitting" @click="close">Cancel</v-btn>
-          <v-btn
-            color="primary"
-            :loading="submitting"
-            :disabled="!canSubmit"
-            @click="handleSubmit"
-          >
+          <v-btn color="primary" :loading="submitting" :disabled="!canSubmit" @click="handleSubmit">
             Create ({{ estimatedOps }})
           </v-btn>
         </v-card-actions>
@@ -259,7 +248,12 @@
                 </div>
                 <div v-else>
                   <div
-                    v-for="group in groupByCategory(pr.created.map(c => ({ category: c.category, ticker: c.flow.commodityTicker })))"
+                    v-for="group in groupByCategory(
+                      pr.created.map(c => ({
+                        category: c.category,
+                        ticker: c.flow.commodityTicker,
+                      }))
+                    )"
                     :key="'c-' + group.category"
                     class="mb-2"
                   >
@@ -315,7 +309,10 @@
                     </v-chip>
                   </div>
 
-                  <div v-if="pr.emptyCategories.length > 0" class="text-caption text-medium-emphasis">
+                  <div
+                    v-if="pr.emptyCategories.length > 0"
+                    class="text-caption text-medium-emphasis"
+                  >
                     No tickers detected for:
                     <v-chip
                       v-for="c in pr.emptyCategories"
@@ -430,9 +427,7 @@ const allPlanets = computed<KeyValueItem[]>(() =>
     .sort((a, b) => a.display.localeCompare(b.display))
 )
 
-const excludedPlanetIds = computed(
-  () => new Set(settingsStore.logisticsExcludedPlanets.value)
-)
+const excludedPlanetIds = computed(() => new Set(settingsStore.logisticsExcludedPlanets.value))
 
 const availablePlanets = computed(() =>
   allPlanets.value.filter(p => !excludedPlanetIds.value.has(p.key))
@@ -458,9 +453,7 @@ const exclusionAutocompleteValue = computed<string[]>({
     const nextSet = new Set(ids)
     // Any newly-excluded planets get dropped from the current selection.
     if (selectedPlanetIds.value.size > 0) {
-      const nextSelection = new Set(
-        [...selectedPlanetIds.value].filter(id => !nextSet.has(id))
-      )
+      const nextSelection = new Set([...selectedPlanetIds.value].filter(id => !nextSet.has(id)))
       selectedPlanetIds.value = nextSelection
     }
     settingsStore.updateSetting('logistics.excludedPlanets', ids)
@@ -490,7 +483,7 @@ function hubDefaultStorage(locationId: string): string[] {
 
 watch(
   () => hubLocationId.value,
-  (loc) => {
+  loc => {
     hubStorageTypes.value = hubDefaultStorage(loc)
   }
 )
@@ -499,7 +492,7 @@ watch(
 
 watch(
   () => props.modelValue,
-  (open) => {
+  open => {
     if (!open) return
     phase.value = 'form'
     result.value = null
@@ -509,12 +502,7 @@ watch(
     planetStorageTypes.value = ['STORE']
     selectedPlanetIds.value = new Set()
     exclusionsOpen.value = false
-    selectedCategories.value = new Set([
-      'consumables',
-      'repair',
-      'inputs',
-      'production_output',
-    ])
+    selectedCategories.value = new Set(['consumables', 'repair', 'inputs', 'production_output'])
   }
 )
 

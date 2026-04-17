@@ -73,11 +73,7 @@ function makeDistanceFn(table: Record<string, number> = {}) {
   }
 }
 
-function runSolver(
-  nodes: SolverNode[],
-  edges: SolverEdge[],
-  overrides: Partial<SolverInput> = {}
-) {
+function runSolver(nodes: SolverNode[], edges: SolverEdge[], overrides: Partial<SolverInput> = {}) {
   return solve({
     nodes,
     edges,
@@ -263,10 +259,7 @@ describe('logistics-solver: claims as nativeConsumption', () => {
 
 describe('logistics-solver: fixed edges', () => {
   it('fixed edges take their literal amount regardless of downstream need', () => {
-    const nodes = [
-      makeNode('Pyrgos', { nativeProduction: { CAF: 500 } }),
-      makeNode('BEN'),
-    ]
+    const nodes = [makeNode('Pyrgos', { nativeProduction: { CAF: 500 } }), makeNode('BEN')]
     const edges = [makeEdge(1, 'Pyrgos', 'BEN', 'CAF', 'fixed', { amountOverride: 200 })]
     const g = runSolver(nodes, edges)
     expect(g.edges[0].amount).toBe(200)
@@ -323,10 +316,7 @@ describe('logistics-solver: priority waterfall allocation', () => {
 describe('logistics-solver: cycle detection', () => {
   it('emits a warning when nodes form a cycle within the demand graph', () => {
     const nodes = [makeNode('A'), makeNode('B')]
-    const edges = [
-      makeEdge(1, 'A', 'B', 'CAF', 'demand'),
-      makeEdge(2, 'B', 'A', 'CAF', 'demand'),
-    ]
+    const edges = [makeEdge(1, 'A', 'B', 'CAF', 'demand'), makeEdge(2, 'B', 'A', 'CAF', 'demand')]
     const g = runSolver(nodes, edges)
     expect(g.warnings.some(w => w.toLowerCase().includes('cycle'))).toBe(true)
   })

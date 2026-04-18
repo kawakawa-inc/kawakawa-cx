@@ -12,6 +12,7 @@ vi.mock('../db/index.js', () => ({
   },
   prices: {
     priceListCode: 'priceListCode',
+    version: 'version',
     commodityTicker: 'commodityTicker',
     locationId: 'locationId',
     price: 'price',
@@ -23,7 +24,17 @@ vi.mock('../db/index.js', () => ({
     name: 'name',
     type: 'type',
     currency: 'currency',
+    currentVersion: 'currentVersion',
+  },
+  priceListVersions: {
+    id: 'id',
+    priceListCode: 'priceListCode',
+    version: 'version',
+    label: 'label',
+    description: 'description',
     defaultLocationId: 'defaultLocationId',
+    promotedAt: 'promotedAt',
+    createdAt: 'createdAt',
   },
   priceAdjustments: {
     id: 'id',
@@ -53,8 +64,18 @@ describe('price-calculator', () => {
     vi.clearAllMocks()
   })
 
+  // Helper to create a mock for the version resolution query (select → from → where → limit)
+  function createVersionResolutionMock(currentVersion = 1) {
+    return {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([{ currentVersion }]),
+    }
+  }
+
   describe('calculateEffectivePrice', () => {
     it('should return null when no base price exists', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -62,7 +83,9 @@ describe('price-calculator', () => {
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([]),
       }
-      vi.mocked(db.select).mockReturnValue(mockBasePriceSelect as any)
+      vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
+        .mockReturnValueOnce(mockBasePriceSelect as any)
 
       const result = await calculateEffectivePrice('KAWA', 'H2O', 'BEN', 'CIS')
 
@@ -70,6 +93,7 @@ describe('price-calculator', () => {
     })
 
     it('should return base price when no adjustments apply', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -78,6 +102,7 @@ describe('price-calculator', () => {
         limit: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -98,6 +123,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -107,9 +133,11 @@ describe('price-calculator', () => {
       expect(result!.basePrice).toBe(100)
       expect(result!.finalPrice).toBe(100)
       expect(result!.adjustments).toHaveLength(0)
+      expect(result!.version).toBe(1)
     })
 
     it('should apply percentage adjustment correctly', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -118,6 +146,7 @@ describe('price-calculator', () => {
         limit: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -150,6 +179,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -163,6 +193,7 @@ describe('price-calculator', () => {
     })
 
     it('should apply fixed adjustment correctly', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -170,7 +201,8 @@ describe('price-calculator', () => {
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([
           {
-            exchangeCode: 'CI1',
+            priceListCode: 'CI1',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -190,7 +222,7 @@ describe('price-calculator', () => {
         orderBy: vi.fn().mockResolvedValue([
           {
             id: 1,
-            exchangeCode: null,
+            priceListCode: null,
             commodityTicker: null,
             locationId: 'BEN',
             currency: null,
@@ -203,6 +235,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -216,6 +249,7 @@ describe('price-calculator', () => {
     })
 
     it('should apply multiple adjustments in priority order', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -224,6 +258,7 @@ describe('price-calculator', () => {
         limit: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -254,7 +289,7 @@ describe('price-calculator', () => {
           },
           {
             id: 2,
-            exchangeCode: null,
+            priceListCode: null,
             commodityTicker: null,
             locationId: 'BEN',
             currency: null,
@@ -267,6 +302,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -283,6 +319,7 @@ describe('price-calculator', () => {
     })
 
     it('should apply negative percentage adjustment (discount)', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -291,6 +328,7 @@ describe('price-calculator', () => {
         limit: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'UV-351a',
@@ -323,6 +361,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -335,6 +374,7 @@ describe('price-calculator', () => {
     })
 
     it('should handle case insensitive input', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -343,6 +383,7 @@ describe('price-calculator', () => {
         limit: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -363,6 +404,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -375,6 +417,7 @@ describe('price-calculator', () => {
 
   describe('calculateEffectivePrices', () => {
     it('should return empty array when no base prices exist', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -382,8 +425,16 @@ describe('price-calculator', () => {
         where: vi.fn().mockReturnThis(),
         orderBy: vi.fn().mockResolvedValue([]),
       }
+      const mockAdjustmentsSelect = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockResolvedValue([]),
+      }
 
-      vi.mocked(db.select).mockReturnValue(mockBasePriceSelect as any)
+      vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
+        .mockReturnValueOnce(mockBasePriceSelect as any)
+        .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
       const result = await calculateEffectivePrices('KAWA', 'BEN', 'CIS')
 
@@ -391,6 +442,7 @@ describe('price-calculator', () => {
     })
 
     it('should calculate effective prices for multiple commodities', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -399,6 +451,7 @@ describe('price-calculator', () => {
         orderBy: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -410,6 +463,7 @@ describe('price-calculator', () => {
           },
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'RAT',
             commodityName: 'Rations',
             locationId: 'BEN',
@@ -441,6 +495,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -456,6 +511,7 @@ describe('price-calculator', () => {
     })
 
     it('should apply commodity-specific adjustments only to matching commodities', async () => {
+      const mockVersionSelect = createVersionResolutionMock()
       const mockBasePriceSelect = {
         from: vi.fn().mockReturnThis(),
         innerJoin: vi.fn().mockReturnThis(),
@@ -464,6 +520,7 @@ describe('price-calculator', () => {
         orderBy: vi.fn().mockResolvedValue([
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'H2O',
             commodityName: 'Water',
             locationId: 'BEN',
@@ -475,6 +532,7 @@ describe('price-calculator', () => {
           },
           {
             priceListCode: 'KAWA',
+            version: 1,
             commodityTicker: 'RAT',
             commodityName: 'Rations',
             locationId: 'BEN',
@@ -506,6 +564,7 @@ describe('price-calculator', () => {
       }
 
       vi.mocked(db.select)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockBasePriceSelect as any)
         .mockReturnValueOnce(mockAdjustmentsSelect as any)
 
@@ -551,11 +610,12 @@ describe('price-calculator', () => {
 
     it('should batch fetch prices for multiple orders in 3 queries', async () => {
       const priceListMock = createTerminalWhereMock([
-        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null, currentVersion: 1 },
       ])
       const basePriceMock = createTerminalWhereMock([
         {
           priceListCode: 'KAWA',
+          version: 1,
           commodityTicker: 'H2O',
           commodityName: 'Water',
           locationId: 'BEN',
@@ -567,6 +627,7 @@ describe('price-calculator', () => {
         },
         {
           priceListCode: 'KAWA',
+          version: 1,
           commodityTicker: 'RAT',
           commodityName: 'Rations',
           locationId: 'BEN',
@@ -597,11 +658,12 @@ describe('price-calculator', () => {
 
     it('should handle fallback to default location', async () => {
       const priceListMock = createTerminalWhereMock([
-        { code: 'KAWA', currency: 'CIS', defaultLocationId: 'BEN' },
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: 'BEN', currentVersion: 1 },
       ])
       const basePriceMock = createTerminalWhereMock([
         {
           priceListCode: 'KAWA',
+          version: 1,
           commodityTicker: 'H2O',
           commodityName: 'Water',
           locationId: 'BEN',
@@ -650,11 +712,12 @@ describe('price-calculator', () => {
 
     it('should apply adjustments correctly in batch', async () => {
       const priceListMock = createTerminalWhereMock([
-        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null, currentVersion: 1 },
       ])
       const basePriceMock = createTerminalWhereMock([
         {
           priceListCode: 'KAWA',
+          version: 1,
           commodityTicker: 'H2O',
           commodityName: 'Water',
           locationId: 'BEN',
@@ -695,11 +758,12 @@ describe('price-calculator', () => {
 
     it('should deduplicate requests with same key', async () => {
       const priceListMock = createTerminalWhereMock([
-        { code: 'KAWA', currency: 'CIS', defaultLocationId: null },
+        { code: 'KAWA', currency: 'CIS', defaultLocationId: null, currentVersion: 1 },
       ])
       const basePriceMock = createTerminalWhereMock([
         {
           priceListCode: 'KAWA',
+          version: 1,
           commodityTicker: 'H2O',
           commodityName: 'Water',
           locationId: 'BEN',

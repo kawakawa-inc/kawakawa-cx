@@ -69,13 +69,14 @@
           />
 
           <v-autocomplete
+            v-if="!isEdit"
             v-model="form.defaultLocationId"
             :items="locationOptions"
             item-title="display"
             item-value="key"
-            label="Default Location"
-            clearable
-            hint="Optional default location for prices"
+            label="Default Location *"
+            :rules="[v => !!v || 'Default location is required']"
+            hint="Required: base location for the initial version (rebase per version later)"
             persistent-hint
             class="mb-4"
           />
@@ -185,10 +186,14 @@ const save = async () => {
         name: form.value.name,
         description: form.value.description,
         currency: form.value.currency,
-        defaultLocationId: form.value.defaultLocationId,
         isActive: form.value.isActive,
       })
     } else {
+      if (!form.value.defaultLocationId) {
+        errorMessage.value = 'Default location is required'
+        saving.value = false
+        return
+      }
       result = await api.priceLists.create({
         code: form.value.code.toUpperCase(),
         name: form.value.name,

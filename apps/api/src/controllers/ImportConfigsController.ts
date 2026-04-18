@@ -2,14 +2,17 @@ import {
   Body,
   Controller,
   Delete,
+  FormField,
   Get,
   Path,
   Post,
   Put,
+  Query,
   Route,
   Security,
   SuccessResponse,
   Tags,
+  UploadedFile,
 } from 'tsoa'
 import { db, importConfigs, priceLists, fioLocations, fioCommodities, prices } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
@@ -26,6 +29,7 @@ import {
   type CsvPreviewResult,
 } from '../services/csv/import.js'
 import type { CsvFieldMapping } from '../services/csv/parser.js'
+import { resolveVersion, resolveVersionContext } from '../services/price-version.js'
 
 export type ImportSourceType = 'csv' | 'google_sheets'
 export type ImportFormat = 'flat' | 'pivot' | 'kawa'
@@ -33,6 +37,7 @@ export type ImportFormat = 'flat' | 'pivot' | 'kawa'
 interface ImportConfigResponse {
   id: number
   priceListCode: string
+  version: number
   name: string
   sourceType: ImportSourceType
   format: ImportFormat
@@ -45,6 +50,7 @@ interface ImportConfigResponse {
 
 interface CreateImportConfigRequest {
   priceListCode: string
+  version?: number // Target version (default: currentVersion)
   name: string
   sourceType: ImportSourceType
   format: ImportFormat
@@ -91,6 +97,7 @@ export class ImportConfigsController extends Controller {
       .select({
         id: importConfigs.id,
         priceListCode: importConfigs.priceListCode,
+        version: importConfigs.version,
         name: importConfigs.name,
         sourceType: importConfigs.sourceType,
         format: importConfigs.format,
@@ -120,6 +127,7 @@ export class ImportConfigsController extends Controller {
       .select({
         id: importConfigs.id,
         priceListCode: importConfigs.priceListCode,
+        version: importConfigs.version,
         name: importConfigs.name,
         sourceType: importConfigs.sourceType,
         format: importConfigs.format,
@@ -164,9 +172,9 @@ export class ImportConfigsController extends Controller {
       }
     }
 
-    // Validate price list exists
+    // Validate price list exists and get current version
     const priceListExists = await db
-      .select({ code: priceLists.code })
+      .select({ code: priceLists.code, currentVersion: priceLists.currentVersion })
       .from(priceLists)
       .where(eq(priceLists.code, priceListCode))
       .limit(1)
@@ -175,10 +183,13 @@ export class ImportConfigsController extends Controller {
       throw BadRequest(`Price list '${priceListCode}' not found`)
     }
 
+    const targetVersion = body.version ?? priceListExists[0].currentVersion
+
     const [inserted] = await db
       .insert(importConfigs)
       .values({
         priceListCode,
+        version: targetVersion,
         name: body.name,
         sourceType: body.sourceType,
         format: body.format,
@@ -266,7 +277,10 @@ export class ImportConfigsController extends Controller {
    */
   @Post('{id}/sync')
   @Security('jwt', ['prices.import'])
-  public async syncConfig(@Path() id: number): Promise<CsvImportResult | PivotImportResult> {
+  public async syncConfig(
+    @Path() id: number,
+    @Query() version?: number
+  ): Promise<CsvImportResult | PivotImportResult> {
     // Get the configuration
     const config = await this.getConfig(id)
 
@@ -277,19 +291,66 @@ export class ImportConfigsController extends Controller {
 
     // For pivot format, use pivot import
     if (config.format === 'pivot') {
-      return this.syncPivotConfig(config)
+      return this.syncPivotConfig(config, version)
     }
 
     // For kawa format, use kawa import (2-row per commodity format)
     if (config.format === 'kawa') {
-      return this.syncKawaConfig(config)
+      return this.syncKawaConfig(config, version)
     }
 
     // For flat format, use standard CSV import
-    return this.syncFlatConfig(config)
+    return this.syncFlatConfig(config, version)
   }
 
-  private async syncFlatConfig(config: ImportConfigResponse): Promise<CsvImportResult> {
+  /**
+   * Sync a CSV-source configuration by uploading a file
+   * Uses the stored field mapping to import the uploaded CSV
+   * @param id The configuration ID
+   * @param file The CSV file to import
+   * @param version Optional target version (defaults to current)
+   */
+  @Post('{id}/sync/upload')
+  @Security('jwt', ['prices.import'])
+  public async syncConfigUpload(
+    @Path() id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @FormField() version?: string
+  ): Promise<CsvImportResult> {
+    const config = await this.getConfig(id)
+
+    if (config.sourceType !== 'csv') {
+      throw BadRequest('Upload sync is only supported for CSV-source configurations')
+    }
+    if (config.format !== 'flat') {
+      throw BadRequest('Upload sync is only supported for flat format')
+    }
+
+    const fieldMapping = (config.config?.fieldMapping as CsvFieldMapping | undefined) ?? {
+      ticker: 'Ticker',
+      price: 'Price',
+      location: 'Location',
+    }
+
+    const versionNum = version !== undefined && version !== '' ? parseInt(version, 10) : undefined
+    const context = await resolveVersionContext(config.priceListCode, versionNum)
+
+    return importCsvPrices(
+      file.buffer.toString('utf-8'),
+      {
+        exchangeCode: config.priceListCode,
+        mapping: fieldMapping,
+        locationDefault: context.defaultLocationId,
+        currencyDefault: context.currency,
+      },
+      context.version
+    )
+  }
+
+  private async syncFlatConfig(
+    config: ImportConfigResponse,
+    version?: number
+  ): Promise<CsvImportResult> {
     let csvContent: string
 
     if (config.sourceType === 'google_sheets') {
@@ -312,18 +373,8 @@ export class ImportConfigsController extends Controller {
       throw BadRequest('CSV import not yet implemented for non-sheets sources')
     }
 
-    // Get the price list to check for default location and currency
-    const priceList = await db
-      .select({
-        defaultLocationId: priceLists.defaultLocationId,
-        currency: priceLists.currency,
-      })
-      .from(priceLists)
-      .where(eq(priceLists.code, config.priceListCode))
-      .limit(1)
-
-    const defaultLocationId = priceList[0]?.defaultLocationId ?? undefined
-    const defaultCurrency = priceList[0]?.currency ?? undefined
+    // Resolve version context: version + that version's required default location + currency
+    const context = await resolveVersionContext(config.priceListCode, version)
 
     // Get field mapping from config, or use auto-detection
     const fieldMapping = (config.config?.fieldMapping as CsvFieldMapping) ?? {
@@ -332,16 +383,23 @@ export class ImportConfigsController extends Controller {
       location: 'Location',
     }
 
-    // Import the data, using price list's defaults as fallback
-    return importCsvPrices(csvContent, {
-      exchangeCode: config.priceListCode,
-      mapping: fieldMapping,
-      locationDefault: defaultLocationId,
-      currencyDefault: defaultCurrency,
-    })
+    // Import the data, using the version's default location/currency
+    return importCsvPrices(
+      csvContent,
+      {
+        exchangeCode: config.priceListCode,
+        mapping: fieldMapping,
+        locationDefault: context.defaultLocationId,
+        currencyDefault: context.currency,
+      },
+      context.version
+    )
   }
 
-  private async syncPivotConfig(config: ImportConfigResponse): Promise<PivotImportResult> {
+  private async syncPivotConfig(
+    config: ImportConfigResponse,
+    version?: number
+  ): Promise<PivotImportResult> {
     if (config.sourceType !== 'google_sheets' || !config.sheetsUrl) {
       throw BadRequest('Pivot format requires Google Sheets source with URL')
     }
@@ -437,17 +495,19 @@ export class ImportConfigsController extends Controller {
 
     // Actually import the prices to the database
     const priceListCode = config.priceListCode
+    const targetVersion = await resolveVersion(priceListCode, version)
     let imported = 0
     let updated = 0
 
     for (const record of priceRecords) {
-      // Check if price already exists
+      // Check if price already exists for this version
       const existing = await db
         .select({ id: prices.id })
         .from(prices)
         .where(
           and(
             eq(prices.priceListCode, priceListCode),
+            eq(prices.version, targetVersion),
             eq(prices.commodityTicker, record.ticker),
             eq(prices.locationId, record.locationId)
           )
@@ -470,6 +530,7 @@ export class ImportConfigsController extends Controller {
         // Insert new price
         await db.insert(prices).values({
           priceListCode,
+          version: targetVersion,
           commodityTicker: record.ticker,
           locationId: record.locationId,
           price: record.price.toFixed(2),
@@ -493,7 +554,10 @@ export class ImportConfigsController extends Controller {
    * Row 1: Contains metadata including ticker in column B, location names/IDs in columns D+
    * Row 2: Contains prices corresponding to each location column
    */
-  private async syncKawaConfig(config: ImportConfigResponse): Promise<PivotImportResult> {
+  private async syncKawaConfig(
+    config: ImportConfigResponse,
+    version?: number
+  ): Promise<PivotImportResult> {
     if (config.sourceType !== 'google_sheets' || !config.sheetsUrl) {
       throw BadRequest('KAWA format requires Google Sheets source with URL')
     }
@@ -512,7 +576,13 @@ export class ImportConfigsController extends Controller {
       throw BadRequest(fetchResult.error ?? 'Failed to fetch Google Sheet')
     }
 
-    return this.parseKawaFormat(fetchResult.content!, config.priceListCode, config.sheetsUrl, true)
+    return this.parseKawaFormat(
+      fetchResult.content!,
+      config.priceListCode,
+      config.sheetsUrl,
+      true,
+      version
+    )
   }
 
   /**
@@ -537,7 +607,8 @@ export class ImportConfigsController extends Controller {
     csvContent: string,
     priceListCode: string,
     sourceReference: string,
-    writeToDb: boolean
+    writeToDb: boolean,
+    version?: number
   ): Promise<PivotImportResult> {
     // Parse CSV properly handling quoted fields with commas
     const lines = this.parseKawaCsvLines(csvContent)
@@ -645,17 +716,19 @@ export class ImportConfigsController extends Controller {
     }
 
     // Actually import the prices to the database
+    const kawaTargetVersion = await resolveVersion(priceListCode, version)
     let imported = 0
     let updated = 0
 
     for (const record of priceRecords) {
-      // Check if price already exists
+      // Check if price already exists for this version
       const existing = await db
         .select({ id: prices.id })
         .from(prices)
         .where(
           and(
             eq(prices.priceListCode, priceListCode),
+            eq(prices.version, kawaTargetVersion),
             eq(prices.commodityTicker, record.ticker),
             eq(prices.locationId, record.locationId)
           )
@@ -678,6 +751,7 @@ export class ImportConfigsController extends Controller {
         // Insert new price
         await db.insert(prices).values({
           priceListCode,
+          version: kawaTargetVersion,
           commodityTicker: record.ticker,
           locationId: record.locationId,
           price: record.price.toFixed(2),
@@ -909,18 +983,8 @@ export class ImportConfigsController extends Controller {
       throw BadRequest('Preview not yet implemented for non-sheets sources')
     }
 
-    // Get the price list to check for default location and currency
-    const priceList = await db
-      .select({
-        defaultLocationId: priceLists.defaultLocationId,
-        currency: priceLists.currency,
-      })
-      .from(priceLists)
-      .where(eq(priceLists.code, config.priceListCode))
-      .limit(1)
-
-    const defaultLocationId = priceList[0]?.defaultLocationId ?? undefined
-    const defaultCurrency = priceList[0]?.currency ?? undefined
+    // Resolve the version's required default location + currency
+    const context = await resolveVersionContext(config.priceListCode)
 
     const fieldMapping = (config.config?.fieldMapping as CsvFieldMapping) ?? {
       ticker: 'Ticker',
@@ -928,12 +992,12 @@ export class ImportConfigsController extends Controller {
       location: 'Location',
     }
 
-    // Preview the data, using price list's defaults as fallback
+    // Preview the data using the version's default location/currency
     return previewCsvImport(csvContent, {
       exchangeCode: config.priceListCode,
       mapping: fieldMapping,
-      locationDefault: defaultLocationId,
-      currencyDefault: defaultCurrency,
+      locationDefault: context.defaultLocationId,
+      currencyDefault: context.currency,
     })
   }
 }
@@ -1102,17 +1166,19 @@ export class GoogleSheetsImportController extends Controller {
     }
 
     // Actually import the prices to the database
+    const sheetsTargetVersion = await resolveVersion(priceListCode)
     let imported = 0
     let updated = 0
 
     for (const record of priceRecords) {
-      // Check if price already exists
+      // Check if price already exists for this version
       const existing = await db
         .select({ id: prices.id })
         .from(prices)
         .where(
           and(
             eq(prices.priceListCode, priceListCode),
+            eq(prices.version, sheetsTargetVersion),
             eq(prices.commodityTicker, record.ticker),
             eq(prices.locationId, record.locationId)
           )
@@ -1135,6 +1201,7 @@ export class GoogleSheetsImportController extends Controller {
         // Insert new price
         await db.insert(prices).values({
           priceListCode,
+          version: sheetsTargetVersion,
           commodityTicker: record.ticker,
           locationId: record.locationId,
           price: record.price.toFixed(2),

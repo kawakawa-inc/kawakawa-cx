@@ -1,8 +1,8 @@
 // Sync exchange prices from FIO API to prices table
 // Fetches market prices for all commodities across all FIO exchanges (CI1, NC1, IC1, AI1)
 
-import { eq, sql, inArray } from 'drizzle-orm'
-import { db, prices, priceLists, fioCommodities } from '../../db/index.js'
+import { eq, and, sql, inArray } from 'drizzle-orm'
+import { db, prices, priceLists, priceListVersions, fioCommodities } from '../../db/index.js'
 import { fioClient } from './client.js'
 import { parseCsvTyped } from './csv-parser.js'
 import { createLogger } from '../../utils/logger.js'
@@ -58,7 +58,7 @@ export interface FioExchangesSyncResult {
  */
 interface FioPriceListInfo {
   code: string
-  defaultLocationId: string | null
+  defaultLocationId: string
   currency: Currency
 }
 
@@ -66,13 +66,18 @@ interface FioPriceListInfo {
  * Get all FIO price lists from database (type='fio')
  */
 async function getFioPriceLists(): Promise<FioPriceListInfo[]> {
+  // FIO price lists are locked at version 1 — read defaultLocationId from that version
   const results = await db
     .select({
       code: priceLists.code,
-      defaultLocationId: priceLists.defaultLocationId,
+      defaultLocationId: priceListVersions.defaultLocationId,
       currency: priceLists.currency,
     })
     .from(priceLists)
+    .innerJoin(
+      priceListVersions,
+      and(eq(priceListVersions.priceListCode, priceLists.code), eq(priceListVersions.version, 1))
+    )
     .where(eq(priceLists.type, 'fio'))
 
   return results as FioPriceListInfo[]
@@ -174,12 +179,6 @@ export async function syncFioExchangePrices(
         exchangeCode: priceList.code,
       }
 
-      // If price list has no default location (shouldn't happen for FIO price lists), skip
-      if (!priceList.defaultLocationId) {
-        result.errors.push(`Price list ${priceList.code} has no default location configured`)
-        continue
-      }
-
       log.info(
         { priceList: priceList.code, tickerCount: allPrices.length },
         'Processing exchange prices'
@@ -203,11 +202,12 @@ export async function syncFioExchangePrices(
         }
 
         try {
-          // Upsert price into prices table
+          // Upsert price into prices table (FIO always uses version 1)
           await db
             .insert(prices)
             .values({
               priceListCode: priceList.code,
+              version: 1,
               commodityTicker: priceData.Ticker,
               locationId: priceList.defaultLocationId,
               price: price.toFixed(2),
@@ -215,7 +215,12 @@ export async function syncFioExchangePrices(
               sourceReference: `FIO ${priceField} - ${syncedAt.toISOString()}`,
             })
             .onConflictDoUpdate({
-              target: [prices.priceListCode, prices.commodityTicker, prices.locationId],
+              target: [
+                prices.priceListCode,
+                prices.version,
+                prices.commodityTicker,
+                prices.locationId,
+              ],
               set: {
                 price: price.toFixed(2),
                 source: 'fio_exchange',

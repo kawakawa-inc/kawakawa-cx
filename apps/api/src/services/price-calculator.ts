@@ -3,11 +3,13 @@ import {
   db,
   prices,
   priceLists,
+  priceListVersions,
   priceAdjustments,
   fioCommodities,
   fioLocations,
 } from '../db/index.js'
 import { eq, and, or, isNull, lte, gt, inArray } from 'drizzle-orm'
+import { resolveVersionContext } from './price-version.js'
 
 export type PriceSource = 'manual' | 'csv_import' | 'google_sheets' | 'fio_exchange'
 export type AdjustmentType = 'percentage' | 'fixed'
@@ -22,6 +24,7 @@ export interface AppliedAdjustment {
 
 export interface EffectivePrice {
   priceListCode: string
+  version: number
   commodityTicker: string
   commodityName: string | null
   locationId: string
@@ -42,21 +45,36 @@ export interface EffectivePrice {
 /**
  * Calculate the effective price for a commodity at a specific price list and location
  * Applies all matching adjustments in priority order
+ *
+ * @param version - Optional version number. If omitted, uses the price list's currentVersion.
  */
 export async function calculateEffectivePrice(
   exchange: string,
   ticker: string,
   locationId: string,
-  currency: Currency
+  currency: Currency,
+  version?: number
 ): Promise<EffectivePrice | null> {
   const priceListCode = exchange.toUpperCase()
   const commodityTicker = ticker.toUpperCase()
   const location = locationId // Location IDs are case-sensitive (e.g., KW-020c)
 
+  // Resolve version: if not provided, look up the price list's currentVersion
+  let resolvedVersion = version
+  if (resolvedVersion === undefined) {
+    const plResult = await db
+      .select({ currentVersion: priceLists.currentVersion })
+      .from(priceLists)
+      .where(eq(priceLists.code, priceListCode))
+      .limit(1)
+    resolvedVersion = plResult[0]?.currentVersion ?? 1
+  }
+
   // Get the base price from prices table, joined with priceLists for currency
   const basePriceResult = await db
     .select({
       priceListCode: prices.priceListCode,
+      version: prices.version,
       commodityTicker: prices.commodityTicker,
       commodityName: fioCommodities.name,
       locationId: prices.locationId,
@@ -73,6 +91,7 @@ export async function calculateEffectivePrice(
     .where(
       and(
         eq(prices.priceListCode, priceListCode),
+        eq(prices.version, resolvedVersion),
         eq(prices.commodityTicker, commodityTicker),
         eq(prices.locationId, location),
         eq(priceLists.currency, currency)
@@ -163,6 +182,7 @@ export async function calculateEffectivePrice(
 
   return {
     priceListCode: baseRecord.priceListCode,
+    version: baseRecord.version,
     commodityTicker: baseRecord.commodityTicker,
     commodityName: baseRecord.commodityName,
     locationId: baseRecord.locationId,
@@ -189,34 +209,32 @@ export async function calculateEffectivePriceWithFallback(
   priceListCode: string,
   ticker: string,
   locationId: string,
-  _currency: Currency // Ignored - we use the price list's currency
+  _currency: Currency, // Ignored - we use the price list's currency
+  version?: number
 ): Promise<EffectivePrice | null> {
-  // First get the price list's currency and default location
-  const priceListResult = await db
-    .select({
-      currency: priceLists.currency,
-      defaultLocationId: priceLists.defaultLocationId,
-    })
-    .from(priceLists)
-    .where(eq(priceLists.code, priceListCode.toUpperCase()))
-    .limit(1)
-
-  if (priceListResult.length === 0) {
+  // Resolve version + the version's required default location + price list's currency
+  let context: { version: number; defaultLocationId: string; currency: Currency }
+  try {
+    context = await resolveVersionContext(priceListCode, version)
+  } catch {
     return null
   }
 
-  const priceListCurrency = priceListResult[0].currency
-  const defaultLocationId = priceListResult[0].defaultLocationId
-
   // First try the requested location with the price list's currency
-  let result = await calculateEffectivePrice(priceListCode, ticker, locationId, priceListCurrency)
+  let result = await calculateEffectivePrice(
+    priceListCode,
+    ticker,
+    locationId,
+    context.currency,
+    context.version
+  )
 
   if (result !== null) {
     return result
   }
 
-  // If no default location or same as requested, no fallback possible
-  if (!defaultLocationId || defaultLocationId === locationId) {
+  // Same location as default, no fallback possible
+  if (context.defaultLocationId === locationId) {
     return null
   }
 
@@ -224,8 +242,9 @@ export async function calculateEffectivePriceWithFallback(
   result = await calculateEffectivePrice(
     priceListCode,
     ticker,
-    defaultLocationId,
-    priceListCurrency
+    context.defaultLocationId,
+    context.currency,
+    context.version
   )
 
   // Mark result as fallback with the original requested location
@@ -242,19 +261,34 @@ export async function calculateEffectivePriceWithFallback(
 
 /**
  * Calculate effective prices for all commodities at a specific price list and location
+ *
+ * @param version - Optional version number. If omitted, uses the price list's currentVersion.
  */
 export async function calculateEffectivePrices(
   exchange: string,
   locationId: string,
-  currency: Currency
+  currency: Currency,
+  version?: number
 ): Promise<EffectivePrice[]> {
   const priceListCode = exchange.toUpperCase()
   const location = locationId // Location IDs are case-sensitive (e.g., KW-020c)
 
-  // Get all base prices for this price list/location/currency
+  // Resolve version: if not provided, look up the price list's currentVersion
+  let resolvedVersion = version
+  if (resolvedVersion === undefined) {
+    const plResult = await db
+      .select({ currentVersion: priceLists.currentVersion })
+      .from(priceLists)
+      .where(eq(priceLists.code, priceListCode))
+      .limit(1)
+    resolvedVersion = plResult[0]?.currentVersion ?? 1
+  }
+
+  // Get all base prices for this price list/version/location/currency
   const basePriceResults = await db
     .select({
       priceListCode: prices.priceListCode,
+      version: prices.version,
       commodityTicker: prices.commodityTicker,
       commodityName: fioCommodities.name,
       locationId: prices.locationId,
@@ -271,6 +305,7 @@ export async function calculateEffectivePrices(
     .where(
       and(
         eq(prices.priceListCode, priceListCode),
+        eq(prices.version, resolvedVersion),
         eq(prices.locationId, location),
         eq(priceLists.currency, currency)
       )
@@ -349,6 +384,7 @@ export async function calculateEffectivePrices(
 
     results.push({
       priceListCode: baseRecord.priceListCode,
+      version: baseRecord.version,
       commodityTicker: baseRecord.commodityTicker,
       commodityName: baseRecord.commodityName,
       locationId: baseRecord.locationId,
@@ -442,21 +478,33 @@ export async function calculateEffectivePriceBatch(
     locationId: r.locationId,
   }))
 
-  // Query 1: Fetch all needed price lists in one query
+  // Query 1: Fetch all needed price lists joined with their current version's default location
   const uniqueCodes = [...new Set(normalized.map(r => r.priceListCode))]
   const priceListRows = await db
     .select({
       code: priceLists.code,
       currency: priceLists.currency,
-      defaultLocationId: priceLists.defaultLocationId,
+      defaultLocationId: priceListVersions.defaultLocationId,
+      currentVersion: priceLists.currentVersion,
     })
     .from(priceLists)
+    .innerJoin(
+      priceListVersions,
+      and(
+        eq(priceListVersions.priceListCode, priceLists.code),
+        eq(priceListVersions.version, priceLists.currentVersion)
+      )
+    )
     .where(inArray(priceLists.code, uniqueCodes))
 
   const priceListMap = new Map(
     priceListRows.map(r => [
       r.code,
-      { currency: r.currency, defaultLocationId: r.defaultLocationId },
+      {
+        currency: r.currency,
+        defaultLocationId: r.defaultLocationId,
+        currentVersion: r.currentVersion,
+      },
     ])
   )
 
@@ -465,7 +513,7 @@ export async function calculateEffectivePriceBatch(
   for (const req of normalized) {
     allTuples.add(`${req.priceListCode}:${req.ticker}:${req.locationId}`)
     const pl = priceListMap.get(req.priceListCode)
-    if (pl?.defaultLocationId && pl.defaultLocationId !== req.locationId) {
+    if (pl && pl.defaultLocationId !== req.locationId) {
       allTuples.add(`${req.priceListCode}:${req.ticker}:${pl.defaultLocationId}`)
     }
   }
@@ -475,10 +523,18 @@ export async function calculateEffectivePriceBatch(
   const allTickers = [...new Set([...allTuples].map(t => t.split(':')[1]))]
   const allLocationIds = [...new Set([...allTuples].map(t => t.split(':').slice(2).join(':')))]
 
-  // Query 2: Fetch all base prices in one query
+  // Build version filter conditions — each price list uses its own currentVersion
+  const versionConditions = uniqueCodes.map(code => {
+    const pl = priceListMap.get(code)
+    const ver = pl?.currentVersion ?? 1
+    return and(eq(prices.priceListCode, code), eq(prices.version, ver))
+  })
+
+  // Query 2: Fetch all base prices in one query, filtered by each price list's current version
   const basePriceRows = await db
     .select({
       priceListCode: prices.priceListCode,
+      version: prices.version,
       commodityTicker: prices.commodityTicker,
       commodityName: fioCommodities.name,
       locationId: prices.locationId,
@@ -494,7 +550,7 @@ export async function calculateEffectivePriceBatch(
     .leftJoin(fioLocations, eq(prices.locationId, fioLocations.naturalId))
     .where(
       and(
-        inArray(prices.priceListCode, allPriceListCodes),
+        or(...versionConditions),
         inArray(prices.commodityTicker, allTickers),
         inArray(prices.locationId, allLocationIds)
       )
@@ -559,7 +615,7 @@ export async function calculateEffectivePriceBatch(
     let baseRecord = basePriceMap.get(requestKey)
     let isFallback = false
 
-    if (!baseRecord && pl.defaultLocationId && pl.defaultLocationId !== req.locationId) {
+    if (!baseRecord && pl.defaultLocationId !== req.locationId) {
       const fallbackKey = `${req.priceListCode}:${req.ticker}:${pl.defaultLocationId}`
       baseRecord = basePriceMap.get(fallbackKey)
       if (baseRecord) isFallback = true
@@ -584,6 +640,7 @@ export async function calculateEffectivePriceBatch(
 
     const effectivePrice: EffectivePrice = {
       priceListCode: baseRecord.priceListCode,
+      version: baseRecord.version,
       commodityTicker: baseRecord.commodityTicker,
       commodityName: baseRecord.commodityName,
       locationId: baseRecord.locationId,

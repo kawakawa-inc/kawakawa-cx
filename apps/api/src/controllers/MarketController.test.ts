@@ -159,6 +159,7 @@ describe('MarketController', () => {
             'KAWA:H2O:BEN',
             {
               priceListCode: 'KAWA',
+              version: 1,
               commodityTicker: 'H2O',
               commodityName: 'Water',
               locationId: 'BEN',
@@ -399,6 +400,7 @@ describe('MarketController', () => {
             'KAWA:H2O:KW-020c',
             {
               priceListCode: 'KAWA',
+              version: 1,
               commodityTicker: 'H2O',
               commodityName: 'Water',
               locationId: 'BEN', // fallback location
@@ -522,6 +524,7 @@ describe('MarketController', () => {
             'KAWA:H2O:BEN',
             {
               priceListCode: 'KAWA',
+              version: 1,
               commodityTicker: 'H2O',
               commodityName: 'Water',
               locationId: 'BEN',

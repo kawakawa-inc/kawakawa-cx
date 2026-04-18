@@ -11,6 +11,7 @@ vi.mock('../../db/index.js', () => ({
   prices: {
     id: 'id',
     priceListCode: 'priceListCode',
+    version: 'version',
     commodityTicker: 'commodityTicker',
     locationId: 'locationId',
     price: 'price',
@@ -24,6 +25,7 @@ vi.mock('../../db/index.js', () => ({
     type: 'type',
     currency: 'currency',
     defaultLocationId: 'defaultLocationId',
+    currentVersion: 'currentVersion',
   },
   fioCommodities: {
     ticker: 'ticker',
@@ -194,6 +196,11 @@ H2O,100`
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([{ code: 'KAWA' }]),
       }
+      const mockVersionSelect = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ currentVersion: 1 }]),
+      }
       const mockExistingPriceSelect = {
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -207,6 +214,7 @@ H2O,100`
         .mockReturnValueOnce(mockCommoditiesSelect as any)
         .mockReturnValueOnce(mockLocationsSelect as any)
         .mockReturnValueOnce(mockExchangeSelect as any)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockExistingPriceSelect as any)
 
       vi.mocked(db.insert).mockReturnValue(mockInsert as any)
@@ -240,6 +248,11 @@ H2O,100`
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([{ code: 'KAWA' }]),
       }
+      const mockVersionSelect = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ currentVersion: 1 }]),
+      }
       const mockExistingPriceSelect = {
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -254,6 +267,7 @@ H2O,100`
         .mockReturnValueOnce(mockCommoditiesSelect as any)
         .mockReturnValueOnce(mockLocationsSelect as any)
         .mockReturnValueOnce(mockExchangeSelect as any)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockExistingPriceSelect as any)
 
       vi.mocked(db.update).mockReturnValue(mockUpdate as any)
@@ -287,6 +301,11 @@ UNKNOWN,50`
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([{ code: 'KAWA' }]),
       }
+      const mockVersionSelect = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ currentVersion: 1 }]),
+      }
       const mockExistingPriceSelect = {
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -300,6 +319,7 @@ UNKNOWN,50`
         .mockReturnValueOnce(mockCommoditiesSelect as any)
         .mockReturnValueOnce(mockLocationsSelect as any)
         .mockReturnValueOnce(mockExchangeSelect as any)
+        .mockReturnValueOnce(mockVersionSelect as any)
         .mockReturnValueOnce(mockExistingPriceSelect as any)
 
       vi.mocked(db.insert).mockReturnValue(mockInsert as any)

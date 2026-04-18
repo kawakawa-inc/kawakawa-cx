@@ -1353,6 +1353,9 @@
                       <v-chip size="x-small" color="grey">
                         {{ priceList.importConfigCount || 0 }} imports
                       </v-chip>
+                      <v-chip v-if="priceList.type === 'custom'" size="x-small" color="blue-grey">
+                        v{{ priceList.currentVersion }}
+                      </v-chip>
                       <v-chip size="x-small" :color="priceList.isActive ? 'success' : 'error'">
                         {{ priceList.isActive ? 'Active' : 'Inactive' }}
                       </v-chip>
@@ -1406,6 +1409,18 @@
                     </v-col>
                   </v-row>
 
+                  <!-- Version Management (custom price lists only) -->
+                  <template v-if="priceList.type === 'custom'">
+                    <v-divider class="my-4" />
+                    <h4 class="text-subtitle-2 mb-2">Versions</h4>
+                    <PriceVersionManager
+                      v-model:selected-version="priceListSelectedVersions[priceList.code]"
+                      :price-list-code="priceList.code"
+                      :can-manage="true"
+                      @versions-changed="onVersionsChanged"
+                    />
+                  </template>
+
                   <!-- Import Configs for this price list -->
                   <v-divider class="my-4" />
                   <div class="d-flex align-center mb-2">
@@ -1415,7 +1430,12 @@
                       size="small"
                       variant="text"
                       color="primary"
-                      @click.stop="openCreateImportConfigDialog(priceList.code)"
+                      @click.stop="
+                        openCreateImportConfigDialog(
+                          priceList.code,
+                          priceListSelectedVersions[priceList.code]
+                        )
+                      "
                     >
                       <v-icon start>mdi-plus</v-icon>
                       Add Import
@@ -1457,11 +1477,15 @@
                             size="x-small"
                             variant="text"
                             :loading="syncingConfigs.has(config.id)"
-                            :disabled="!config.sheetsUrl"
+                            :disabled="config.sourceType === 'google_sheets' && !config.sheetsUrl"
                             @click.stop="syncImportConfig(config)"
                           >
-                            <v-icon>mdi-sync</v-icon>
-                            <v-tooltip activator="parent" location="top">Sync Now</v-tooltip>
+                            <v-icon>
+                              {{ config.sourceType === 'csv' ? 'mdi-upload' : 'mdi-sync' }}
+                            </v-icon>
+                            <v-tooltip activator="parent" location="top">
+                              {{ config.sourceType === 'csv' ? 'Upload CSV' : 'Sync Now' }}
+                            </v-tooltip>
                           </v-btn>
                           <v-btn
                             icon
@@ -2226,7 +2250,16 @@
       v-model="importConfigDialog"
       :config="editingImportConfig"
       :price-list-code="newImportConfigPriceList"
+      :version="newImportConfigVersion"
       @saved="onImportConfigSaved"
+    />
+
+    <input
+      ref="csvUploadInput"
+      type="file"
+      accept=".csv,.txt,.tsv"
+      style="display: none"
+      @change="handleCsvUploadSelected"
     />
 
     <!-- Delete Price List Confirmation Dialog -->
@@ -2447,6 +2480,7 @@ import type {
 } from '../services/api'
 import PriceListDialog from '../components/PriceListDialog.vue'
 import ImportConfigDialog from '../components/ImportConfigDialog.vue'
+import PriceVersionManager from '../components/PriceVersionManager.vue'
 
 interface FioSyncInfo {
   fioUsername: string | null
@@ -2671,6 +2705,7 @@ const savingGoogleSettings = ref(false)
 // Price Lists management state
 const priceLists = ref<PriceListDefinition[]>([])
 const loadingPriceLists = ref(false)
+const priceListSelectedVersions = ref<Record<string, number>>({})
 const priceListDialog = ref(false)
 const editingPriceList = ref<PriceListDefinition | null>(null)
 const deletingPriceList = ref<PriceListDefinition | null>(null)
@@ -2683,6 +2718,7 @@ const loadingImportConfigs = ref(false)
 const importConfigDialog = ref(false)
 const editingImportConfig = ref<ImportConfigResponse | null>(null)
 const newImportConfigPriceList = ref<string | null>(null)
+const newImportConfigVersion = ref<number | null>(null)
 const syncingConfigs = ref<Set<number>>(new Set())
 const syncingFioPriceLists = ref<Set<string>>(new Set())
 const deleteImportConfigDialog = ref(false)
@@ -3761,6 +3797,12 @@ const loadPriceLists = async () => {
   try {
     loadingPriceLists.value = true
     priceLists.value = await api.priceLists.list()
+    // Initialize selected versions for custom price lists
+    for (const pl of priceLists.value) {
+      if (pl.type === 'custom' && !(pl.code in priceListSelectedVersions.value)) {
+        priceListSelectedVersions.value[pl.code] = pl.currentVersion
+      }
+    }
   } catch (error) {
     console.error('Failed to load price lists', error)
     showSnackbar('Failed to load price lists', 'error')
@@ -3822,9 +3864,10 @@ const loadImportConfigs = async () => {
   }
 }
 
-const openCreateImportConfigDialog = (priceListCode?: string) => {
+const openCreateImportConfigDialog = (priceListCode?: string, version?: number) => {
   editingImportConfig.value = null
   newImportConfigPriceList.value = priceListCode || null
+  newImportConfigVersion.value = version ?? null
   importConfigDialog.value = true
 }
 
@@ -3838,6 +3881,10 @@ const onImportConfigSaved = async () => {
   await loadImportConfigs()
   await loadPriceLists() // Refresh counts
   showSnackbar('Import configuration saved successfully')
+}
+
+const onVersionsChanged = async () => {
+  await Promise.all([loadPriceLists(), loadImportConfigs()])
 }
 
 const confirmDeleteImportConfig = (config: ImportConfigResponse) => {
@@ -3866,9 +3913,15 @@ const deleteImportConfigConfirm = async () => {
 }
 
 const syncImportConfig = async (config: ImportConfigResponse) => {
+  if (config.sourceType === 'csv') {
+    promptCsvUpload(config)
+    return
+  }
+
   try {
     syncingConfigs.value.add(config.id)
-    const result = await api.importConfigs.sync(config.id)
+    const targetVersion = priceListSelectedVersions.value[config.priceListCode]
+    const result = await api.importConfigs.sync(config.id, targetVersion)
     showSnackbar(
       `Synced ${result.imported} new, ${result.updated} updated prices`,
       result.errors.length > 0 ? 'error' : 'success'
@@ -3883,8 +3936,48 @@ const syncImportConfig = async (config: ImportConfigResponse) => {
   }
 }
 
+const csvUploadInput = ref<HTMLInputElement | null>(null)
+const pendingUploadConfig = ref<ImportConfigResponse | null>(null)
+
+const promptCsvUpload = (config: ImportConfigResponse) => {
+  pendingUploadConfig.value = config
+  csvUploadInput.value?.click()
+}
+
+const handleCsvUploadSelected = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const config = pendingUploadConfig.value
+  // Reset for next time so the same file can be re-selected
+  if (input) input.value = ''
+  pendingUploadConfig.value = null
+
+  if (!file || !config) return
+
+  try {
+    syncingConfigs.value.add(config.id)
+    const targetVersion = priceListSelectedVersions.value[config.priceListCode]
+    const result = await api.importConfigs.syncUpload(config.id, file, targetVersion)
+    showSnackbar(
+      `Imported ${result.imported} new, ${result.updated} updated prices`,
+      result.errors.length > 0 ? 'error' : 'success'
+    )
+    await loadPriceLists()
+  } catch (error) {
+    console.error('Failed to upload CSV', error)
+    const message = error instanceof Error ? error.message : 'Failed to upload CSV'
+    showSnackbar(message, 'error')
+  } finally {
+    syncingConfigs.value.delete(config.id)
+  }
+}
+
 const getImportConfigsForPriceList = (priceListCode: string) => {
-  return importConfigs.value.filter(c => c.priceListCode === priceListCode)
+  const selectedVersion = priceListSelectedVersions.value[priceListCode]
+  return importConfigs.value.filter(
+    c =>
+      c.priceListCode === priceListCode && (selectedVersion ? c.version === selectedVersion : true)
+  )
 }
 
 const syncFioPriceList = async (priceList: PriceListDefinition) => {

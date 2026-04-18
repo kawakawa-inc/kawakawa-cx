@@ -592,9 +592,11 @@ INSERT INTO notifications (user_id, type, title, message, data, is_read) VALUES
   (4, 'user_needs_approval', 'New Registration', 'Tara Vance needs approval', '{"userId": 21, "username": "tara"}', true);
 
 -- ==================== TEST PRICE LIST ====================
--- Custom price list for testing purposes
-INSERT INTO price_lists (code, name, description, type, currency, default_location_id, is_active) VALUES
-  ('TEST', 'Test Price List', 'Custom price list for testing', 'custom', 'CIS', 'BEN', true);
+-- Custom price list for testing purposes (default location lives on the version)
+INSERT INTO price_lists (code, name, description, type, currency, is_active) VALUES
+  ('TEST', 'Test Price List', 'Custom price list for testing', 'custom', 'CIS', true);
+INSERT INTO price_list_versions (price_list_code, version, label, default_location_id, promoted_at) VALUES
+  ('TEST', 1, 'Initial version', 'BEN', now());
 
 -- ==================== TEST PRICES ====================
 -- Sample prices for TEST price list

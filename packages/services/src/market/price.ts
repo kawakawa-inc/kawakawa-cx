@@ -3,6 +3,7 @@ import {
   db,
   prices,
   priceLists,
+  priceListVersions,
   priceAdjustments,
   fioCommodities,
   fioLocations,
@@ -184,13 +185,20 @@ export async function calculateEffectivePriceWithFallback(
   locationId: string,
   _currency: Currency // Ignored - we use the price list's currency
 ): Promise<EffectivePrice | null> {
-  // First get the price list's currency and default location
+  // Get the price list's currency and the current version's required default location
   const priceListResult = await db
     .select({
       currency: priceLists.currency,
-      defaultLocationId: priceLists.defaultLocationId,
+      defaultLocationId: priceListVersions.defaultLocationId,
     })
     .from(priceLists)
+    .innerJoin(
+      priceListVersions,
+      and(
+        eq(priceListVersions.priceListCode, priceLists.code),
+        eq(priceListVersions.version, priceLists.currentVersion)
+      )
+    )
     .where(eq(priceLists.code, priceListCode.toUpperCase()))
     .limit(1)
 
@@ -208,8 +216,8 @@ export async function calculateEffectivePriceWithFallback(
     return result
   }
 
-  // If no default location or same as requested, no fallback possible
-  if (!defaultLocationId || defaultLocationId === locationId) {
+  // Same location as default, no fallback possible
+  if (defaultLocationId === locationId) {
     return null
   }
 

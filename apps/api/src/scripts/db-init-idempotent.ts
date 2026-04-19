@@ -11,6 +11,7 @@ import {
   permissions,
   rolePermissions,
   priceLists,
+  priceListVersions,
 } from '../db/index.js'
 import { sql } from 'drizzle-orm'
 import { createLogger } from '../utils/logger.js'
@@ -287,10 +288,10 @@ async function runSeed() {
     }
   }
 
-  // Upsert price lists
+  // Upsert price lists (without defaultLocationId — that lives on price_list_versions)
   await db
     .insert(priceLists)
-    .values(PRICE_LISTS_DATA)
+    .values(PRICE_LISTS_DATA.map(({ defaultLocationId: _ignored, ...rest }) => rest))
     .onConflictDoUpdate({
       target: priceLists.code,
       set: {
@@ -298,9 +299,22 @@ async function runSeed() {
         description: sql`EXCLUDED.description`,
         type: sql`EXCLUDED.type`,
         currency: sql`EXCLUDED.currency`,
-        defaultLocationId: sql`EXCLUDED.default_location_id`,
       },
     })
+
+  // Upsert version 1 metadata for each price list, with the required default location
+  await db
+    .insert(priceListVersions)
+    .values(
+      PRICE_LISTS_DATA.map(pl => ({
+        priceListCode: pl.code,
+        version: 1,
+        label: 'Initial version',
+        defaultLocationId: pl.defaultLocationId!,
+        promotedAt: new Date(),
+      }))
+    )
+    .onConflictDoNothing()
 
   log.info('Seeding complete')
 }

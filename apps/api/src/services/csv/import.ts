@@ -1,6 +1,7 @@
 import { db, prices, priceLists, fioCommodities, fioLocations } from '../../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import { parseCsv, type CsvParseOptions, type ParsedPriceRow, type CsvRowError } from './parser.js'
+import { resolveVersion } from '../price-version.js'
 
 export interface CsvImportResult {
   imported: number // New prices created
@@ -145,7 +146,8 @@ export async function previewCsvImport(
  */
 export async function importCsvPrices(
   content: string,
-  options: CsvParseOptions
+  options: CsvParseOptions,
+  version?: number
 ): Promise<CsvImportResult> {
   const priceListCode = options.exchangeCode.toUpperCase()
 
@@ -169,18 +171,22 @@ export async function importCsvPrices(
     }
   }
 
+  // Resolve version for the target price list
+  const resolvedVersion = await resolveVersion(priceListCode, version)
+
   let imported = 0
   let updated = 0
 
   // Process each validated row
   for (const row of validated) {
-    // Check if price already exists (now without currency since it's at price list level)
+    // Check if price already exists for this version
     const existing = await db
       .select({ id: prices.id })
       .from(prices)
       .where(
         and(
           eq(prices.priceListCode, priceListCode),
+          eq(prices.version, resolvedVersion),
           eq(prices.commodityTicker, row.ticker),
           eq(prices.locationId, row.location)
         )
@@ -203,6 +209,7 @@ export async function importCsvPrices(
       // Insert new price
       await db.insert(prices).values({
         priceListCode,
+        version: resolvedVersion,
         commodityTicker: row.ticker,
         locationId: row.location,
         price: row.price.toFixed(2),

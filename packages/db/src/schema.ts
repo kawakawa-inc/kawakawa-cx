@@ -799,13 +799,42 @@ export const priceLists = pgTable('price_lists', {
   description: text('description'), // Optional description
   type: priceListTypeEnum('type').notNull(), // 'fio' = synced from FIO API, 'custom' = user-managed
   currency: currencyEnum('currency').notNull(), // Fixed currency for this price list
-  defaultLocationId: varchar('default_location_id', { length: 20 }).references(
-    () => fioLocations.naturalId
-  ), // Default location for imports (Proxion for KAWA, BEN for CI1)
   isActive: boolean('is_active').notNull().default(true),
+  currentVersion: integer('current_version').notNull().default(1), // Active version pointer
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
+
+// ==================== PRICE LIST VERSIONS (Version metadata for price lists) ====================
+// Tracks version labels, creation, and promotion history
+// defaultLocationId is per-version: a new version can rebase to a different location
+export const priceListVersions = pgTable(
+  'price_list_versions',
+  {
+    id: serial('id').primaryKey(),
+    priceListCode: varchar('price_list_code', { length: 20 })
+      .notNull()
+      .references(() => priceLists.code, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    label: varchar('label', { length: 100 }), // e.g., "Phase 1 - Electronics"
+    description: text('description'),
+    defaultLocationId: varchar('default_location_id', { length: 20 })
+      .notNull()
+      .references(() => fioLocations.naturalId), // Required: prices belong to a base location
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    promotedAt: timestamp('promoted_at'), // When this version was set as current (null if never)
+  },
+  table => ({
+    uniquePriceListVersion: uniqueIndex('price_list_versions_code_version_idx').on(
+      table.priceListCode,
+      table.version
+    ),
+    priceListIdx: index('price_list_versions_price_list_idx').on(table.priceListCode),
+  })
+)
 
 // ==================== PRICES (Individual price records per commodity/location) ====================
 export const prices = pgTable(
@@ -815,6 +844,7 @@ export const prices = pgTable(
     priceListCode: varchar('price_list_code', { length: 20 })
       .notNull()
       .references(() => priceLists.code), // FK to price list
+    version: integer('version').notNull().default(1), // Price list version this price belongs to
     commodityTicker: varchar('commodity_ticker', { length: 10 })
       .notNull()
       .references(() => fioCommodities.ticker),
@@ -829,14 +859,15 @@ export const prices = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    // Unique constraint: one price per price list/commodity/location combination
-    uniquePriceListCommodityLocation: uniqueIndex('prices_price_list_commodity_location_idx').on(
+    // Unique constraint: one price per price list/version/commodity/location combination
+    uniquePriceListVersionCommodityLocation: uniqueIndex(
+      'prices_price_list_version_commodity_location_idx'
+    ).on(table.priceListCode, table.version, table.commodityTicker, table.locationId),
+    // Index for efficient lookups by price list and version
+    priceListVersionIdx: index('prices_price_list_version_idx').on(
       table.priceListCode,
-      table.commodityTicker,
-      table.locationId
+      table.version
     ),
-    // Index for efficient lookups by price list
-    priceListIdx: index('prices_price_list_idx').on(table.priceListCode),
   })
 )
 
@@ -887,6 +918,7 @@ export const importConfigs = pgTable(
     priceListCode: varchar('price_list_code', { length: 20 })
       .notNull()
       .references(() => priceLists.code, { onDelete: 'cascade' }), // Target price list
+    version: integer('version').notNull().default(1), // Price list version this config belongs to
     name: varchar('name', { length: 100 }).notNull(), // Configuration name, e.g., "KAWA Price Sheet"
     sourceType: importSourceTypeEnum('source_type').notNull(), // 'csv' or 'google_sheets'
     format: importFormatEnum('format').notNull(), // 'flat' or 'pivot'
@@ -897,8 +929,11 @@ export const importConfigs = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    // Index for finding configs by price list
-    priceListIdx: index('import_configs_price_list_idx').on(table.priceListCode),
+    // Index for finding configs by price list and version
+    priceListVersionIdx: index('import_configs_price_list_version_idx').on(
+      table.priceListCode,
+      table.version
+    ),
   })
 )
 
@@ -1220,14 +1255,11 @@ export const savedMarketFiltersRelations = relations(savedMarketFilters, ({ one 
 
 // ==================== PRICING SYSTEM RELATIONS ====================
 
-export const priceListsRelations = relations(priceLists, ({ one, many }) => ({
-  defaultLocation: one(fioLocations, {
-    fields: [priceLists.defaultLocationId],
-    references: [fioLocations.naturalId],
-  }),
+export const priceListsRelations = relations(priceLists, ({ many }) => ({
   prices: many(prices),
   priceAdjustments: many(priceAdjustments),
   importConfigs: many(importConfigs),
+  versions: many(priceListVersions),
 }))
 
 export const pricesRelations = relations(prices, ({ one }) => ({
@@ -1268,5 +1300,20 @@ export const importConfigsRelations = relations(importConfigs, ({ one }) => ({
   priceList: one(priceLists, {
     fields: [importConfigs.priceListCode],
     references: [priceLists.code],
+  }),
+}))
+
+export const priceListVersionsRelations = relations(priceListVersions, ({ one }) => ({
+  priceList: one(priceLists, {
+    fields: [priceListVersions.priceListCode],
+    references: [priceLists.code],
+  }),
+  defaultLocation: one(fioLocations, {
+    fields: [priceListVersions.defaultLocationId],
+    references: [fioLocations.naturalId],
+  }),
+  createdByUser: one(users, {
+    fields: [priceListVersions.createdByUserId],
+    references: [users.id],
   }),
 }))

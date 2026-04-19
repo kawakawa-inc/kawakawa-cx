@@ -251,6 +251,7 @@ interface CreatePriceRequest {
   commodityTicker: string
   locationId: string
   price: number
+  version?: number
   currency: Currency
   source?: PriceSource
   sourceReference?: string | null
@@ -343,6 +344,7 @@ interface UpdatePriceAdjustmentRequest {
 interface FioExchangeResponse {
   code: string
   name: string
+  type: PriceListType
   locationId: string | null
   locationName: string | null
   currency: Currency
@@ -460,10 +462,57 @@ interface PriceListDefinition {
   defaultLocationId: string | null
   defaultLocationName: string | null
   isActive: boolean
+  currentVersion: number
   createdAt: string
   updatedAt: string
   priceCount?: number
   importConfigCount?: number
+}
+
+// Price List Version types
+interface VersionSummary {
+  id: number
+  version: number
+  label: string | null
+  description: string | null
+  defaultLocationId: string
+  defaultLocationName: string | null
+  priceCount: number
+  isCurrent: boolean
+  isLatest: boolean
+  createdAt: string
+  promotedAt: string | null
+}
+
+interface VersionDetail extends VersionSummary {
+  createdByUserId: number | null
+}
+
+interface CreateVersionRequest {
+  label?: string
+  description?: string
+  defaultLocationId: string
+  copyFrom?: number | 'current' | 'latest'
+}
+
+interface UpdateVersionRequest {
+  label?: string | null
+  description?: string | null
+  defaultLocationId?: string
+}
+
+interface PriceDiffEntry {
+  commodityTicker: string
+  locationId: string
+  oldPrice: string | null
+  newPrice: string | null
+}
+
+interface VersionDiff {
+  added: PriceDiffEntry[]
+  removed: PriceDiffEntry[]
+  changed: PriceDiffEntry[]
+  unchanged: number
 }
 
 interface CreatePriceListRequest {
@@ -472,7 +521,8 @@ interface CreatePriceListRequest {
   description?: string | null
   type: PriceListType
   currency: Currency
-  defaultLocationId?: string | null
+  /** Required: default location for the initial version */
+  defaultLocationId: string
   isActive?: boolean
 }
 
@@ -480,7 +530,6 @@ interface UpdatePriceListRequest {
   name?: string
   description?: string | null
   currency?: Currency
-  defaultLocationId?: string | null
   isActive?: boolean
 }
 
@@ -491,6 +540,7 @@ type ImportFormat = 'flat' | 'pivot' | 'kawa'
 interface ImportConfigResponse {
   id: number
   priceListCode: string
+  version: number
   name: string
   sourceType: ImportSourceType
   format: ImportFormat
@@ -503,6 +553,7 @@ interface ImportConfigResponse {
 
 interface CreateImportConfigRequest {
   priceListCode: string
+  version?: number
   name: string
   sourceType: ImportSourceType
   format: ImportFormat
@@ -2890,8 +2941,9 @@ const realApi = {
     return response.json()
   },
 
-  getPricesByExchange: async (exchange: string): Promise<PriceListResponse[]> => {
-    const response = await fetchWithLogging(`/api/prices/${exchange}`, {
+  getPricesByExchange: async (exchange: string, version?: number): Promise<PriceListResponse[]> => {
+    const params = version !== undefined ? `?version=${version}` : ''
+    const response = await fetchWithLogging(`/api/prices/${exchange}${params}`, {
       method: 'GET',
       headers: getAuthHeaders(),
     })
@@ -3392,6 +3444,172 @@ const realApi = {
     }
   },
 
+  // Price List Version methods
+  getPriceListVersions: async (code: string): Promise<VersionSummary[]> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Price list '${code}' not found`)
+      }
+      throw new Error(`Failed to get versions: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  getPriceListVersion: async (code: string, version: number): Promise<VersionDetail> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Version not found`)
+      }
+      throw new Error(`Failed to get version: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  createPriceListVersion: async (
+    code: string,
+    request: CreateVersionRequest
+  ): Promise<VersionDetail> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions`,
+      {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || `Failed to create version: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updatePriceListVersion: async (
+    code: string,
+    version: number,
+    request: UpdateVersionRequest
+  ): Promise<VersionDetail> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
+      {
+        method: 'PUT',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || `Failed to update version: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  promotePriceListVersion: async (code: string, version: number): Promise<VersionDetail> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/promote`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || `Failed to promote version: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deletePriceListVersion: async (code: string, version: number): Promise<void> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
+      {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || `Failed to delete version: ${response.statusText}`)
+    }
+  },
+
+  diffPriceListVersions: async (
+    code: string,
+    version: number,
+    otherVersion: number
+  ): Promise<VersionDiff> => {
+    const response = await fetchWithLogging(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    )
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      throw new Error(`Failed to diff versions: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
     const response = await fetchWithLogging('/api/import-configs', {
@@ -3501,8 +3719,12 @@ const realApi = {
     }
   },
 
-  syncImportConfig: async (id: number): Promise<CsvImportResult | PivotImportResult> => {
-    const response = await fetchWithLogging(`/api/import-configs/${id}/sync`, {
+  syncImportConfig: async (
+    id: number,
+    version?: number
+  ): Promise<CsvImportResult | PivotImportResult> => {
+    const params = version !== undefined ? `?version=${version}` : ''
+    const response = await fetchWithLogging(`/api/import-configs/${id}/sync${params}`, {
       method: 'POST',
       headers: getAuthHeaders(),
     })
@@ -3518,6 +3740,41 @@ const realApi = {
       }
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || `Failed to sync import config: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  syncImportConfigUpload: async (
+    id: number,
+    file: File,
+    version?: number
+  ): Promise<CsvImportResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (version !== undefined) {
+      formData.append('version', String(version))
+    }
+
+    const response = await fetchWithLogging(`/api/import-configs/${id}/sync/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('jwt')}`,
+      },
+      body: formData,
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      if (response.status === 404) {
+        throw new Error(`Import config not found`)
+      }
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || `Failed to upload CSV: ${response.statusText}`)
     }
 
     return response.json()
@@ -4802,7 +5059,8 @@ export const api = {
   prices: {
     list: (exchange?: string, location?: string, commodity?: string, currency?: Currency) =>
       realApi.getPrices(exchange, location, commodity, currency),
-    getByExchange: (exchange: string) => realApi.getPricesByExchange(exchange),
+    getByExchange: (exchange: string, version?: number) =>
+      realApi.getPricesByExchange(exchange, version),
     create: (request: CreatePriceRequest) => realApi.createPrice(request),
     update: (id: number, request: UpdatePriceRequest) => realApi.updatePrice(id, request),
     delete: (id: number) => realApi.deletePrice(id),
@@ -4855,6 +5113,18 @@ export const api = {
     update: (code: string, request: UpdatePriceListRequest) =>
       realApi.updatePriceList(code, request),
     delete: (code: string) => realApi.deletePriceList(code),
+    versions: {
+      list: (code: string) => realApi.getPriceListVersions(code),
+      get: (code: string, version: number) => realApi.getPriceListVersion(code, version),
+      create: (code: string, request: CreateVersionRequest) =>
+        realApi.createPriceListVersion(code, request),
+      update: (code: string, version: number, request: UpdateVersionRequest) =>
+        realApi.updatePriceListVersion(code, version, request),
+      promote: (code: string, version: number) => realApi.promotePriceListVersion(code, version),
+      delete: (code: string, version: number) => realApi.deletePriceListVersion(code, version),
+      diff: (code: string, version: number, otherVersion: number) =>
+        realApi.diffPriceListVersions(code, version, otherVersion),
+    },
   },
   importConfigs: {
     list: () => realApi.getImportConfigs(),
@@ -4863,7 +5133,9 @@ export const api = {
     update: (id: number, request: UpdateImportConfigRequest) =>
       realApi.updateImportConfig(id, request),
     delete: (id: number) => realApi.deleteImportConfig(id),
-    sync: (id: number) => realApi.syncImportConfig(id),
+    sync: (id: number, version?: number) => realApi.syncImportConfig(id, version),
+    syncUpload: (id: number, file: File, version?: number) =>
+      realApi.syncImportConfigUpload(id, file, version),
     preview: (id: number) => realApi.previewImportConfig(id),
   },
   // User Settings
@@ -4974,6 +5246,13 @@ export type {
   PriceListDefinition,
   CreatePriceListRequest,
   UpdatePriceListRequest,
+  // Price List Version types
+  VersionSummary,
+  VersionDetail,
+  CreateVersionRequest,
+  UpdateVersionRequest,
+  PriceDiffEntry,
+  VersionDiff,
   // Import Config types
   ImportSourceType,
   ImportFormat,

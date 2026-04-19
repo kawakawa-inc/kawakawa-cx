@@ -436,6 +436,24 @@ export function localizeMaterial(materialName: string): string {
   return localizedMaterials.find(o => o.material === materialName)?.name ?? materialName
 }
 
+// Lazy-initialized reverse map: lowercased localized name -> API material name
+let localizedNameToApiNameMap: Map<string, string> | null = null
+
+/**
+ * Resolves a localized display name (e.g., "Drinking Water") back to the API
+ * material name (e.g., "drinkingWater"). Case-insensitive. Returns null if
+ * no match.
+ */
+export function apiNameFromLocalized(displayName: string): string | null {
+  if (!displayName) return null
+  if (!localizedNameToApiNameMap) {
+    localizedNameToApiNameMap = new Map(
+      localizedMaterials.map(o => [o.name.toLowerCase(), o.material])
+    )
+  }
+  return localizedNameToApiNameMap.get(displayName.toLowerCase()) ?? null
+}
+
 /**
  * Get the display name for a commodity category.
  * Returns the original name if no mapping found.

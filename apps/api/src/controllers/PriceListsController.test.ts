@@ -14,6 +14,7 @@ vi.mock('../db/index.js', () => {
   const priceAdjustmentsTable = { __table: 'priceAdjustments' }
   const importConfigsTable = { __table: 'importConfigs' }
   const fioLocationsTable = { __table: 'fioLocations' }
+  const priceListVersionsTable = { __table: 'priceListVersions' }
 
   return {
     db: {
@@ -74,6 +75,7 @@ vi.mock('../db/index.js', () => {
     priceAdjustments: priceAdjustmentsTable,
     importConfigs: importConfigsTable,
     fioLocations: fioLocationsTable,
+    priceListVersions: priceListVersionsTable,
   }
 })
 

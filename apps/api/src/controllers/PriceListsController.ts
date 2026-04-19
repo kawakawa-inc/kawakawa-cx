@@ -19,8 +19,9 @@ import {
   priceAdjustments,
   importConfigs,
   fioLocations,
+  priceListVersions,
 } from '../db/index.js'
-import { eq, ilike, sql } from 'drizzle-orm'
+import { eq, and, ilike, sql } from 'drizzle-orm'
 import { NotFound, BadRequest, Conflict } from '../utils/errors.js'
 
 export type PriceListType = 'fio' | 'custom'
@@ -34,6 +35,7 @@ export interface PriceListDefinition {
   defaultLocationId: string | null
   defaultLocationName: string | null
   isActive: boolean
+  currentVersion: number
   createdAt: Date
   updatedAt: Date
   priceCount?: number
@@ -46,7 +48,8 @@ interface CreatePriceListRequest {
   description?: string | null
   type: PriceListType
   currency: Currency
-  defaultLocationId?: string | null
+  /** Default location for the initial version (required) */
+  defaultLocationId: string
   isActive?: boolean
 }
 
@@ -54,7 +57,6 @@ interface UpdatePriceListRequest {
   name?: string
   description?: string | null
   currency?: Currency
-  defaultLocationId?: string | null
   isActive?: boolean
 }
 
@@ -73,17 +75,25 @@ export class PriceListsController extends Controller {
         description: priceLists.description,
         type: priceLists.type,
         currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
+        defaultLocationId: priceListVersions.defaultLocationId,
         defaultLocationName: fioLocations.name,
         isActive: priceLists.isActive,
+        currentVersion: priceLists.currentVersion,
         createdAt: priceLists.createdAt,
         updatedAt: priceLists.updatedAt,
       })
       .from(priceLists)
-      .leftJoin(fioLocations, eq(priceLists.defaultLocationId, fioLocations.naturalId))
+      .leftJoin(
+        priceListVersions,
+        and(
+          eq(priceListVersions.priceListCode, priceLists.code),
+          eq(priceListVersions.version, priceLists.currentVersion)
+        )
+      )
+      .leftJoin(fioLocations, eq(priceListVersions.defaultLocationId, fioLocations.naturalId))
       .orderBy(priceLists.code)
 
-    // Get counts for each price list using SQL aggregation
+    // Get counts for each price list using SQL aggregation (count only current version prices)
     const [priceCountRows, configCountRows] = await Promise.all([
       db
         .select({
@@ -124,14 +134,22 @@ export class PriceListsController extends Controller {
         description: priceLists.description,
         type: priceLists.type,
         currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
+        defaultLocationId: priceListVersions.defaultLocationId,
         defaultLocationName: fioLocations.name,
         isActive: priceLists.isActive,
+        currentVersion: priceLists.currentVersion,
         createdAt: priceLists.createdAt,
         updatedAt: priceLists.updatedAt,
       })
       .from(priceLists)
-      .leftJoin(fioLocations, eq(priceLists.defaultLocationId, fioLocations.naturalId))
+      .leftJoin(
+        priceListVersions,
+        and(
+          eq(priceListVersions.priceListCode, priceLists.code),
+          eq(priceListVersions.version, priceLists.currentVersion)
+        )
+      )
+      .leftJoin(fioLocations, eq(priceListVersions.defaultLocationId, fioLocations.naturalId))
       .where(eq(priceLists.code, code.toUpperCase()))
       .limit(1)
 
@@ -179,21 +197,21 @@ export class PriceListsController extends Controller {
       throw Conflict(`Price list '${code}' already exists`)
     }
 
-    // Validate location if provided (case-insensitive lookup)
-    let resolvedLocationId: string | null = null
-    if (body.defaultLocationId) {
-      const locationResult = await db
-        .select({ naturalId: fioLocations.naturalId })
-        .from(fioLocations)
-        .where(ilike(fioLocations.naturalId, body.defaultLocationId))
-        .limit(1)
-
-      if (locationResult.length === 0) {
-        throw BadRequest(`Location '${body.defaultLocationId}' not found`)
-      }
-      // Use the actual stored value from database
-      resolvedLocationId = locationResult[0].naturalId
+    if (!body.defaultLocationId) {
+      throw BadRequest('defaultLocationId is required')
     }
+
+    // Validate location (case-insensitive lookup)
+    const locationResult = await db
+      .select({ naturalId: fioLocations.naturalId })
+      .from(fioLocations)
+      .where(ilike(fioLocations.naturalId, body.defaultLocationId))
+      .limit(1)
+
+    if (locationResult.length === 0) {
+      throw BadRequest(`Location '${body.defaultLocationId}' not found`)
+    }
+    const resolvedLocationId = locationResult[0].naturalId
 
     await db.insert(priceLists).values({
       code,
@@ -201,8 +219,16 @@ export class PriceListsController extends Controller {
       description: body.description ?? null,
       type: body.type,
       currency: body.currency,
-      defaultLocationId: resolvedLocationId,
       isActive: body.isActive ?? true,
+    })
+
+    // Create initial version 1 metadata with the default location
+    await db.insert(priceListVersions).values({
+      priceListCode: code,
+      version: 1,
+      label: 'Initial version',
+      defaultLocationId: resolvedLocationId,
+      promotedAt: new Date(),
     })
 
     this.setStatus(201)
@@ -238,24 +264,6 @@ export class PriceListsController extends Controller {
       throw BadRequest('Cannot change currency on FIO price lists')
     }
 
-    // Validate location if provided (case-insensitive lookup)
-    let resolvedLocationId: string | null | undefined = undefined
-    if (body.defaultLocationId !== undefined && body.defaultLocationId !== null) {
-      const locationResult = await db
-        .select({ naturalId: fioLocations.naturalId })
-        .from(fioLocations)
-        .where(ilike(fioLocations.naturalId, body.defaultLocationId))
-        .limit(1)
-
-      if (locationResult.length === 0) {
-        throw BadRequest(`Location '${body.defaultLocationId}' not found`)
-      }
-      // Use the actual stored value from database
-      resolvedLocationId = locationResult[0].naturalId
-    } else if (body.defaultLocationId === null) {
-      resolvedLocationId = null
-    }
-
     // Build update object
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
@@ -264,7 +272,6 @@ export class PriceListsController extends Controller {
     if (body.name !== undefined) updateData.name = body.name
     if (body.description !== undefined) updateData.description = body.description
     if (body.currency !== undefined) updateData.currency = body.currency
-    if (resolvedLocationId !== undefined) updateData.defaultLocationId = resolvedLocationId
     if (body.isActive !== undefined) updateData.isActive = body.isActive
 
     await db.update(priceLists).set(updateData).where(eq(priceLists.code, upperCode))

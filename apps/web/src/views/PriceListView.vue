@@ -29,6 +29,19 @@
           </v-chip>
         </v-tab>
       </v-tabs>
+      <div
+        v-if="currentVersionInfo"
+        class="px-4 py-2 d-flex align-center ga-2 text-body-2 text-medium-emphasis"
+      >
+        <v-icon size="small">mdi-tag-outline</v-icon>
+        <span>
+          Version {{ currentVersionInfo.version
+          }}<template v-if="currentVersionInfo.label"> — {{ currentVersionInfo.label }}</template>
+        </span>
+        <span v-if="currentVersionInfo.promotedAt">
+          · promoted {{ formatPromotedAt(currentVersionInfo.promotedAt) }}
+        </span>
+      </div>
     </v-card>
 
     <!-- Filters & Actions -->
@@ -401,6 +414,7 @@ import {
   type PriceListResponse,
   type FioExchangeResponse,
   type PriceAdjustmentResponse,
+  type VersionSummary,
 } from '../services/api'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
@@ -492,10 +506,10 @@ const priceForm = ref({
   currency: 'CIS' as Currency,
 })
 
-// Computed - Check if this is a FIO exchange (has a locationId) vs internal price list
+// Computed - Check if this is a FIO exchange vs custom price list
 const isFioExchange = computed(() => {
   const exchange = exchanges.value.find(e => e.code === selectedExchange.value)
-  return exchange?.locationId != null
+  return exchange?.type === 'fio'
 })
 
 const canManagePrices = computed(() => userStore.hasPermission(PERMISSIONS.PRICES_MANAGE))
@@ -691,6 +705,31 @@ const loadExchanges = async () => {
   }
 }
 
+const currentVersionInfo = ref<VersionSummary | null>(null)
+
+const loadCurrentVersion = async () => {
+  const exchange = exchanges.value.find(e => e.code === selectedExchange.value)
+  if (!exchange || exchange.type === 'fio') {
+    currentVersionInfo.value = null
+    return
+  }
+  try {
+    const versions = await api.priceLists.versions.list(selectedExchange.value)
+    currentVersionInfo.value = versions.find(v => v.isCurrent) ?? null
+  } catch (error) {
+    console.error('Failed to load price list version:', error)
+    currentVersionInfo.value = null
+  }
+}
+
+const formatPromotedAt = (iso: string): string => {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
 const loadPrices = async () => {
   try {
     loading.value = true
@@ -812,12 +851,13 @@ const confirmDelete = async () => {
 // Watch for exchange changes
 watch(selectedExchange, () => {
   loadPrices()
+  loadCurrentVersion()
 })
 
 // Initialize
 onMounted(async () => {
   await loadExchanges()
-  await Promise.all([loadPrices(), loadAdjustments()])
+  await Promise.all([loadPrices(), loadAdjustments(), loadCurrentVersion()])
 })
 </script>
 

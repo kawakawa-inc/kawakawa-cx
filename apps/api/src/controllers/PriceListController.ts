@@ -22,6 +22,7 @@ import {
   type EffectivePrice,
   type PriceSource,
 } from '../services/price-calculator.js'
+import { resolveVersion, resolveVersionContext } from '../services/price-version.js'
 
 export interface PriceListResponse {
   id: number
@@ -45,6 +46,7 @@ interface CreatePriceRequest {
   commodityTicker: string
   locationId: string
   price: number
+  version?: number // Target version (default: currentVersion)
   source?: PriceSource
   sourceReference?: string | null
   // Note: currency is not provided - it comes from the price list
@@ -70,12 +72,19 @@ export class PriceListController extends Controller {
   public async getPrices(
     @Query() exchange?: string,
     @Query() location?: string,
-    @Query() commodity?: string
+    @Query() commodity?: string,
+    @Query() version?: number
   ): Promise<PriceListResponse[]> {
     // Build dynamic where conditions
     const conditions = []
     if (exchange) {
       conditions.push(eq(prices.priceListCode, exchange.toUpperCase()))
+      // Resolve version for the specified exchange
+      const resolvedVersion = await resolveVersion(exchange, version)
+      conditions.push(eq(prices.version, resolvedVersion))
+    } else if (version !== undefined) {
+      // If version specified without exchange, filter directly
+      conditions.push(eq(prices.version, version))
     }
     if (location) {
       conditions.push(eq(prices.locationId, location)) // Location IDs are case-sensitive
@@ -128,40 +137,36 @@ export class PriceListController extends Controller {
     @Path() exchange: string,
     @Path() locationId: string,
     @Path() ticker: string,
-    @Query() fallback?: boolean
+    @Query() fallback?: boolean,
+    @Query() version?: number
   ): Promise<EffectivePrice> {
     // Default fallback to true
     const useFallback = fallback !== false
 
-    // Get currency and default location from price list
-    const priceList = await db
-      .select({
-        currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
-      })
-      .from(priceLists)
-      .where(eq(priceLists.code, exchange.toUpperCase()))
-      .limit(1)
-
-    if (priceList.length === 0) {
+    let context: { version: number; defaultLocationId: string; currency: Currency }
+    try {
+      context = await resolveVersionContext(exchange, version)
+    } catch {
       throw NotFound(`Price list '${exchange.toUpperCase()}' not found`)
     }
 
     // First try the requested location
-    let result = await calculateEffectivePrice(exchange, ticker, locationId, priceList[0].currency)
+    let result = await calculateEffectivePrice(
+      exchange,
+      ticker,
+      locationId,
+      context.currency,
+      context.version
+    )
 
     // If no result and fallback is enabled, try default location
-    if (
-      result === null &&
-      useFallback &&
-      priceList[0].defaultLocationId &&
-      priceList[0].defaultLocationId !== locationId
-    ) {
+    if (result === null && useFallback && context.defaultLocationId !== locationId) {
       result = await calculateEffectivePrice(
         exchange,
         ticker,
-        priceList[0].defaultLocationId,
-        priceList[0].currency
+        context.defaultLocationId,
+        context.currency,
+        context.version
       )
 
       // Mark result as fallback with the original requested location
@@ -195,38 +200,34 @@ export class PriceListController extends Controller {
     @Path() exchange: string,
     @Path() locationId: string,
     @Query() commodity?: string,
-    @Query() fallback?: boolean
+    @Query() fallback?: boolean,
+    @Query() version?: number
   ): Promise<EffectivePrice[]> {
     // Default fallback to true
     const useFallback = fallback !== false
 
-    // Get currency and default location from price list
-    const priceList = await db
-      .select({
-        currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
-      })
-      .from(priceLists)
-      .where(eq(priceLists.code, exchange.toUpperCase()))
-      .limit(1)
-
-    if (priceList.length === 0) {
+    let context: { version: number; defaultLocationId: string; currency: Currency }
+    try {
+      context = await resolveVersionContext(exchange, version)
+    } catch {
       throw NotFound(`Price list '${exchange.toUpperCase()}' not found`)
     }
 
     // Get prices for the requested location
-    let results = await calculateEffectivePrices(exchange, locationId, priceList[0].currency)
+    let results = await calculateEffectivePrices(
+      exchange,
+      locationId,
+      context.currency,
+      context.version
+    )
 
     // If fallback is enabled and there's a different default location, merge in missing commodities
-    if (
-      useFallback &&
-      priceList[0].defaultLocationId &&
-      priceList[0].defaultLocationId !== locationId
-    ) {
+    if (useFallback && context.defaultLocationId !== locationId) {
       const defaultResults = await calculateEffectivePrices(
         exchange,
-        priceList[0].defaultLocationId,
-        priceList[0].currency
+        context.defaultLocationId,
+        context.currency,
+        context.version
       )
 
       // Build a set of commodities we already have at the requested location
@@ -261,9 +262,14 @@ export class PriceListController extends Controller {
   @Get('export/{exchange}')
   public async exportBasePrices(
     @Path() exchange: string,
-    @Query() location?: string
+    @Query() location?: string,
+    @Query() version?: number
   ): Promise<string> {
-    const conditions = [eq(prices.priceListCode, exchange.toUpperCase())]
+    const resolvedVersion = await resolveVersion(exchange, version)
+    const conditions = [
+      eq(prices.priceListCode, exchange.toUpperCase()),
+      eq(prices.version, resolvedVersion),
+    ]
     if (location) {
       conditions.push(eq(prices.locationId, location)) // Location IDs are case-sensitive
     }
@@ -330,11 +336,12 @@ export class PriceListController extends Controller {
   @Get('export/{exchange}/{locationId}/effective')
   public async exportEffectivePrices(
     @Path() exchange: string,
-    @Path() locationId: string
+    @Path() locationId: string,
+    @Query() version?: number
   ): Promise<string> {
-    // Get currency from price list
+    // Get currency and current version from price list
     const priceList = await db
-      .select({ currency: priceLists.currency })
+      .select({ currency: priceLists.currency, currentVersion: priceLists.currentVersion })
       .from(priceLists)
       .where(eq(priceLists.code, exchange.toUpperCase()))
       .limit(1)
@@ -343,7 +350,13 @@ export class PriceListController extends Controller {
       throw NotFound(`Price list '${exchange.toUpperCase()}' not found`)
     }
 
-    const results = await calculateEffectivePrices(exchange, locationId, priceList[0].currency)
+    const resolvedVersion = version ?? priceList[0].currentVersion
+    const results = await calculateEffectivePrices(
+      exchange,
+      locationId,
+      priceList[0].currency,
+      resolvedVersion
+    )
 
     // Build CSV
     const headers = [
@@ -391,7 +404,11 @@ export class PriceListController extends Controller {
    * @param exchange The exchange code (KAWA, CI1, NC1, IC1, AI1)
    */
   @Get('{exchange}')
-  public async getPricesByExchange(@Path() exchange: string): Promise<PriceListResponse[]> {
+  public async getPricesByExchange(
+    @Path() exchange: string,
+    @Query() version?: number
+  ): Promise<PriceListResponse[]> {
+    const resolvedVersion = await resolveVersion(exchange, version)
     const results = await db
       .select({
         id: prices.id,
@@ -411,7 +428,9 @@ export class PriceListController extends Controller {
       .innerJoin(priceLists, eq(prices.priceListCode, priceLists.code))
       .leftJoin(fioCommodities, eq(prices.commodityTicker, fioCommodities.ticker))
       .leftJoin(fioLocations, eq(prices.locationId, fioLocations.naturalId))
-      .where(eq(prices.priceListCode, exchange.toUpperCase()))
+      .where(
+        and(eq(prices.priceListCode, exchange.toUpperCase()), eq(prices.version, resolvedVersion))
+      )
       .orderBy(prices.commodityTicker, prices.locationId)
 
     return results.map(r => ({
@@ -428,8 +447,10 @@ export class PriceListController extends Controller {
   @Get('{exchange}/{locationId}')
   public async getPricesByExchangeAndLocation(
     @Path() exchange: string,
-    @Path() locationId: string
+    @Path() locationId: string,
+    @Query() version?: number
   ): Promise<PriceListResponse[]> {
+    const resolvedVersion = await resolveVersion(exchange, version)
     const results = await db
       .select({
         id: prices.id,
@@ -452,6 +473,7 @@ export class PriceListController extends Controller {
       .where(
         and(
           eq(prices.priceListCode, exchange.toUpperCase()),
+          eq(prices.version, resolvedVersion),
           eq(prices.locationId, locationId) // Location IDs are case-sensitive
         )
       )
@@ -473,8 +495,10 @@ export class PriceListController extends Controller {
   public async getPrice(
     @Path() exchange: string,
     @Path() locationId: string,
-    @Path() ticker: string
+    @Path() ticker: string,
+    @Query() version?: number
   ): Promise<PriceListResponse> {
+    const resolvedVersion = await resolveVersion(exchange, version)
     const results = await db
       .select({
         id: prices.id,
@@ -497,6 +521,7 @@ export class PriceListController extends Controller {
       .where(
         and(
           eq(prices.priceListCode, exchange.toUpperCase()),
+          eq(prices.version, resolvedVersion),
           eq(prices.locationId, locationId), // Location IDs are case-sensitive
           eq(prices.commodityTicker, ticker.toUpperCase())
         )
@@ -529,7 +554,7 @@ export class PriceListController extends Controller {
 
     // Validate price list exists
     const priceListExists = await db
-      .select({ code: priceLists.code })
+      .select({ code: priceLists.code, currentVersion: priceLists.currentVersion })
       .from(priceLists)
       .where(eq(priceLists.code, priceListCode))
       .limit(1)
@@ -537,6 +562,8 @@ export class PriceListController extends Controller {
     if (priceListExists.length === 0) {
       throw BadRequest(`Exchange '${priceListCode}' not found`)
     }
+
+    const targetVersion = body.version ?? priceListExists[0].currentVersion
 
     // Validate commodity exists
     const commodityExists = await db
@@ -560,13 +587,14 @@ export class PriceListController extends Controller {
       throw BadRequest(`Location '${locationId}' not found`)
     }
 
-    // Check if price already exists (unique: priceListCode + commodityTicker + locationId)
+    // Check if price already exists (unique: priceListCode + version + commodityTicker + locationId)
     const existing = await db
       .select({ id: prices.id })
       .from(prices)
       .where(
         and(
           eq(prices.priceListCode, priceListCode),
+          eq(prices.version, targetVersion),
           eq(prices.commodityTicker, commodityTicker),
           eq(prices.locationId, locationId)
         )
@@ -575,13 +603,14 @@ export class PriceListController extends Controller {
 
     if (existing.length > 0) {
       throw Conflict(
-        `Price for ${commodityTicker} at ${locationId} on ${priceListCode} already exists`
+        `Price for ${commodityTicker} at ${locationId} on ${priceListCode} v${targetVersion} already exists`
       )
     }
 
     // Insert the price
     await db.insert(prices).values({
       priceListCode,
+      version: targetVersion,
       commodityTicker,
       locationId,
       price: body.price.toFixed(2),
@@ -592,7 +621,7 @@ export class PriceListController extends Controller {
     this.setStatus(201)
 
     // Fetch and return the created price
-    return this.getPrice(priceListCode, locationId, commodityTicker)
+    return this.getPrice(priceListCode, locationId, commodityTicker, targetVersion)
   }
 
   /**

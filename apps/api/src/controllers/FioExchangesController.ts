@@ -12,8 +12,8 @@ import {
   Tags,
 } from 'tsoa'
 import type { Currency } from '@kawakawa/types'
-import { db, priceLists, fioLocations } from '../db/index.js'
-import { eq } from 'drizzle-orm'
+import { db, priceLists, priceListVersions, fioLocations } from '../db/index.js'
+import { eq, and } from 'drizzle-orm'
 import { NotFound, BadRequest, Conflict } from '../utils/errors.js'
 import type { PriceListType } from './PriceListsController.js'
 
@@ -38,14 +38,14 @@ interface CreateFioExchangeRequest {
   description?: string | null
   type?: PriceListType // Defaults to 'custom'
   currency: Currency
-  defaultLocationId?: string | null
+  /** Required: default location for the initial version */
+  defaultLocationId: string
 }
 
 interface UpdateFioExchangeRequest {
   name?: string
   description?: string | null
   currency?: Currency
-  defaultLocationId?: string | null
   isActive?: boolean
 }
 
@@ -65,14 +65,21 @@ export class FioExchangesController extends Controller {
         description: priceLists.description,
         type: priceLists.type,
         currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
+        defaultLocationId: priceListVersions.defaultLocationId,
         defaultLocationName: fioLocations.name,
         isActive: priceLists.isActive,
         createdAt: priceLists.createdAt,
         updatedAt: priceLists.updatedAt,
       })
       .from(priceLists)
-      .leftJoin(fioLocations, eq(priceLists.defaultLocationId, fioLocations.naturalId))
+      .leftJoin(
+        priceListVersions,
+        and(
+          eq(priceListVersions.priceListCode, priceLists.code),
+          eq(priceListVersions.version, priceLists.currentVersion)
+        )
+      )
+      .leftJoin(fioLocations, eq(priceListVersions.defaultLocationId, fioLocations.naturalId))
       .orderBy(priceLists.code)
 
     return results.map(r => ({
@@ -104,14 +111,21 @@ export class FioExchangesController extends Controller {
         description: priceLists.description,
         type: priceLists.type,
         currency: priceLists.currency,
-        defaultLocationId: priceLists.defaultLocationId,
+        defaultLocationId: priceListVersions.defaultLocationId,
         defaultLocationName: fioLocations.name,
         isActive: priceLists.isActive,
         createdAt: priceLists.createdAt,
         updatedAt: priceLists.updatedAt,
       })
       .from(priceLists)
-      .leftJoin(fioLocations, eq(priceLists.defaultLocationId, fioLocations.naturalId))
+      .leftJoin(
+        priceListVersions,
+        and(
+          eq(priceListVersions.priceListCode, priceLists.code),
+          eq(priceListVersions.version, priceLists.currentVersion)
+        )
+      )
+      .leftJoin(fioLocations, eq(priceListVersions.defaultLocationId, fioLocations.naturalId))
       .where(eq(priceLists.code, code.toUpperCase()))
       .limit(1)
 
@@ -158,17 +172,19 @@ export class FioExchangesController extends Controller {
       throw Conflict(`Exchange '${code}' already exists`)
     }
 
-    // Validate location if provided
-    if (body.defaultLocationId) {
-      const location = await db
-        .select({ naturalId: fioLocations.naturalId })
-        .from(fioLocations)
-        .where(eq(fioLocations.naturalId, body.defaultLocationId))
-        .limit(1)
+    if (!body.defaultLocationId) {
+      throw BadRequest('defaultLocationId is required')
+    }
 
-      if (location.length === 0) {
-        throw BadRequest(`Location '${body.defaultLocationId}' not found`)
-      }
+    // Validate location
+    const location = await db
+      .select({ naturalId: fioLocations.naturalId })
+      .from(fioLocations)
+      .where(eq(fioLocations.naturalId, body.defaultLocationId))
+      .limit(1)
+
+    if (location.length === 0) {
+      throw BadRequest(`Location '${body.defaultLocationId}' not found`)
     }
 
     // Insert the price list
@@ -178,8 +194,16 @@ export class FioExchangesController extends Controller {
       description: body.description ?? null,
       type: body.type ?? 'custom',
       currency: body.currency,
-      defaultLocationId: body.defaultLocationId ?? null,
       isActive: true,
+    })
+
+    // Initial version 1 carries the default location
+    await db.insert(priceListVersions).values({
+      priceListCode: code,
+      version: 1,
+      label: 'Initial version',
+      defaultLocationId: location[0].naturalId,
+      promotedAt: new Date(),
     })
 
     this.setStatus(201)
@@ -222,26 +246,12 @@ export class FioExchangesController extends Controller {
       }
     }
 
-    // Validate location if being updated
-    if (body.defaultLocationId !== undefined && body.defaultLocationId !== null) {
-      const location = await db
-        .select({ naturalId: fioLocations.naturalId })
-        .from(fioLocations)
-        .where(eq(fioLocations.naturalId, body.defaultLocationId))
-        .limit(1)
-
-      if (location.length === 0) {
-        throw BadRequest(`Location '${body.defaultLocationId}' not found`)
-      }
-    }
-
     // Build update object
     const updateData: Partial<typeof priceLists.$inferInsert> = {
       updatedAt: new Date(),
     }
     if (body.name !== undefined) updateData.name = body.name
     if (body.description !== undefined) updateData.description = body.description
-    if (body.defaultLocationId !== undefined) updateData.defaultLocationId = body.defaultLocationId
     if (body.currency !== undefined) updateData.currency = body.currency
     if (body.isActive !== undefined) updateData.isActive = body.isActive
 

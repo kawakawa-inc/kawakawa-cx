@@ -28,6 +28,10 @@ vi.mock('../../db/index.js', () => ({
         // Route to different mocks based on table
         if (table === 'priceLists') {
           return {
+            // FIO sync now joins price_list_versions for the per-version default location
+            innerJoin: () => ({
+              where: () => mockPriceListsResult(),
+            }),
             where: () => mockPriceListsResult(),
           }
         } else if (table === 'fioCommodities') {
@@ -61,6 +65,7 @@ vi.mock('../../db/index.js', () => ({
   },
   prices: 'prices',
   priceLists: 'priceLists',
+  priceListVersions: 'priceListVersions',
   fioCommodities: 'fioCommodities',
 }))
 

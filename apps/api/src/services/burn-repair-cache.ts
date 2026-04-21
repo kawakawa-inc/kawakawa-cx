@@ -101,14 +101,19 @@ export async function computeBurnRepairCache(
     const effectiveRepairDays = overrides.repairDays ?? repairDays
     const willRepair = effectiveRepairDays >= 0
 
-    // Workforce burn: calculate for 1 day to get daily rate
-    const burnResults = calculateWorkforceBurn(input.workforce, 1)
+    // Workforce burn: calculate for 1 day to get daily rate.
+    // fractional=true so sub-unit rates (eg. 0.33/day) aren't rounded up.
+    const burnResults = calculateWorkforceBurn(input.workforce, 1, { fractional: true })
 
-    // Production inputs: always included, 1-day rate
-    const inputResults = calculateProductionNeeds(input.production, 1, willRepair)
+    // Production inputs: always included, 1-day fractional rate
+    const inputResults = calculateProductionNeeds(input.production, 1, willRepair, {
+      fractional: true,
+    })
 
-    // Production outputs: 1-day rate
-    const outputResults = calculateProductionOutputs(input.production, 1, willRepair)
+    // Production outputs: 1-day fractional rate
+    const outputResults = calculateProductionOutputs(input.production, 1, willRepair, {
+      fractional: true,
+    })
 
     // Repair: calculate total at configured repairDays (non-linear, can't reduce to daily)
     const repairTotals = new Map<string, number>()

@@ -107,13 +107,15 @@ export function calculateBuildingRepairNeeds(
 /**
  * Calculate workforce consumable burn for a planet.
  *
- * total = ceil(UnitsPerInterval * days)
+ *   default: total = ceil(UnitsPerInterval * days)  — shopping list / whole units
+ *   fractional: total = UnitsPerInterval * days     — rates / cost math
  *
  * Static calculation — not affected by building condition.
  */
 export function calculateWorkforceBurn(
   workforce: WorkforceData[],
-  burnDays: number
+  burnDays: number,
+  options: { fractional?: boolean } = {}
 ): { ticker: string; amount: number }[] {
   if (burnDays <= 0) return []
 
@@ -121,7 +123,8 @@ export function calculateWorkforceBurn(
   for (const wf of workforce) {
     if (wf.population <= 0) continue
     for (const need of wf.needs) {
-      const total = Math.ceil(need.unitsPerInterval * burnDays)
+      const raw = need.unitsPerInterval * burnDays
+      const total = options.fractional ? raw : Math.ceil(raw)
       if (total > 0) {
         totals.set(need.ticker, (totals.get(need.ticker) ?? 0) + total)
       }
@@ -167,7 +170,8 @@ function calculateLineProduction(
   line: ProductionData,
   days: number,
   willRepair: boolean,
-  mode: 'inputs' | 'outputs' | 'both'
+  mode: 'inputs' | 'outputs' | 'both',
+  options: { fractional?: boolean } = {}
 ): Map<string, number> {
   const totals = new Map<string, number>()
   const hoursInPeriod = 24 * days
@@ -215,7 +219,8 @@ function calculateLineProduction(
 
     if (mode === 'inputs' || mode === 'both') {
       for (const mat of recipe.inputs) {
-        const need = Math.ceil(mat.amount * runs)
+        const raw = mat.amount * runs
+        const need = options.fractional ? raw : Math.ceil(raw)
         if (need > 0) {
           totals.set(mat.ticker, (totals.get(mat.ticker) ?? 0) + need)
         }
@@ -224,7 +229,8 @@ function calculateLineProduction(
 
     if (mode === 'outputs' || mode === 'both') {
       for (const mat of recipe.outputs) {
-        const produced = Math.floor(mat.amount * runs)
+        const raw = mat.amount * runs
+        const produced = options.fractional ? raw : Math.floor(raw)
         if (produced > 0) {
           totals.set(mat.ticker, (totals.get(mat.ticker) ?? 0) + produced)
         }
@@ -249,13 +255,14 @@ function calculateLineProduction(
 export function calculateProductionNeeds(
   production: ProductionData[],
   days: number,
-  willRepair: boolean
+  willRepair: boolean,
+  options: { fractional?: boolean } = {}
 ): { ticker: string; amount: number }[] {
   if (days <= 0) return []
 
   const totals = new Map<string, number>()
   for (const line of production) {
-    const lineResults = calculateLineProduction(line, days, willRepair, 'inputs')
+    const lineResults = calculateLineProduction(line, days, willRepair, 'inputs', options)
     for (const [ticker, amount] of lineResults) {
       totals.set(ticker, (totals.get(ticker) ?? 0) + amount)
     }
@@ -276,13 +283,14 @@ export function calculateProductionNeeds(
 export function calculateProductionOutputs(
   production: ProductionData[],
   days: number,
-  willRepair: boolean
+  willRepair: boolean,
+  options: { fractional?: boolean } = {}
 ): { ticker: string; amount: number }[] {
   if (days <= 0) return []
 
   const totals = new Map<string, number>()
   for (const line of production) {
-    const lineResults = calculateLineProduction(line, days, willRepair, 'outputs')
+    const lineResults = calculateLineProduction(line, days, willRepair, 'outputs', options)
     for (const [ticker, amount] of lineResults) {
       totals.set(ticker, (totals.get(ticker) ?? 0) + amount)
     }

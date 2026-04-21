@@ -8,11 +8,13 @@ import {
   fioPlanetWorkforce,
   fioUserStorage,
   fioInventory,
+  sellOrders,
 } from '../db/index.js'
 import { eq, inArray, sql, and, gt } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 import { getRepairableTickers } from '../services/planet-data-helpers.js'
+import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
 import type {
   BurnRepairMyBasesResponse,
   BurnRepairPlanetSummary,
@@ -130,21 +132,29 @@ export class BurnRepairController extends Controller {
     const { activeUserIds, staleUserCount } = await this.getIncludedUserIds(request.user.userId)
 
     if (activeUserIds.length === 0) {
-      return { materials: [], includedUserCount: 0, staleUserCount }
+      return {
+        materials: [],
+        includedUserCount: 0,
+        staleUserCount,
+        availableSurplus: {},
+      }
     }
 
-    const rows = await db
-      .select({
-        commodityTicker: burnRepairCache.commodityTicker,
-        burnDaily: sql<string>`SUM(${burnRepairCache.burnDaily})`,
-        inputsDaily: sql<string>`SUM(${burnRepairCache.inputsDaily})`,
-        repairTotal: sql<string>`SUM(${burnRepairCache.repairTotal})`,
-        productionDaily: sql<string>`SUM(${burnRepairCache.productionDaily})`,
-      })
-      .from(burnRepairCache)
-      .where(inArray(burnRepairCache.userId, activeUserIds))
-      .groupBy(burnRepairCache.commodityTicker)
-      .orderBy(burnRepairCache.commodityTicker)
+    const [rows, availableSurplus] = await Promise.all([
+      db
+        .select({
+          commodityTicker: burnRepairCache.commodityTicker,
+          burnDaily: sql<string>`SUM(${burnRepairCache.burnDaily})`,
+          inputsDaily: sql<string>`SUM(${burnRepairCache.inputsDaily})`,
+          repairTotal: sql<string>`SUM(${burnRepairCache.repairTotal})`,
+          productionDaily: sql<string>`SUM(${burnRepairCache.productionDaily})`,
+        })
+        .from(burnRepairCache)
+        .where(inArray(burnRepairCache.userId, activeUserIds))
+        .groupBy(burnRepairCache.commodityTicker)
+        .orderBy(burnRepairCache.commodityTicker),
+      this.computeAvailableSurplus(activeUserIds),
+    ])
 
     const materials: BurnRepairCorpMaterial[] = rows.map(r => ({
       commodityTicker: r.commodityTicker,
@@ -154,7 +164,47 @@ export class BurnRepairController extends Controller {
       productionDaily: Number(r.productionDaily),
     }))
 
-    return { materials, includedUserCount: activeUserIds.length, staleUserCount }
+    return {
+      materials,
+      includedUserCount: activeUserIds.length,
+      staleUserCount,
+      availableSurplus,
+    }
+  }
+
+  /**
+   * Sum corp-wide remaining sell-order quantity per ticker.
+   * Uses the same enrichment pipeline as /sell-orders so reservations and FIO-aware
+   * fulfilment are accounted for; we just collapse to ticker totals.
+   */
+  private async computeAvailableSurplus(
+    userIds: number[]
+  ): Promise<Record<string, number>> {
+    if (userIds.length === 0) return {}
+
+    const orders = await db
+      .select({
+        id: sellOrders.id,
+        userId: sellOrders.userId,
+        commodityTicker: sellOrders.commodityTicker,
+        locationId: sellOrders.locationId,
+        limitMode: sellOrders.limitMode,
+        limitQuantity: sellOrders.limitQuantity,
+      })
+      .from(sellOrders)
+      .where(inArray(sellOrders.userId, userIds))
+
+    if (orders.length === 0) return {}
+
+    const quantityMap = await enrichSellOrdersWithQuantities(orders)
+
+    const totals: Record<string, number> = {}
+    for (const o of orders) {
+      const q = quantityMap.get(o.id)?.remainingQuantity ?? 0
+      if (q <= 0) continue
+      totals[o.commodityTicker] = (totals[o.commodityTicker] ?? 0) + q
+    }
+    return totals
   }
 
   /**

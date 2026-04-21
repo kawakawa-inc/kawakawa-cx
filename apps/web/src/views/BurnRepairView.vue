@@ -211,6 +211,20 @@
           </v-card-text>
         </v-card>
 
+        <div
+          v-if="filteredPlanets.length > 0"
+          class="d-flex justify-end mb-2"
+        >
+          <v-btn
+            variant="tonal"
+            size="small"
+            prepend-icon="mdi-content-copy"
+            @click="copyMyBasesSummaryCsv"
+          >
+            Copy Summary CSV
+          </v-btn>
+        </div>
+
         <v-expansion-panels v-model="expandedPanels" multiple>
           <v-expansion-panel
             v-for="planet in filteredPlanets"
@@ -388,24 +402,46 @@
                 <template #body.append>
                   <tr>
                     <td :colspan="7" class="text-right text-medium-emphasis">
-                      Revenue ({{ priceListCurrency }}):
+                      Production Revenue ({{ priceListCurrency }}):
                     </td>
                     <td class="text-center text-success">
-                      {{ formatCurrency(planetPriceTotals(planet).perDayRevenue) }}
+                      {{ formatCurrency(planetPriceTotals(planet).perDayProduction) }}
                     </td>
                     <td class="text-center text-success">
-                      {{ formatCurrency(planetPriceTotals(planet).totalRevenue) }}
+                      {{ formatCurrency(planetPriceTotals(planet).totalProduction) }}
                     </td>
                   </tr>
                   <tr>
                     <td :colspan="7" class="text-right text-medium-emphasis">
-                      Cost ({{ priceListCurrency }}):
+                      Workforce Cost ({{ priceListCurrency }}):
                     </td>
                     <td class="text-center text-error">
-                      {{ formatCurrency(planetPriceTotals(planet).perDayCost) }}
+                      {{ formatCurrency(planetPriceTotals(planet).perDayWorkforce) }}
                     </td>
                     <td class="text-center text-error">
-                      {{ formatCurrency(planetPriceTotals(planet).totalCost) }}
+                      {{ formatCurrency(planetPriceTotals(planet).totalWorkforce) }}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td :colspan="7" class="text-right text-medium-emphasis">
+                      Production Inputs ({{ priceListCurrency }}):
+                    </td>
+                    <td class="text-center text-error">
+                      {{ formatCurrency(planetPriceTotals(planet).perDayInputs) }}
+                    </td>
+                    <td class="text-center text-error">
+                      {{ formatCurrency(planetPriceTotals(planet).totalInputs) }}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td :colspan="7" class="text-right text-medium-emphasis">
+                      Repair ({{ priceListCurrency }}):
+                    </td>
+                    <td class="text-center text-error">
+                      {{ formatCurrency(planetPriceTotals(planet).perDayRepair) }}
+                    </td>
+                    <td class="text-center text-error">
+                      {{ formatCurrency(planetPriceTotals(planet).totalRepair) }}
                     </td>
                   </tr>
                   <tr class="font-weight-bold">
@@ -504,6 +540,13 @@
                 >
                   {{ formatNumber(item.productionDaily - item.burnDaily - item.inputsDaily) }}
                 </span>
+              </template>
+              <template #item.available="{ item }">
+                {{ formatNumber(corpAvailableFor(item.commodityTicker)) }}
+              </template>
+              <template #item.daysRemaining="{ item }">
+                <span v-if="corpDaysRemaining(item) === null" class="text-medium-emphasis">—</span>
+                <span v-else>{{ formatNumber(corpDaysRemaining(item)!) }}</span>
               </template>
             </v-data-table>
           </v-card>
@@ -843,12 +886,35 @@ const myBasesHeaders = computed(() => [
 
 const corpMaterialHeaders = [
   { title: 'Material', key: 'commodityTicker', sortable: false },
-  { title: 'Burn/Day', key: 'burnDaily', sortable: false },
-  { title: 'Inputs/Day', key: 'inputsDaily', sortable: false },
-  { title: 'Repair', key: 'repairTotal', sortable: false },
-  { title: 'Production/Day', key: 'productionDaily', sortable: false },
-  { title: 'Net/Day', key: 'netDaily', sortable: false },
+  { title: 'Burn/Day', key: 'burnDaily', sortable: false, align: 'center' as const },
+  { title: 'Inputs/Day', key: 'inputsDaily', sortable: false, align: 'center' as const },
+  { title: 'Repair', key: 'repairTotal', sortable: false, align: 'center' as const },
+  { title: 'Production/Day', key: 'productionDaily', sortable: false, align: 'center' as const },
+  { title: 'Net/Day', key: 'netDaily', sortable: false, align: 'center' as const },
+  { title: 'Available', key: 'available', sortable: false, align: 'center' as const },
+  { title: 'Days Remaining', key: 'daysRemaining', sortable: false, align: 'center' as const },
 ]
+
+function corpAvailableFor(ticker: string): number {
+  return corpData.value?.availableSurplus?.[ticker] ?? 0
+}
+
+/**
+ * Days the corp-wide surplus would cover the daily shortage.
+ * Only meaningful when (burn + inputs) > production. Returns null otherwise.
+ */
+function corpDaysRemaining(m: {
+  commodityTicker: string
+  burnDaily: number
+  inputsDaily: number
+  productionDaily: number
+}): number | null {
+  const deficit = m.burnDaily + m.inputsDaily - m.productionDaily
+  if (deficit <= 0) return null
+  const available = corpAvailableFor(m.commodityTicker)
+  if (available <= 0) return 0
+  return available / deficit
+}
 
 const corpWorkforceHeaders = [
   { title: 'Type', key: 'type', sortable: false },
@@ -1110,33 +1176,54 @@ function totalPrice(planetId: string, m: BurnRepairCacheRow): number {
   return priceFor(planetId, m.commodityTicker) * netTotal(m)
 }
 
-function planetPriceTotals(planet: { planetNaturalId: string; materials: BurnRepairCacheRow[] }): {
-  perDayRevenue: number
-  perDayCost: number
-  perDay: number
-  totalRevenue: number
-  totalCost: number
-  total: number
-} {
-  let perDayRevenue = 0
-  let perDayCost = 0
-  let totalRevenue = 0
-  let totalCost = 0
+/**
+ * Per-planet cash-flow breakdown, matching PRUNplanner's categories so numbers
+ * compare 1:1. Costs are signed negative so rows sum cleanly to the net.
+ *
+ *   net = production_revenue + workforce + inputs + repair
+ *
+ * Period math:
+ *   - workforce/inputs/production flow at daily rate × burnDays
+ *   - repair is a lump sum over repairDays, so "perDay" = repairTotal / repairDays
+ *     and "total" = repairTotal (independent of burnDays)
+ */
+function planetPriceTotals(planet: { planetNaturalId: string; materials: BurnRepairCacheRow[] }) {
+  let perDayProduction = 0
+  let perDayWorkforce = 0
+  let perDayInputs = 0
+  let perDayRepair = 0
   for (const m of planet.materials) {
-    const pd = pricePerDay(planet.planetNaturalId, m)
-    const tp = totalPrice(planet.planetNaturalId, m)
-    if (pd > 0) perDayRevenue += pd
-    else perDayCost += pd
-    if (tp > 0) totalRevenue += tp
-    else totalCost += tp
+    const price = priceFor(planet.planetNaturalId, m.commodityTicker)
+    if (price === 0) continue
+    perDayProduction += price * m.productionDaily
+    perDayWorkforce -= price * m.burnDaily
+    perDayInputs -= price * m.inputsDaily
+    perDayRepair -= price * repairDaily(m)
   }
+  const perDay = perDayProduction + perDayWorkforce + perDayInputs + perDayRepair
+
+  const totalProduction = perDayProduction * burnDays.value
+  const totalWorkforce = perDayWorkforce * burnDays.value
+  const totalInputs = perDayInputs * burnDays.value
+  // Repair: full repairTotal × price is the commitment over repairDays
+  let totalRepair = 0
+  for (const m of planet.materials) {
+    const price = priceFor(planet.planetNaturalId, m.commodityTicker)
+    totalRepair -= price * m.repairTotal
+  }
+  const total = totalProduction + totalWorkforce + totalInputs + totalRepair
+
   return {
-    perDayRevenue,
-    perDayCost,
-    perDay: perDayRevenue + perDayCost,
-    totalRevenue,
-    totalCost,
-    total: totalRevenue + totalCost,
+    perDayProduction,
+    perDayWorkforce,
+    perDayInputs,
+    perDayRepair,
+    perDay,
+    totalProduction,
+    totalWorkforce,
+    totalInputs,
+    totalRepair,
+    total,
   }
 }
 
@@ -1160,6 +1247,37 @@ async function copyCsv(headers: string[], rows: unknown[][], successLabel = 'CSV
     snackbar.color = 'error'
   }
   snackbar.show = true
+}
+
+function copyMyBasesSummaryCsv(): void {
+  const headers = [
+    'Location Name',
+    'Location ID',
+    'Production Buildings',
+    'Production Revenue',
+    'Workforce Cost',
+    'Production Inputs',
+    'Repair',
+    'Net Total',
+  ]
+  const rows = filteredPlanets.value.map(planet => {
+    const productionBuildings = aggregateBuildings(planet.buildings)
+      .filter(b => b.color !== 'info')
+      .map(b => `${b.ticker}:${b.count}`)
+      .join(', ')
+    const totals = planetPriceTotals(planet)
+    return [
+      planet.planetName,
+      planet.planetNaturalId,
+      productionBuildings,
+      totals.perDayProduction,
+      totals.perDayWorkforce,
+      totals.perDayInputs,
+      totals.perDayRepair,
+      totals.perDay,
+    ]
+  })
+  void copyCsv(headers, rows, 'My Bases summary')
 }
 
 function copyMyBasesCsv(planet: BurnRepairPlanetSummary): void {
@@ -1196,15 +1314,22 @@ function copyCorpMaterialsCsv(): void {
     'Repair',
     'Production/Day',
     'Net/Day',
+    'Available',
+    'Days Remaining',
   ]
-  const rows = (corpData.value?.materials ?? []).map(m => [
-    m.commodityTicker,
-    m.burnDaily,
-    m.inputsDaily,
-    m.repairTotal,
-    m.productionDaily,
-    m.productionDaily - m.burnDaily - m.inputsDaily,
-  ])
+  const rows = (corpData.value?.materials ?? []).map(m => {
+    const days = corpDaysRemaining(m)
+    return [
+      m.commodityTicker,
+      m.burnDaily,
+      m.inputsDaily,
+      m.repairTotal,
+      m.productionDaily,
+      m.productionDaily - m.burnDaily - m.inputsDaily,
+      corpAvailableFor(m.commodityTicker),
+      days === null ? '' : days,
+    ]
+  })
   void copyCsv(headers, rows, 'Corp materials')
 }
 

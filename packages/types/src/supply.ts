@@ -174,6 +174,12 @@ export interface BurnRepairCorpResponse {
   includedUserCount: number
   /** Users with matching roles whose data is older than 30 days (excluded from aggregation) */
   staleUserCount: number
+  /**
+   * Corp-wide quantity available for purchase right now — sum of remaining sell-order
+   * quantities across all included users, keyed by ticker. Informational only;
+   * not part of the burn rate math.
+   */
+  availableSurplus: Record<string, number>
 }
 
 /** Response for GET /burn-repair/corp/buildings */

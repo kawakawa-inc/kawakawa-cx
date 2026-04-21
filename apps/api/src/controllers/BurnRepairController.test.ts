@@ -32,6 +32,14 @@ vi.mock('../db/index.js', () => {
       commodityTicker: 'commodity_ticker',
       quantity: 'quantity',
     },
+    sellOrders: {
+      id: 'id',
+      userId: 'user_id',
+      commodityTicker: 'commodity_ticker',
+      locationId: 'location_id',
+      limitMode: 'limit_mode',
+      limitQuantity: 'limit_quantity',
+    },
   }
 })
 
@@ -41,6 +49,10 @@ vi.mock('../services/userSettingsService.js', () => ({
 
 vi.mock('../services/planet-data-helpers.js', () => ({
   getRepairableTickers: vi.fn(async () => new Set(['FRM'])),
+}))
+
+vi.mock('@kawakawa/services/market', () => ({
+  enrichSellOrdersWithQuantities: vi.fn(async () => new Map()),
 }))
 
 import { db } from '../db/index.js'
@@ -198,10 +210,18 @@ describe('BurnRepairController', () => {
         }),
       }
 
+      // Query 4: sell orders for surplus aggregation (no orders for this test)
+      const sellOrdersChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+
       vi.mocked(db.select)
         .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(freshChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
 
       const result = await controller.getCorpOverview(mockRequest)
 
@@ -210,6 +230,7 @@ describe('BurnRepairController', () => {
       expect(result.materials).toHaveLength(1)
       expect(result.materials[0].commodityTicker).toBe('RAT')
       expect(result.materials[0].burnDaily).toBe(8)
+      expect(result.availableSurplus).toEqual({})
     })
   })
 

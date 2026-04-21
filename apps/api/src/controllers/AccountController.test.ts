@@ -39,7 +39,7 @@ vi.mock('../utils/password.js', () => ({
 }))
 
 // Mock the userSettingsService (now used for FIO credentials)
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getFioCredentials: vi.fn(),
   hasFioCredentials: vi.fn(),
 }))

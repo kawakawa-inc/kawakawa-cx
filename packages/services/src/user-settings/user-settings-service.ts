@@ -4,7 +4,7 @@
 // Resolution order: code defaults -> admin defaults -> user overrides
 
 import { createLogger } from '../utils/logger.js'
-import { db, userSettings } from '../db/index.js'
+import { db, userSettings } from '@kawakawa/db'
 import { eq, and } from 'drizzle-orm'
 import {
   SETTING_DEFINITIONS,
@@ -13,7 +13,7 @@ import {
   isSettingSensitive,
 } from '@kawakawa/types/settings'
 import type { SettingDefinition } from '@kawakawa/types'
-import { settingsService } from './settingsService.js'
+import { settingsService } from '../settings/index.js'
 
 const log = createLogger({ service: 'userSettings' })
 

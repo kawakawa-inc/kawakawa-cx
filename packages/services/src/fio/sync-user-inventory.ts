@@ -1,11 +1,11 @@
 // Sync user inventory from FIO API to database using GroupHub endpoint
 // GroupHub provides NaturalId mapping and timestamps for all locations
 import { eq } from 'drizzle-orm'
-import { db, fioInventory, fioUserStorage, fioLocations, fioCommodities } from '../../db/index.js'
+import { db, fioInventory, fioUserStorage, fioLocations, fioCommodities } from '@kawakawa/db'
 import { FioClient } from './client.js'
 import type { FioGroupHubResponse, FioGroupHubStorage } from './types.js'
 import type { SyncResult } from './sync-types.js'
-import { createLogger } from '../../utils/logger.js'
+import { createLogger } from '../utils/logger.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'user-inventory' })
 

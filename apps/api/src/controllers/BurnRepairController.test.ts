@@ -43,11 +43,11 @@ vi.mock('../db/index.js', () => {
   }
 })
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getSetting: vi.fn(),
 }))
 
-vi.mock('../services/planet-data-helpers.js', () => ({
+vi.mock('@kawakawa/services/supply', () => ({
   getRepairableTickers: vi.fn(async () => new Set(['FRM'])),
 }))
 
@@ -56,7 +56,7 @@ vi.mock('@kawakawa/services/market', () => ({
 }))
 
 import { db } from '../db/index.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
 describe('BurnRepairController', () => {
   let controller: BurnRepairController

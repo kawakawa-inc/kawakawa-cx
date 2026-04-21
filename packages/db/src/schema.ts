@@ -37,6 +37,17 @@ export const sellOrderLimitModeEnum = pgEnum('sell_order_limit_mode', [
   'reserve',
 ])
 export const orderTypeEnum = pgEnum('order_type', ['internal', 'partner']) // Shared enum for sell/buy orders
+export const syncJobTypeEnum = pgEnum('sync_job_type', [
+  'user-inventory',
+  'user-planets-list',
+  'planet-detail',
+  'cache-recompute',
+  'commodities',
+  'locations',
+  'stations',
+])
+export const syncJobStatusEnum = pgEnum('sync_job_status', ['pending', 'running', 'done', 'failed'])
+export const syncJobSourceEnum = pgEnum('sync_job_source', ['user', 'system'])
 export const notificationTypeEnum = pgEnum('notification_type', [
   'reservation_placed',
   'reservation_confirmed',
@@ -51,6 +62,9 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'user_auto_approved',
   'user_approved',
   'user_rejected',
+  'sync_queued',
+  'sync_completed',
+  'sync_failed',
 ])
 export const reservationStatusEnum = pgEnum('reservation_status', [
   'pending',
@@ -624,6 +638,53 @@ export const burnRepairCache = pgTable(
     ),
     userIdx: index('burn_repair_cache_user_idx').on(table.userId),
     userPlanetIdx: index('burn_repair_cache_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== SYNC QUEUE ====================
+// Centralized queue for all FIO-bound work. One worker pulls jobs by
+// (status, priority desc, next_attempt_at asc) and processes them one at a time,
+// so nothing parallel-slams the FIO API. Planet-detail jobs are enqueued as
+// children of a planets-list job; when the last child finishes, a
+// cache-recompute job is auto-enqueued for that user.
+export const syncJobs = pgTable(
+  'sync_jobs',
+  {
+    id: serial('id').primaryKey(),
+    jobType: syncJobTypeEnum('job_type').notNull(),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    /** Job-specific data, e.g. { planetNaturalId: "CB-282d" } for planet-detail. */
+    payload: jsonb('payload').notNull().default({}),
+    /** Higher = runs sooner. Defaults: 100 system, 200 user-requested. */
+    priority: integer('priority').notNull().default(100),
+    source: syncJobSourceEnum('source').notNull().default('system'),
+    status: syncJobStatusEnum('status').notNull().default('pending'),
+    parentJobId: integer('parent_job_id'),
+    notifyOnComplete: boolean('notify_on_complete').notNull().default(false),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    nextAttemptAt: timestamp('next_attempt_at').defaultNow().notNull(),
+    enqueuedAt: timestamp('enqueued_at').defaultNow().notNull(),
+    startedAt: timestamp('started_at'),
+    finishedAt: timestamp('finished_at'),
+    error: text('error'),
+  },
+  table => ({
+    // Worker's "next job" query — highest priority, oldest ready-to-run pending job.
+    pickNextIdx: index('sync_jobs_pick_next_idx').on(
+      table.status,
+      table.priority,
+      table.nextAttemptAt
+    ),
+    // Dedup lookup: does this user already have an unfinished job of this type?
+    userStatusIdx: index('sync_jobs_user_status_idx').on(table.userId, table.status, table.jobType),
+    // Children of a given parent (for completion tracking + cache-recompute fanout).
+    parentIdx: index('sync_jobs_parent_idx').on(table.parentJobId),
+    parentFk: foreignKey({
+      columns: [table.parentJobId],
+      foreignColumns: [table.id],
+      name: 'sync_jobs_parent_job_id_fk',
+    }).onDelete('set null'),
   })
 )
 

@@ -7,10 +7,10 @@ import { db } from '../db/index.js'
 import { fioPlanetProduction, fioPlanetWorkforce, fioPlanetBuildings } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import type { BuildingData } from '@kawakawa/types'
-import { calculateBuildingRepairNeeds } from './supply-calculator.js'
-import { FioClient } from './fio/client.js'
-import type { FioBuilding } from './fio/types.js'
-import * as userSettingsService from './userSettingsService.js'
+import { calculateBuildingRepairNeeds } from '@kawakawa/services/supply'
+import { FioClient } from '@kawakawa/services/fio'
+import type { FioBuilding } from '@kawakawa/services/fio'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
 /** Tickers used as inputs to recurring production orders at a planet. */
 export async function getRecurringInputTickers(userPlanetDbId: number): Promise<Set<string>> {

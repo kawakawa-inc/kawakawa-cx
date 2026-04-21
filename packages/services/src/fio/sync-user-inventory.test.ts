@@ -18,7 +18,7 @@ const mockDeleteWhere = vi.fn()
 const mockInsertValues = vi.fn()
 const mockInsertReturning = vi.fn()
 
-vi.mock('../../db/index.js', () => ({
+vi.mock('@kawakawa/db', () => ({
   db: {
     select: vi.fn(() => ({
       from: mockSelectFrom,

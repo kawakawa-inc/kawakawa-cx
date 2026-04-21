@@ -12,8 +12,8 @@ import {
 } from '../db/index.js'
 import { eq, inArray, sql, and, gt } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
-import * as userSettingsService from '../services/userSettingsService.js'
-import { getRepairableTickers } from '../services/planet-data-helpers.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
+import { getRepairableTickers } from '@kawakawa/services/supply'
 import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
 import type {
   BurnRepairMyBasesResponse,
@@ -177,9 +177,7 @@ export class BurnRepairController extends Controller {
    * Uses the same enrichment pipeline as /sell-orders so reservations and FIO-aware
    * fulfilment are accounted for; we just collapse to ticker totals.
    */
-  private async computeAvailableSurplus(
-    userIds: number[]
-  ): Promise<Record<string, number>> {
+  private async computeAvailableSurplus(userIds: number[]): Promise<Record<string, number>> {
     if (userIds.length === 0) return {}
 
     const orders = await db

@@ -5,7 +5,7 @@ import { PriceSyncFioController } from './PriceSyncFioController.js'
 const mockSyncFioExchangePrices = vi.fn()
 const mockGetFioExchangeSyncStatus = vi.fn()
 
-vi.mock('../services/fio/index.js', () => ({
+vi.mock('@kawakawa/services/fio', () => ({
   syncFioExchangePrices: (exchangeCode?: string, priceField?: string) =>
     mockSyncFioExchangePrices(exchangeCode, priceField),
   getFioExchangeSyncStatus: () => mockGetFioExchangeSyncStatus(),

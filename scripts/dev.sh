@@ -22,7 +22,7 @@ PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
 FIFO_DIR="/tmp/kawakawa-dev"  # FIFOs need tmpfs (not supported on all filesystems)
 
-SERVICES=(bot api web)
+SERVICES=(bot api web sync-worker)
 
 # Colors
 RED='\033[0;31m'
@@ -43,6 +43,7 @@ get_service_cmd() {
     bot) echo "pnpm --filter @kawakawa/bot dev" ;;
     api) echo "pnpm --filter @kawakawa/api dev" ;;
     web) echo "pnpm --filter @kawakawa/web dev" ;;
+    sync-worker) echo "pnpm --filter @kawakawa/sync-worker dev" ;;
     *) echo ""; return 1 ;;
   esac
 }
@@ -56,6 +57,7 @@ get_kill_pattern() {
     bot) echo "@kawakawa/bot|apps/bot.*tsx|pnpm.*bot dev" ;;
     api) echo "@kawakawa/api|apps/api.*tsx|pnpm.*api dev" ;;
     web) echo "@kawakawa/web|vite.*apps/web|pnpm.*web dev" ;;
+    sync-worker) echo "@kawakawa/sync-worker|apps/sync-worker.*tsx|pnpm.*sync-worker dev" ;;
   esac
 }
 

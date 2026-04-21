@@ -28,7 +28,7 @@ import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken } from '../utils/jwt.js'
 import { Unauthorized, Forbidden, BadRequest, NotFound, Conflict } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 
 interface LoginRequest {
   username: string

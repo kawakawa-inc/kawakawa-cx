@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { computeBurnRepairCache } from './burn-repair-cache.js'
 
 // Mock dependencies
-vi.mock('../db/index.js', () => {
+vi.mock('@kawakawa/db', () => {
   const burnRepairCache = { userId: 'user_id' }
   return {
     db: {
@@ -17,7 +17,7 @@ vi.mock('../db/index.js', () => {
   }
 })
 
-vi.mock('./fio/sync-user-planets.js', () => ({
+vi.mock('../fio/sync-user-planets.js', () => ({
   getUserPlanetData: vi.fn(),
 }))
 
@@ -29,13 +29,13 @@ vi.mock('./planet-data-helpers.js', async () => {
   }
 })
 
-vi.mock('./userSettingsService.js', () => ({
+vi.mock('../user-settings/user-settings-service.js', () => ({
   getSetting: vi.fn(),
 }))
 
-import { db, burnRepairCache } from '../db/index.js'
-import { getUserPlanetData } from './fio/sync-user-planets.js'
-import * as userSettingsService from './userSettingsService.js'
+import { db, burnRepairCache } from '@kawakawa/db'
+import { getUserPlanetData } from '../fio/sync-user-planets.js'
+import * as userSettingsService from '../user-settings/user-settings-service.js'
 
 describe('computeBurnRepairCache', () => {
   const userId = 1

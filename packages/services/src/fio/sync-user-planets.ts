@@ -7,7 +7,7 @@ import {
   fioPlanetBuildings,
   fioPlanetWorkforce,
   fioPlanetProduction,
-} from '../../db/index.js'
+} from '@kawakawa/db'
 import { FioClient } from './client.js'
 import type {
   FioRainPlanet,
@@ -18,7 +18,7 @@ import type {
   FioPlanetData,
 } from './types.js'
 import type { SyncResult } from './sync-types.js'
-import { createLogger } from '../../utils/logger.js'
+import { createLogger } from '../utils/logger.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'user-planets' })
 
@@ -90,6 +90,95 @@ export interface PlanetSyncResult extends SyncResult {
 
 export interface SyncUserPlanetsOptions {
   excludedPlanets?: string[] // Planet NaturalIds to exclude
+}
+
+/**
+ * Fetch the user's planet list from FIO and delete DB rows for planets
+ * the user no longer owns. Returns metadata for each planet so the caller
+ * (e.g. the sync queue) can schedule per-planet detail jobs.
+ *
+ * Called by the sync queue for the `user-planets-list` job. Does NOT fetch
+ * per-planet detail — use `syncSinglePlanet` for that.
+ */
+export async function syncUserPlanetsList(
+  userId: number,
+  fioApiKey: string,
+  fioUsername: string,
+  client: FioClient = new FioClient()
+): Promise<{ naturalId: string; name: string }[]> {
+  const planets = await client.getUserPlanets<FioRainPlanet[]>(fioApiKey, fioUsername)
+
+  const valid = planets.filter(p => p.NaturalId)
+  const naturalIds = valid.map(p => p.NaturalId)
+
+  if (naturalIds.length > 0) {
+    await db
+      .delete(fioUserPlanets)
+      .where(
+        and(
+          eq(fioUserPlanets.userId, userId),
+          notInArray(fioUserPlanets.planetNaturalId, naturalIds)
+        )
+      )
+  } else {
+    await db.delete(fioUserPlanets).where(eq(fioUserPlanets.userId, userId))
+  }
+
+  // Upsert each planet with its friendly name here so the planet record
+  // exists (with the right name) before per-planet detail jobs run.
+  // syncSinglePlanet will NOT touch the name so it can't regress.
+  for (const p of valid) {
+    await db
+      .insert(fioUserPlanets)
+      .values({
+        userId,
+        planetNaturalId: p.NaturalId,
+        planetName: p.Name || p.NaturalId,
+        lastSyncedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [fioUserPlanets.userId, fioUserPlanets.planetNaturalId],
+        set: { planetName: p.Name || p.NaturalId },
+      })
+  }
+
+  log.info({ userId, planetsFound: planets.length }, 'Fetched and reconciled user planet list')
+
+  return valid.map(p => ({ naturalId: p.NaturalId, name: p.Name || p.NaturalId }))
+}
+
+/**
+ * Sync a single planet's detail (buildings, workforce, production, environmental costs).
+ * Called by the sync queue for `planet-detail` jobs.
+ */
+export async function syncSinglePlanet(
+  userId: number,
+  fioApiKey: string,
+  fioUsername: string,
+  planetNaturalId: string,
+  client: FioClient = new FioClient()
+): Promise<void> {
+  // Construct a FioRainPlanet-like shape for syncPlanet (it only reads NaturalId & Name).
+  const planet: FioRainPlanet = {
+    NaturalId: planetNaturalId,
+    Name: planetNaturalId,
+  } as FioRainPlanet
+  const result: PlanetSyncResult = {
+    success: false,
+    inserted: 0,
+    updated: 0,
+    errors: [],
+    planetsFound: 0,
+    planetsSynced: 0,
+    skippedExcludedPlanets: 0,
+    buildingsSynced: 0,
+    workforceTypesSynced: 0,
+    productionLinesSynced: 0,
+  }
+  await syncPlanet(client, userId, fioApiKey, fioUsername, planet, result)
+  if (result.errors.length > 0) {
+    throw new Error(result.errors.join('; '))
+  }
 }
 
 /**
@@ -259,7 +348,9 @@ async function syncPlanet(
   // CM area (needed for scaling environmental costs per building area)
   const cmArea = await getCmArea(client)
 
-  // Upsert the planet record (preserves ID for junction table references)
+  // Upsert the planet record. Only touch planetName on insert (first-time),
+  // so that refresh-only planet-detail jobs can't clobber the friendly name
+  // that was set by syncUserPlanetsList.
   const [planetRecord] = await db
     .insert(fioUserPlanets)
     .values({
@@ -270,7 +361,7 @@ async function syncPlanet(
     })
     .onConflictDoUpdate({
       target: [fioUserPlanets.userId, fioUserPlanets.planetNaturalId],
-      set: { planetName: planet.Name || planetId, lastSyncedAt: new Date() },
+      set: { lastSyncedAt: new Date() },
     })
     .returning({ id: fioUserPlanets.id })
 

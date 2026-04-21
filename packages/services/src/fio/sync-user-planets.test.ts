@@ -32,7 +32,7 @@ const mockInsertReturning = vi.fn()
 // - insert().values().onConflictDoUpdate().returning() (for planet upsert)
 const mockOnConflictDoUpdate = vi.fn()
 
-vi.mock('../../db/index.js', () => ({
+vi.mock('@kawakawa/db', () => ({
   db: {
     delete: vi.fn(() => ({
       where: mockDeleteWhere,

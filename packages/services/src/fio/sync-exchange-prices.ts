@@ -2,10 +2,10 @@
 // Fetches market prices for all commodities across all FIO exchanges (CI1, NC1, IC1, AI1)
 
 import { eq, and, sql, inArray } from 'drizzle-orm'
-import { db, prices, priceLists, priceListVersions, fioCommodities } from '../../db/index.js'
+import { db, prices, priceLists, priceListVersions, fioCommodities } from '@kawakawa/db'
 import { fioClient } from './client.js'
 import { parseCsvTyped } from './csv-parser.js'
-import { createLogger } from '../../utils/logger.js'
+import { createLogger } from '../utils/logger.js'
 import type { Currency } from '@kawakawa/types'
 
 const log = createLogger({ service: 'fio-sync', entity: 'exchange-prices' })

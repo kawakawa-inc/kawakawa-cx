@@ -1,9 +1,9 @@
 // Sync locations from FIO planets API to database
-import { db, fioLocations } from '../../db/index.js'
+import { db, fioLocations } from '@kawakawa/db'
 import { fioClient } from './client.js'
 import type { SyncResult } from './sync-types.js'
-import { createLogger } from '../../utils/logger.js'
-import { syncService } from '../syncService.js'
+import { createLogger } from '../utils/logger.js'
+import { syncService } from '../sync-state/sync-service.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'locations' })
 

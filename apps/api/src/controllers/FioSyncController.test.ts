@@ -1,21 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { FioSyncController } from './FioSyncController.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getSetting: vi.fn(),
   getFioCredentials: vi.fn(),
 }))
 
-// Mock syncUserAll to resolve immediately
-vi.mock('../services/fio/sync-user-all.js', () => ({
-  syncUserAll: vi.fn().mockResolvedValue({
-    success: true,
-    inventory: { inserted: 10, errors: [] },
-    planets: { planetsSynced: 2, errors: [] },
-    errors: [],
+vi.mock('@kawakawa/services/sync-queue', () => ({
+  enqueueUserFullSync: vi.fn().mockResolvedValue({
+    inventoryJobId: 42,
+    planetsJobId: 43,
   }),
 }))
+
+vi.mock('../db/index.js', () => ({
+  db: {
+    select: vi.fn(),
+  },
+  syncJobs: {
+    id: 'id',
+  },
+}))
+
+import { db } from '../db/index.js'
 
 describe('FioSyncController', () => {
   let controller: FioSyncController
@@ -27,18 +35,15 @@ describe('FioSyncController', () => {
   })
 
   describe('startSyncAll', () => {
-    it('should start a sync and return a job ID', async () => {
+    it('should enqueue inventory + planets jobs and return their IDs', async () => {
       vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
         fioUsername: 'TestUser',
         fioApiKey: 'test-key',
       })
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue([])
 
       const result = await controller.startSyncAll(mockRequest)
 
-      expect(result.jobId).toBeDefined()
-      expect(typeof result.jobId).toBe('string')
-      expect(result.status).toBe('pending')
+      expect(result.jobIds).toEqual({ inventory: 42, planets: 43 })
     })
 
     it('should throw when FIO credentials are missing', async () => {
@@ -55,24 +60,38 @@ describe('FioSyncController', () => {
 
   describe('getSyncStatus', () => {
     it('should return status for a valid job', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
-        fioUsername: 'TestUser',
-        fioApiKey: 'test-key',
-      })
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue([])
+      const chain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: 42,
+              jobType: 'user-inventory',
+              status: 'done',
+              attempts: 1,
+              startedAt: new Date('2026-01-01T00:00:00Z'),
+              finishedAt: new Date('2026-01-01T00:00:05Z'),
+              error: null,
+            },
+          ]),
+        }),
+      }
+      vi.mocked(db.select).mockReturnValue(chain as unknown as ReturnType<typeof db.select>)
 
-      // Start a job first
-      const { jobId } = await controller.startSyncAll(mockRequest)
-
-      // Poll it
-      const status = await controller.getSyncStatus(jobId)
-
-      expect(status.jobId).toBe(jobId)
-      expect(['running', 'completed']).toContain(status.status)
+      const status = await controller.getSyncStatus(42)
+      expect(status.jobId).toBe(42)
+      expect(status.status).toBe('done')
+      expect(status.jobType).toBe('user-inventory')
     })
 
     it('should throw NotFound for unknown job ID', async () => {
-      await expect(controller.getSyncStatus('nonexistent-id')).rejects.toThrow('Sync job not found')
+      const chain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+      vi.mocked(db.select).mockReturnValue(chain as unknown as ReturnType<typeof db.select>)
+
+      await expect(controller.getSyncStatus(9999)).rejects.toThrow('Sync job not found')
     })
   })
 })

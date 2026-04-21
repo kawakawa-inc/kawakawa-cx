@@ -32,7 +32,7 @@ import {
 import { eq, or } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 import { hasPermission } from '../utils/permissionService.js'
 import {
   calculateEffectivePriceWithFallback,

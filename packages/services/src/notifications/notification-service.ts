@@ -1,5 +1,5 @@
 // Notification Service - Create and manage user notifications
-import { db, notifications } from '../db/index.js'
+import { db, notifications } from '@kawakawa/db'
 import { eq, desc, and, sql } from 'drizzle-orm'
 import type { Notification, NotificationType } from '@kawakawa/types'
 

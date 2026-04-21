@@ -12,8 +12,8 @@ import { sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
 import { settingsService } from '../services/settingsService.js'
-import { clearCache as clearUserSettingsCache } from '../services/userSettingsService.js'
-import { syncService } from '../services/syncService.js'
+import { clearCache as clearUserSettingsCache } from '@kawakawa/services/user-settings'
+import { syncService } from '@kawakawa/services/sync-state'
 
 // Prefix for admin defaults in the settings table
 const DEFAULTS_PREFIX = 'defaults.'

@@ -798,21 +798,6 @@
                   Configure your FIO API key to enable syncing.
                 </v-alert>
 
-                <v-alert
-                  v-if="syncResult"
-                  :type="syncResult.success ? 'success' : 'error'"
-                  variant="tonal"
-                  class="mb-4"
-                  closable
-                  @click:close="syncResult = null"
-                >
-                  <template v-if="syncResult.success">
-                    Synced {{ syncResult.inserted }} items from
-                    {{ syncResult.storageLocations }} storage locations.
-                  </template>
-                  <template v-else> Sync failed: {{ syncResult.errors.join(', ') }} </template>
-                </v-alert>
-
                 <!-- FIO Statistics -->
                 <v-divider class="my-4" />
 
@@ -1358,12 +1343,6 @@ const fioStats = ref({
   oldestFioUploadLocation: null as { storageType: string; locationNaturalId: string | null } | null,
   newestFioUploadTime: null as string | null,
 })
-const syncResult = ref<{
-  success: boolean
-  inserted: number
-  storageLocations: number
-  errors: string[]
-} | null>(null)
 const loadingFio = ref(false)
 const syncing = ref(false)
 const clearing = ref(false)
@@ -1730,19 +1709,11 @@ const saveFioApiKey = async () => {
 const syncFio = async () => {
   try {
     syncing.value = true
-    syncResult.value = null
-    const result = await api.fioInventory.sync()
-    syncResult.value = result
-
-    // Refresh stats after sync
-    await loadFioStats()
-
-    if (result.success) {
-      showSnackbar(`Synced ${result.inserted} items successfully`)
-    }
+    await api.fioSync.startAll()
+    showSnackbar('FIO sync queued — you’ll be notified when it finishes')
   } catch (error) {
-    console.error('Failed to sync FIO', error)
-    const errorMessage = error instanceof Error ? error.message : 'Failed to sync FIO'
+    console.error('Failed to enqueue FIO sync', error)
+    const errorMessage = error instanceof Error ? error.message : 'Failed to enqueue FIO sync'
     showSnackbar(errorMessage, 'error')
   } finally {
     syncing.value = false
@@ -1761,7 +1732,6 @@ const clearFio = async () => {
 
     // Refresh stats after clearing
     await loadFioStats()
-    syncResult.value = null
 
     showSnackbar(
       `Cleared ${result.deletedItems} items from ${result.deletedStorages} storage locations`

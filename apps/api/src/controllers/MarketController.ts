@@ -8,7 +8,7 @@ import { db, sellOrders, buyOrders, users } from '../db/index.js'
 import { eq } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
-import { fioClient } from '../services/fio/client.js'
+import { fioClient } from '@kawakawa/services/fio'
 import { calculateEffectivePriceBatch, type PriceRequest } from '../services/price-calculator.js'
 
 // Market listing with seller info and calculated availability

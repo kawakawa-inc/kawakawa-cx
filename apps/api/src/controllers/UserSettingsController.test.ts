@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { UserSettingsController } from './UserSettingsController.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 import { SETTING_DEFINITIONS } from '@kawakawa/types/settings'
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getAllSettings: vi.fn(),
   setSettings: vi.fn(),
   resetSetting: vi.fn(),

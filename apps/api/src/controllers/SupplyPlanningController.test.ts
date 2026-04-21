@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SupplyPlanningController } from './SupplyPlanningController.js'
 import { db } from '../db/index.js'
-import * as syncUserPlanetsModule from '../services/fio/sync-user-planets.js'
-import * as userSettingsService from '../services/userSettingsService.js'
-import * as supplyCalculator from '../services/supply-calculator.js'
+import * as fioModule from '@kawakawa/services/fio'
+import * as userSettingsService from '@kawakawa/services/user-settings'
+import * as supplyCalculator from '@kawakawa/services/supply'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -19,28 +19,28 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
-vi.mock('../services/fio/sync-user-planets.js', () => ({
-  syncUserPlanets: vi.fn(),
+vi.mock('@kawakawa/services/fio', () => ({
   getUserPlanetData: vi.fn(),
+  FioClient: class MockFioClient {
+    getBuildings = mockGetBuildings
+  },
 }))
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getSetting: vi.fn(),
   getFioCredentials: vi.fn(),
 }))
 
 const mockGetBuildings = vi.fn()
 
-vi.mock('../services/fio/client.js', () => ({
-  FioClient: class MockFioClient {
-    getBuildings = mockGetBuildings
-  },
-}))
-
-vi.mock('../services/supply-calculator.js', () => ({
-  calculateSupply: vi.fn(),
-  calculatePlanetSupply: vi.fn(),
-}))
+vi.mock('@kawakawa/services/supply', async importOriginal => {
+  const actual = await importOriginal<typeof import('@kawakawa/services/supply')>()
+  return {
+    ...actual,
+    calculateSupply: vi.fn(),
+    calculatePlanetSupply: vi.fn(),
+  }
+})
 
 describe('SupplyPlanningController', () => {
   let controller: SupplyPlanningController
@@ -62,114 +62,6 @@ describe('SupplyPlanningController', () => {
     }
     vi.mocked(db.select).mockReturnValue(mockSelect)
     vi.mocked(db.delete).mockReturnValue(mockDelete as any)
-  })
-
-  describe('syncPlanetData', () => {
-    it('should sync planet data successfully', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
-        fioUsername: 'TestUser',
-        fioApiKey: 'test-key',
-      })
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue([])
-      vi.mocked(syncUserPlanetsModule.syncUserPlanets).mockResolvedValue({
-        success: true,
-        inserted: 5,
-        updated: 0,
-        errors: [],
-        planetsFound: 2,
-        planetsSynced: 2,
-        skippedExcludedPlanets: 0,
-        buildingsSynced: 3,
-        workforceTypesSynced: 4,
-        productionLinesSynced: 2,
-      })
-
-      const result = await controller.syncPlanetData(mockRequest)
-
-      expect(result.success).toBe(true)
-      expect(result.planetsFound).toBe(2)
-      expect(result.planetsSynced).toBe(2)
-      expect(result.buildingsSynced).toBe(3)
-      expect(result.workforceTypesSynced).toBe(4)
-      expect(result.productionLinesSynced).toBe(2)
-      expect(result.errors).toHaveLength(0)
-
-      expect(syncUserPlanetsModule.syncUserPlanets).toHaveBeenCalledWith(
-        1,
-        'test-key',
-        'TestUser',
-        { excludedPlanets: [] }
-      )
-    })
-
-    it('should throw error when FIO credentials are missing', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
-        fioUsername: null,
-        fioApiKey: null,
-      })
-
-      await expect(controller.syncPlanetData(mockRequest)).rejects.toThrow(
-        'FIO credentials not configured'
-      )
-    })
-
-    it('should pass excluded planets from settings', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
-        fioUsername: 'TestUser',
-        fioApiKey: 'test-key',
-      })
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['UV-351a', 'KW-688c'])
-      vi.mocked(syncUserPlanetsModule.syncUserPlanets).mockResolvedValue({
-        success: true,
-        inserted: 0,
-        updated: 0,
-        errors: [],
-        planetsFound: 3,
-        planetsSynced: 1,
-        skippedExcludedPlanets: 2,
-        buildingsSynced: 0,
-        workforceTypesSynced: 0,
-        productionLinesSynced: 0,
-      })
-
-      await controller.syncPlanetData(mockRequest)
-
-      expect(syncUserPlanetsModule.syncUserPlanets).toHaveBeenCalledWith(
-        1,
-        'test-key',
-        'TestUser',
-        { excludedPlanets: ['UV-351a', 'KW-688c'] }
-      )
-    })
-
-    it('should handle null excluded planets setting', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValue({
-        fioUsername: 'TestUser',
-        fioApiKey: 'test-key',
-      })
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue(null)
-      vi.mocked(syncUserPlanetsModule.syncUserPlanets).mockResolvedValue({
-        success: true,
-        inserted: 0,
-        updated: 0,
-        errors: [],
-        planetsFound: 0,
-        planetsSynced: 0,
-        skippedExcludedPlanets: 0,
-        buildingsSynced: 0,
-        workforceTypesSynced: 0,
-        productionLinesSynced: 0,
-      })
-
-      await controller.syncPlanetData(mockRequest)
-
-      expect(syncUserPlanetsModule.syncUserPlanets).toHaveBeenCalledWith(
-        1,
-        'test-key',
-        'TestUser',
-        { excludedPlanets: [] }
-      )
-    })
   })
 
   describe('getPlanets', () => {
@@ -265,7 +157,7 @@ describe('SupplyPlanningController', () => {
 
     it('should calculate supply using saved settings', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([
         {
           id: 1,
           userId: 1,
@@ -290,7 +182,7 @@ describe('SupplyPlanningController', () => {
 
     it('should return empty results when no planets synced', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([])
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([])
 
       const result = await controller.calculateSupplyFromSettings(mockRequest)
 
@@ -300,7 +192,7 @@ describe('SupplyPlanningController', () => {
 
     it('should fetch building definitions for repair eligibility', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([
         {
           id: 1,
           userId: 1,
@@ -340,7 +232,7 @@ describe('SupplyPlanningController', () => {
 
     it('should override settings with body params', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([
         {
           id: 1,
           userId: 1,
@@ -386,7 +278,7 @@ describe('SupplyPlanningController', () => {
 
     it('should throw NotFound when planet not synced', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([])
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([])
 
       await expect(
         controller.calculatePlanetSupplyEndpoint('UV-351a', mockRequest)
@@ -395,7 +287,7 @@ describe('SupplyPlanningController', () => {
 
     it('should calculate supply for a specific planet', async () => {
       setupSettingsMock()
-      vi.mocked(syncUserPlanetsModule.getUserPlanetData).mockResolvedValue([
+      vi.mocked(fioModule.getUserPlanetData).mockResolvedValue([
         {
           id: 1,
           userId: 1,

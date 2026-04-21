@@ -37,10 +37,10 @@ import {
 import { eq, and, or, inArray, sql, aliasedTable } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 import { calculateEffectivePriceWithFallback } from '../services/price-calculator.js'
-import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
-import { userSettingsService } from '../services/userSettingsService.js'
+import { syncUserInventory } from '@kawakawa/services/fio'
+import { userSettingsService } from '@kawakawa/services/user-settings'
 import { createLogger } from '../utils/logger.js'
 
 const log = createLogger({ service: 'invoices' })

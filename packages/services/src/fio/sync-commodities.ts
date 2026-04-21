@@ -1,9 +1,9 @@
 // Sync commodities from FIO materials API to database
-import { db, fioCommodities } from '../../db/index.js'
+import { db, fioCommodities } from '@kawakawa/db'
 import { fioClient } from './client.js'
 import type { SyncResult } from './sync-types.js'
-import { createLogger } from '../../utils/logger.js'
-import { syncService } from '../syncService.js'
+import { createLogger } from '../utils/logger.js'
+import { syncService } from '../sync-state/sync-service.js'
 
 const log = createLogger({ service: 'fio-sync', entity: 'commodities' })
 

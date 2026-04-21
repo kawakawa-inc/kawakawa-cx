@@ -2981,16 +2981,10 @@ const syncUserFio = async (user: AdminUser) => {
   try {
     syncingUsers.value.add(user.id)
     const result = await api.admin.syncUserFio(user.id)
-    if (result.success) {
-      showSnackbar(`Synced ${result.inserted} items for ${result.username}`)
-      // Refresh the user list to update sync timestamp
-      await loadUsers()
-    } else {
-      showSnackbar(`Sync completed with errors: ${result.errors.join(', ')}`, 'error')
-    }
+    showSnackbar(`FIO sync queued for ${result.username}`)
   } catch (error) {
-    console.error('Failed to sync FIO', error)
-    const message = error instanceof Error ? error.message : 'Failed to sync FIO'
+    console.error('Failed to enqueue FIO sync', error)
+    const message = error instanceof Error ? error.message : 'Failed to enqueue FIO sync'
     showSnackbar(message, 'error')
   } finally {
     syncingUsers.value.delete(user.id)

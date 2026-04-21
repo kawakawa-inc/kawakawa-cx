@@ -3,9 +3,9 @@
 // per user per planet per ticker. Results are stored in burn_repair_cache
 // so corp-wide aggregation is a plain SQL SUM query.
 
-import { db, burnRepairCache, fioUserPlanets } from '../db/index.js'
-import { eq, desc, and } from 'drizzle-orm'
-import { getUserPlanetData } from './fio/sync-user-planets.js'
+import { db, burnRepairCache, fioUserPlanets } from '@kawakawa/db'
+import { eq, desc } from 'drizzle-orm'
+import { getUserPlanetData } from '../fio/sync-user-planets.js'
 import { toPlanetInput, getRepairableTickers } from './planet-data-helpers.js'
 import {
   calculateWorkforceBurn,
@@ -13,7 +13,7 @@ import {
   calculateProductionOutputs,
   calculateBuildingRepairNeeds,
 } from './supply-calculator.js'
-import * as userSettingsService from './userSettingsService.js'
+import * as userSettingsService from '../user-settings/user-settings-service.js'
 import type { PlanetOverrides } from '@kawakawa/types'
 import { createLogger } from '../utils/logger.js'
 

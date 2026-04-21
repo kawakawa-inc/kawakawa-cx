@@ -14,7 +14,7 @@ import {
 import type { Notification } from '@kawakawa/types'
 import type { JwtPayload } from '../utils/jwt.js'
 import { NotFound } from '../utils/errors.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 
 @Route('notifications')
 @Tags('Notifications')

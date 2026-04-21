@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Post, Put, Request, Route, Security, Tags } from 'tsoa'
 import type { JwtPayload } from '../utils/jwt.js'
 import { settingsService } from '../services/settingsService.js'
-import { type FioPriceField } from '../services/fio/sync-exchange-prices.js'
+// FioPriceField is re-declared locally in PriceSyncFioController.ts because
+// TSOA cannot resolve type declarations across package boundaries. Importing
+// the re-declaration here keeps the OpenAPI schema using a single model.
+import type { FioPriceField } from './PriceSyncFioController.js'
 import { parseGoogleSheetsUrl, fetchSheetAsCsv } from '../services/google-sheets/client.js'
 import { BadRequest } from '../utils/errors.js'
 import { importCsvPrices, type CsvImportResult } from '../services/csv/import.js'

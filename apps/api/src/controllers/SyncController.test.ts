@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SyncController } from './SyncController.js'
-import { syncService } from '../services/syncService.js'
+import { syncService } from '@kawakawa/services/sync-state'
 import type { SyncState } from '@kawakawa/types'
 
-vi.mock('../services/syncService.js', () => ({
+vi.mock('@kawakawa/services/sync-state', () => ({
   syncService: {
     getSyncState: vi.fn(),
   },

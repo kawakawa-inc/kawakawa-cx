@@ -34,10 +34,10 @@ import {
   type JumpDistanceFn,
 } from './logistics-solver.js'
 import { getAllProductionRates, getAllBurnRates } from './demand-calculator.js'
-import { calculateBuildingRepairNeeds } from './supply-calculator.js'
-import { FioClient } from './fio/client.js'
-import type { FioBuilding } from './fio/types.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import { calculateBuildingRepairNeeds } from '@kawakawa/services/supply'
+import { FioClient } from '@kawakawa/services/fio'
+import type { FioBuilding } from '@kawakawa/services/fio'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
 const CATEGORIES: ClaimCategory[] = ['government', 'contract', 'reserve', 'other']
 

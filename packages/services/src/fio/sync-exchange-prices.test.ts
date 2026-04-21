@@ -21,7 +21,7 @@ const mockPricesResult = vi.fn()
 const mockInsertValues = vi.fn()
 const mockInsertOnConflict = vi.fn()
 
-vi.mock('../../db/index.js', () => ({
+vi.mock('@kawakawa/db', () => ({
   db: {
     select: () => ({
       from: (table: unknown) => {

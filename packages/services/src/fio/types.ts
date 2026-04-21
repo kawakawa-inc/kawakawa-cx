@@ -1,8 +1,53 @@
-/**
- * FIO API Types for user inventory sync
- */
+// FIO API Types based on Swagger spec
 
-/** Item in storage from GroupHub endpoint */
+export interface FioBuilding {
+  BuildingId: string
+  Name: string
+  Ticker: string
+  Expertise: string | null
+  Pioneers: number
+  Settlers: number
+  Technicians: number
+  Engineers: number
+  Scientists: number
+  AreaCost: number
+  UserNameSubmitted: string
+  Timestamp: string
+  BuildingCosts?: FioBuildingCost[]
+  Recipes?: FioRecipe[]
+}
+
+export interface FioBuildingCost {
+  MaterialId: string
+  MaterialName: string
+  MaterialTicker: string
+  MaterialCategory: string
+  Amount: number
+}
+
+export interface FioRecipe {
+  RecipeId: string
+  BuildingTicker: string
+  RecipeName: string
+  StandardRecipeName: string
+  Inputs: FioRecipeIO[]
+  Outputs: FioRecipeIO[]
+  TimeMs: number
+  UserNameSubmitted: string
+  Timestamp: string
+}
+
+export interface FioRecipeIO {
+  MaterialId: string
+  MaterialName: string
+  MaterialTicker: string
+  MaterialCategory: string
+  Amount: number
+}
+
+// ==================== GroupHub API Types (undocumented) ====================
+
+// Item in storage from GroupHub endpoint
 export interface FioGroupHubItem {
   MaterialTicker: string | null
   MaterialName: string | null
@@ -10,7 +55,7 @@ export interface FioGroupHubItem {
   Units: number
 }
 
-/** Storage from GroupHub endpoint (BaseStorage or WarehouseStorage) */
+// Storage from GroupHub endpoint (BaseStorage or WarehouseStorage)
 export interface FioGroupHubStorage {
   PlayerName: string
   StorageType: string // "STORE", "WAREHOUSE_STORE"
@@ -18,7 +63,7 @@ export interface FioGroupHubStorage {
   LastUpdated: string // ISO timestamp
 }
 
-/** Location (planet base) from GroupHub endpoint */
+// Location (planet base) from GroupHub endpoint
 export interface FioGroupHubLocation {
   LocationIdentifier: string // NaturalId (e.g., "CH-771b", "KW-688c")
   LocationName: string
@@ -29,28 +74,129 @@ export interface FioGroupHubLocation {
   StationaryPlayerShips: unknown[]
 }
 
-/** Player model from GroupHub endpoint */
+// Player model from GroupHub endpoint
 export interface FioGroupHubPlayerModel {
   UserName: string
   Currencies: unknown[]
   Locations: FioGroupHubLocation[]
 }
 
-/** Player warehouse at a CX station */
+// Player warehouse at a CX station
 export interface FioGroupHubPlayerWarehouse {
   PlayerName: string
   StorageType: string // "WAREHOUSE_STORE"
   Items: FioGroupHubItem[]
 }
 
-/** CX warehouse location from GroupHub endpoint */
+// CX warehouse location from GroupHub endpoint
 export interface FioGroupHubCXWarehouse {
   WarehouseLocationName: string // e.g., "Benten Station"
   WarehouseLocationNaturalId: string // e.g., "BEN"
   PlayerCXWarehouses: FioGroupHubPlayerWarehouse[]
 }
 
-/** Full GroupHub response */
+// ==================== Sites/Repair API Types ====================
+
+// Material entry from /sites endpoint (repair or reclaimable)
+export interface FioSiteMaterial {
+  MaterialTicker: string
+  MaterialAmount: number
+}
+
+// Building from /sites/{User}/{Planet} endpoint
+export interface FioSiteBuilding {
+  BuildingId: string
+  BuildingTicker: string
+  BuildingCreated: number // epoch ms
+  BuildingLastRepair: number | null // epoch ms, null if never repaired
+  Condition: number
+  RepairMaterials: FioSiteMaterial[]
+  ReclaimableMaterials: FioSiteMaterial[]
+}
+
+// Full response from /sites/{User}/{Planet}
+export interface FioSiteResponse {
+  PlanetId: string
+  Buildings: FioSiteBuilding[]
+}
+
+// ==================== Workforce API Types ====================
+
+// Workforce consumable need from /workforce endpoint
+export interface FioWorkforceNeed {
+  MaterialTicker: string
+  UnitsPerInterval: number // daily consumption rate
+  Essential: boolean
+}
+
+// Workforce type from /workforce/{User}/{Planet} endpoint
+export interface FioWorkforceType {
+  WorkforceTypeName: string // PIONEER, SETTLER, TECHNICIAN, ENGINEER, SCIENTIST
+  Population: number
+  Required: number
+  WorkforceNeeds: FioWorkforceNeed[]
+}
+
+// Wrapper response from /workforce/{User}/{Planet}
+export interface FioWorkforceResponse {
+  Workforces: FioWorkforceType[]
+}
+
+// ==================== Production API Types ====================
+
+// Material entry in production order inputs/outputs
+export interface FioProductionMaterial {
+  MaterialTicker: string
+  MaterialAmount: number
+}
+
+// Production order from /production endpoint
+export interface FioProductionOrder {
+  Recurring: boolean
+  DurationMs: number // wall-clock time including all modifiers
+  Inputs: FioProductionMaterial[]
+  Outputs: FioProductionMaterial[]
+}
+
+// Production line from /production/{User}/{Planet} endpoint
+export interface FioProductionLine {
+  Type: string // e.g. "chemPlant", "smelter"
+  Capacity: number // number of buildings of this type
+  Condition: number // average condition of buildings of this type
+  Efficiency: number // combined non-condition multiplier (CoGC, experts, etc.)
+  Orders: FioProductionOrder[]
+}
+
+// ==================== Building Definition API Types ====================
+
+export interface FioBuildingDefinition {
+  Ticker: string
+  Name: string
+  AreaCost: number
+  Pioneers: number
+  Settlers: number
+  Technicians: number
+  Engineers: number
+  Scientists: number
+  BuildingCosts: { CommodityTicker: string; Amount: number }[]
+}
+
+export interface FioPlanetData {
+  PlanetNaturalId: string
+  PlanetName: string
+  BuildRequirements: { MaterialTicker: string; MaterialAmount: number }[]
+}
+
+// ==================== Rain (User Planets) API Types ====================
+
+// Planet from /rain/userplanets/{User} endpoint
+// FIO API returns { NaturalId, Name } per the spec at doc.fnar.net
+export interface FioRainPlanet {
+  NaturalId: string
+  Name: string
+}
+
+// Full GroupHub response
 export interface FioGroupHubResponse {
   GroupName: string | null
   CXWarehouses: FioGroupHubCXWarehouse[]
@@ -58,21 +204,4 @@ export interface FioGroupHubResponse {
   PlayerShipsInFlight: unknown[]
   PlayerStationaryShips: unknown[]
   Failures: unknown[]
-}
-
-/** Result of a sync operation */
-export interface FioSyncResult {
-  success: boolean
-  inserted: number
-  storageLocations: number
-  errors: string[]
-  skippedUnknownLocations: number
-  skippedUnknownCommodities: number
-  skippedExcludedLocations: number
-  fioLastSync: string | null
-}
-
-/** Options for sync operation */
-export interface FioSyncOptions {
-  excludedLocations?: string[]
 }

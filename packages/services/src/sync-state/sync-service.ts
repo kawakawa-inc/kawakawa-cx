@@ -1,8 +1,8 @@
 // Sync service - tracks data versions for frontend cache invalidation
 
 import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
-import { settingsService } from './settingsService.js'
-import { notificationService } from './notificationService.js'
+import { settingsService } from '../settings/index.js'
+import { notificationService } from '../notifications/notification-service.js'
 
 // Settings keys for data versions
 const DATA_VERSION_PREFIX = 'sync.dataVersion.'

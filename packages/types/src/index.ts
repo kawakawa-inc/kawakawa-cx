@@ -439,6 +439,9 @@ export type NotificationType =
   | 'user_auto_approved'
   | 'user_approved'
   | 'user_rejected'
+  | 'sync_queued'
+  | 'sync_completed'
+  | 'sync_failed'
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'reservation_placed',
@@ -454,6 +457,9 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'user_auto_approved',
   'user_approved',
   'user_rejected',
+  'sync_queued',
+  'sync_completed',
+  'sync_failed',
 ]
 
 export interface Notification {

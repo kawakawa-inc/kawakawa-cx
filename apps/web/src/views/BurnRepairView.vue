@@ -119,7 +119,9 @@
                             @click="selectPriceList(pl.code, null)"
                           >
                             <v-list-item-title>Latest</v-list-item-title>
-                            <v-list-item-subtitle>Follows the promoted version</v-list-item-subtitle>
+                            <v-list-item-subtitle
+                              >Follows the promoted version</v-list-item-subtitle
+                            >
                           </v-list-item>
                           <v-divider />
                           <v-list-item
@@ -211,10 +213,7 @@
           </v-card-text>
         </v-card>
 
-        <div
-          v-if="filteredPlanets.length > 0"
-          class="d-flex justify-end mb-2"
-        >
+        <div v-if="filteredPlanets.length > 0" class="d-flex justify-end mb-2">
           <v-btn
             variant="tonal"
             size="small"
@@ -338,6 +337,27 @@
                 :items-per-page="-1"
                 hide-default-footer
               >
+                <template #header.repairDaily="{ column }">
+                  <span class="d-inline-flex align-center justify-center ga-1">
+                    {{ column.title }}
+                    <v-icon size="x-small" class="text-medium-emphasis">
+                      mdi-information-outline
+                      <v-tooltip activator="parent" location="top" max-width="340">
+                        <div class="text-caption">
+                          <strong>Repair/Day is an amortized projection</strong>, not a steady-state
+                          wear rate. <br /><br />
+                          We compute the full repair cost at the end of
+                          <em>repairDays</em> — which includes
+                          <em>all accumulated wear since the last repair</em> — then divide by
+                          repairDays. <br /><br />
+                          This is useful for planning when to buy materials, but runs higher than
+                          PRUNplanner's "Degradation" on aged bases. PRUN reports the intrinsic rate
+                          (constructionCost ÷ 180 per day), independent of age.
+                        </div>
+                      </v-tooltip>
+                    </v-icon>
+                  </span>
+                </template>
                 <template #item.commodityTicker="{ item }">
                   <CommodityDisplay :ticker="item.commodityTicker" />
                 </template>
@@ -658,10 +678,7 @@
           All needs are covered by existing stock. Nothing to buy!
         </v-alert>
 
-        <div
-          v-if="shoppingList && shoppingList.items.length > 0"
-          class="d-flex justify-end mb-2"
-        >
+        <div v-if="shoppingList && shoppingList.items.length > 0" class="d-flex justify-end mb-2">
           <v-btn
             variant="tonal"
             size="small"
@@ -1163,9 +1180,7 @@ function netTotal(m: {
   productionDaily: number
   repairTotal: number
 }): number {
-  return (
-    (m.productionDaily - m.burnDaily - m.inputsDaily) * burnDays.value - m.repairTotal
-  )
+  return (m.productionDaily - m.burnDaily - m.inputsDaily) * burnDays.value - m.repairTotal
 }
 
 function pricePerDay(planetId: string, m: BurnRepairCacheRow): number {

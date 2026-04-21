@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import * as userSettingsService from './userSettingsService.js'
+import * as userSettingsService from './user-settings-service.js'
 import { SETTING_DEFINITIONS } from '@kawakawa/types/settings'
 
 // Mock the database
-vi.mock('../db/index.js', () => ({
+vi.mock('@kawakawa/db', () => ({
   db: {
     select: vi.fn(),
     insert: vi.fn(),
@@ -33,14 +33,14 @@ vi.mock('../utils/logger.js', () => ({
 }))
 
 // Mock the settingsService for admin defaults
-vi.mock('./settingsService.js', () => ({
+vi.mock('../settings/index.js', () => ({
   settingsService: {
     getAll: vi.fn().mockResolvedValue({}),
   },
 }))
 
-import { db } from '../db/index.js'
-import { settingsService } from './settingsService.js'
+import { db } from '@kawakawa/db'
+import { settingsService } from '../settings/index.js'
 
 describe('userSettingsService', () => {
   let mockSelect: ReturnType<typeof vi.fn>

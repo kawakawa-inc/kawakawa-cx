@@ -4,8 +4,8 @@
 import { Body, Controller, Delete, Get, Put, Route, Security, Tags, Request, Path } from 'tsoa'
 import type { JwtPayload } from '../utils/jwt.js'
 import { SETTING_DEFINITIONS } from '@kawakawa/types/settings'
-import * as userSettingsService from '../services/userSettingsService.js'
-import { computeBurnRepairCache } from '../services/burn-repair-cache.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
+import { computeBurnRepairCache } from '@kawakawa/services/supply'
 import { BadRequest } from '../utils/errors.js'
 import { createLogger } from '../utils/logger.js'
 

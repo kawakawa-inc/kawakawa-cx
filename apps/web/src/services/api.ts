@@ -191,10 +191,11 @@ interface UsernameAvailabilityResponse {
   message?: string
 }
 
-interface FioSyncResponse {
-  success: boolean
-  inserted: number
-  errors: string[]
+interface FioSyncEnqueueResponse {
+  jobIds: { inventory: number; planets: number }
+}
+
+interface AdminFioSyncEnqueueResponse extends FioSyncEnqueueResponse {
   username: string
 }
 
@@ -211,16 +212,6 @@ interface FioInventoryItem {
   locationType: string | null
   storageType: string
   fioUploadedAt: string | null
-}
-
-interface FioInventorySyncResult {
-  success: boolean
-  inserted: number
-  storageLocations: number
-  errors: string[]
-  skippedUnknownLocations: number
-  skippedUnknownCommodities: number
-  fioLastSync: string | null
 }
 
 interface FioLastSyncResponse {
@@ -1084,7 +1075,7 @@ const realApi = {
     return response.json()
   },
 
-  syncUserFio: async (userId: number): Promise<FioSyncResponse> => {
+  syncUserFio: async (userId: number): Promise<AdminFioSyncEnqueueResponse> => {
     const response = await fetchWithLogging(`/api/admin/users/${userId}/sync-fio`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -1108,7 +1099,32 @@ const realApi = {
       if (response.status === 400) {
         throw new Error('User does not have FIO credentials configured')
       }
-      throw new Error(`Failed to sync FIO: ${response.statusText}`)
+      throw new Error(`Failed to enqueue FIO sync: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  startFioSyncAll: async (): Promise<FioSyncEnqueueResponse> => {
+    const response = await fetchWithLogging('/api/fio/sync-all', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'FIO credentials not configured')
+      }
+      throw new Error(`Failed to enqueue FIO sync: ${response.statusText}`)
     }
 
     return response.json()
@@ -1483,31 +1499,6 @@ const realApi = {
         throw new Error('Unauthorized')
       }
       throw new Error(`Failed to get FIO inventory: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  syncFioInventory: async (): Promise<FioInventorySyncResult> => {
-    const response = await fetchWithLogging('/api/fio/inventory/sync', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'FIO credentials not configured')
-      }
-      throw new Error(`Failed to sync FIO inventory: ${response.statusText}`)
     }
 
     return response.json()
@@ -4802,18 +4793,6 @@ const realApi = {
     return response.json()
   },
 
-  syncSupplyPlanets: async (): Promise<void> => {
-    const response = await fetchWithLogging('/api/supply-planning/sync', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to sync planet data')
-    }
-  },
-
   // ==================== BURN & REPAIR ====================
 
   getBurnRepairMyBases: async (): Promise<BurnRepairMyBasesResponse> => {
@@ -4937,11 +4916,13 @@ export const api = {
   },
   fioInventory: {
     get: () => realApi.getFioInventory(),
-    sync: () => realApi.syncFioInventory(),
     getLastSync: () => realApi.getFioLastSync(),
     getStats: () => realApi.getFioStats(),
     getStorageLocations: () => realApi.getFioStorageLocations(),
     clear: () => realApi.clearFioInventory(),
+  },
+  fioSync: {
+    startAll: () => realApi.startFioSyncAll(),
   },
   sellOrders: {
     list: () => realApi.getSellOrders(),
@@ -5163,8 +5144,6 @@ export const api = {
   },
   supplyPlanning: {
     getPlanets: () => realApi.getSupplyPlanets(),
-    sync: () => realApi.syncSupplyPlanets(),
-    syncInventory: () => realApi.syncFioInventory(),
   },
   burnRepair: {
     myBases: () => realApi.getBurnRepairMyBases(),

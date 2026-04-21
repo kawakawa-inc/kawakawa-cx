@@ -1,9 +1,9 @@
 // Shared helpers for converting DB planet data to calculator input format
 // and getting repairable building tickers from FIO.
 
-import { getUserPlanetData } from './fio/sync-user-planets.js'
-import { FioClient } from './fio/client.js'
-import type { FioBuilding } from './fio/types.js'
+import { getUserPlanetData } from '../fio/sync-user-planets.js'
+import { FioClient } from '../fio/client.js'
+import type { FioBuilding } from '../fio/types.js'
 import type { PlanetSupplyInput } from '@kawakawa/types'
 
 // Module-level cache for repairable tickers (FIO building defs rarely change)

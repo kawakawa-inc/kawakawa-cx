@@ -9,18 +9,16 @@ import {
   Request,
   Body,
   Path,
-  Query,
   SuccessResponse,
 } from 'tsoa'
 import { db, fioUserPlanets, shoppingLists } from '../db/index.js'
 import { eq, desc } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
-import { syncUserPlanets } from '../services/fio/sync-user-planets.js'
-import { getUserPlanetData } from '../services/fio/sync-user-planets.js'
-import { calculateSupply, calculatePlanetSupply } from '../services/supply-calculator.js'
-import { toPlanetInput, getRepairableTickers } from '../services/planet-data-helpers.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import { getUserPlanetData } from '@kawakawa/services/fio'
+import { calculateSupply, calculatePlanetSupply } from '@kawakawa/services/supply'
+import { toPlanetInput, getRepairableTickers } from '@kawakawa/services/supply'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 import type {
   PlanetOverride,
   PlanetOverrides,
@@ -28,17 +26,6 @@ import type {
   SupplyCalculationOptions,
   SupplyCalculationResult,
 } from '@kawakawa/types'
-
-interface PlanetSyncResponse {
-  success: boolean
-  planetsFound: number
-  planetsSynced: number
-  skippedExcludedPlanets: number
-  buildingsSynced: number
-  workforceTypesSynced: number
-  productionLinesSynced: number
-  errors: string[]
-}
 
 interface UserPlanetSummary {
   id: number
@@ -51,47 +38,6 @@ interface UserPlanetSummary {
 @Tags('Supply Planning')
 @Security('jwt')
 export class SupplyPlanningController extends Controller {
-  /**
-   * Sync planet data (buildings, workforce, production) from FIO
-   * Requires FIO credentials to be configured in user settings
-   */
-  @Post('sync')
-  @SuccessResponse('200', 'Sync completed')
-  public async syncPlanetData(
-    @Request() request: { user: JwtPayload }
-  ): Promise<PlanetSyncResponse> {
-    const userId = request.user.userId
-
-    const { fioUsername, fioApiKey } = await userSettingsService.getFioCredentials(userId)
-
-    if (!fioUsername || !fioApiKey) {
-      this.setStatus(400)
-      throw BadRequest(
-        'FIO credentials not configured. Please set your FIO username and API key in Settings.'
-      )
-    }
-
-    const excludedPlanets = ((await userSettingsService.getSetting(
-      userId,
-      'burnRepair.excludedPlanets'
-    )) ?? []) as string[]
-
-    const result = await syncUserPlanets(userId, fioApiKey, fioUsername, {
-      excludedPlanets,
-    })
-
-    return {
-      success: result.success,
-      planetsFound: result.planetsFound,
-      planetsSynced: result.planetsSynced,
-      skippedExcludedPlanets: result.skippedExcludedPlanets,
-      buildingsSynced: result.buildingsSynced,
-      workforceTypesSynced: result.workforceTypesSynced,
-      productionLinesSynced: result.productionLinesSynced,
-      errors: result.errors,
-    }
-  }
-
   /**
    * List synced planets with last sync timestamps
    */

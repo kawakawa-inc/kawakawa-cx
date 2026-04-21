@@ -3025,7 +3025,7 @@ const realApi = {
     exchange: string,
     locationId: string,
     currency: Currency,
-    options?: { commodity?: string; fallback?: boolean }
+    options?: { commodity?: string; fallback?: boolean; version?: number }
   ): Promise<EffectivePrice[]> => {
     const params = new URLSearchParams({ currency })
     if (options?.commodity) {
@@ -3034,6 +3034,9 @@ const realApi = {
     // Fallback defaults to true on backend, only send if explicitly false
     if (options?.fallback === false) {
       params.set('fallback', 'false')
+    }
+    if (options?.version !== undefined) {
+      params.set('version', String(options.version))
     }
     const response = await fetchWithLogging(
       `/api/prices/effective/${exchange}/${locationId}?${params}`,
@@ -5064,8 +5067,12 @@ export const api = {
     create: (request: CreatePriceRequest) => realApi.createPrice(request),
     update: (id: number, request: UpdatePriceRequest) => realApi.updatePrice(id, request),
     delete: (id: number) => realApi.deletePrice(id),
-    getEffective: (exchange: string, locationId: string, currency: Currency) =>
-      realApi.getEffectivePrices(exchange, locationId, currency),
+    getEffective: (
+      exchange: string,
+      locationId: string,
+      currency: Currency,
+      options?: { version?: number }
+    ) => realApi.getEffectivePrices(exchange, locationId, currency, options),
   },
   priceAdjustments: {
     list: (exchange?: string, location?: string, activeOnly?: boolean) =>

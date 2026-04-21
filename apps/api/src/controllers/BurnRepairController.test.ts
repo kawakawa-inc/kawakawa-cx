@@ -39,6 +39,10 @@ vi.mock('../services/userSettingsService.js', () => ({
   getSetting: vi.fn(),
 }))
 
+vi.mock('../services/planet-data-helpers.js', () => ({
+  getRepairableTickers: vi.fn(async () => new Set(['FRM'])),
+}))
+
 import { db } from '../db/index.js'
 import * as userSettingsService from '../services/userSettingsService.js'
 
@@ -138,6 +142,9 @@ describe('BurnRepairController', () => {
       expect(result.planets[0].materials[0].commodityTicker).toBe('RAT')
       expect(result.planets[0].materials[0].burnDaily).toBe(4)
       expect(result.planets[0].buildingCount).toBe(1)
+      expect(result.planets[0].buildings).toHaveLength(1)
+      expect(result.planets[0].buildings[0].ticker).toBe('FRM')
+      expect(result.planets[0].buildings[0].needsRepair).toBe(true)
       expect(result.planets[0].workforceSummary).toHaveLength(1)
       expect(result.planets[0].workforceSummary[0].type).toBe('PIONEER')
     })

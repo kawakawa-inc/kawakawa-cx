@@ -132,6 +132,15 @@ export interface BurnRepairCacheRow {
   productionDaily: number
 }
 
+/** One building instance with age and repair eligibility */
+export interface BurnRepairBuildingInstance {
+  ticker: string
+  /** Days since last repair (or construction if never repaired) */
+  ageDays: number
+  /** False for "indestructible" buildings (CM, HB1, STO, etc.) that don't decay */
+  needsRepair: boolean
+}
+
 /** Per-planet summary returned by GET /burn-repair/my-bases */
 export interface BurnRepairPlanetSummary {
   planetNaturalId: string
@@ -139,6 +148,8 @@ export interface BurnRepairPlanetSummary {
   userPlanetId: number
   materials: BurnRepairCacheRow[]
   buildingCount: number
+  /** One entry per building on the planet (client aggregates for chip display) */
+  buildings: BurnRepairBuildingInstance[]
   workforceSummary: { type: string; population: number; required: number }[]
   computedAt: string
 }

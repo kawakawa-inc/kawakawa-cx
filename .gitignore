@@ -64,3 +64,6 @@ packages/client/src/*.ts
 
 # playwright
 .playwright-mcp/
+
+# dev notes
+*.dev-only.*

@@ -12,9 +12,11 @@ import {
 import { eq, inArray, sql, and, gt } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import * as userSettingsService from '../services/userSettingsService.js'
+import { getRepairableTickers } from '../services/planet-data-helpers.js'
 import type {
   BurnRepairMyBasesResponse,
   BurnRepairPlanetSummary,
+  BurnRepairBuildingInstance,
   BurnRepairCorpResponse,
   BurnRepairCorpMaterial,
   BurnRepairCorpBuildingsResponse,
@@ -58,6 +60,10 @@ export class BurnRepairController extends Controller {
       },
     })
 
+    const repairableTickers = await getRepairableTickers()
+    const now = Date.now()
+    const MS_PER_DAY = 86_400_000
+
     // Group cache rows by planet
     const planetMap = new Map<string, BurnRepairCacheRow[]>()
     let latestComputedAt: Date | null = null
@@ -88,12 +94,23 @@ export class BurnRepairController extends Controller {
         required: w.required,
       }))
 
+      const buildings: BurnRepairBuildingInstance[] = planet.buildings.map(b => {
+        const anchor = b.buildingLastRepair ?? b.buildingCreated
+        const ageDays = anchor ? (now - new Date(anchor).getTime()) / MS_PER_DAY : 0
+        return {
+          ticker: b.buildingTicker,
+          ageDays,
+          needsRepair: repairableTickers.has(b.buildingTicker),
+        }
+      })
+
       result.push({
         planetNaturalId: planet.planetNaturalId,
         planetName: planet.planetName,
         userPlanetId: planet.id,
         materials,
         buildingCount: planet.buildings.length,
+        buildings,
         workforceSummary,
         computedAt: latestComputedAt?.toISOString() ?? '',
       })

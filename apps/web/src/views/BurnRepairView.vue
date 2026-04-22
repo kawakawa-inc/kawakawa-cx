@@ -490,127 +490,14 @@
 
       <!-- ==================== CORP OVERVIEW TAB ==================== -->
       <v-tabs-window-item value="corp">
-        <v-alert
-          v-if="corpData && corpData.includedUserCount === 0 && !loading"
-          type="info"
-          variant="tonal"
-          class="mb-4"
-          density="compact"
-        >
-          No roles are configured for corp-wide view. An admin needs to set
-          <strong>Included Roles (Corp Burn/Repair)</strong> in the Admin panel's Global Defaults.
-        </v-alert>
-
-        <template v-if="corpData && corpData.includedUserCount > 0">
-          <div class="d-flex align-center mb-3 ga-2">
-            <v-chip size="small" variant="tonal">
-              {{ corpData.includedUserCount }} users included
-            </v-chip>
-            <v-chip v-if="corpData.staleUserCount > 0" size="small" variant="tonal" color="warning">
-              {{ corpData.staleUserCount }} inactive (data &gt; 30 days old)
-            </v-chip>
-          </div>
-
-          <!-- Materials section -->
-          <v-card class="mb-4">
-            <v-card-title class="d-flex align-center text-subtitle-1">
-              Materials
-              <v-spacer />
-              <v-btn
-                variant="tonal"
-                size="small"
-                prepend-icon="mdi-content-copy"
-                @click="copyCorpMaterialsCsv"
-              >
-                Copy CSV
-              </v-btn>
-            </v-card-title>
-            <v-data-table
-              :items="corpData.materials"
-              :headers="corpMaterialHeaders"
-              density="compact"
-              :items-per-page="25"
-            >
-              <template #item.commodityTicker="{ item }">
-                <CommodityDisplay :ticker="item.commodityTicker" />
-              </template>
-              <template #item.burnDaily="{ item }">
-                {{ formatNumber(item.burnDaily) }}
-              </template>
-              <template #item.inputsDaily="{ item }">
-                {{ formatNumber(item.inputsDaily) }}
-              </template>
-              <template #item.repairTotal="{ item }">
-                {{ formatNumber(item.repairTotal) }}
-              </template>
-              <template #item.productionDaily="{ item }">
-                <span v-if="item.productionDaily > 0" class="text-success">
-                  {{ formatNumber(item.productionDaily) }}
-                </span>
-                <span v-else>-</span>
-              </template>
-              <template #item.netDaily="{ item }">
-                <span
-                  class="font-weight-medium"
-                  :class="
-                    item.productionDaily - item.burnDaily - item.inputsDaily >= 0
-                      ? 'text-success'
-                      : 'text-error'
-                  "
-                >
-                  {{ formatNumber(item.productionDaily - item.burnDaily - item.inputsDaily) }}
-                </span>
-              </template>
-              <template #item.available="{ item }">
-                {{ formatNumber(corpAvailableFor(item.commodityTicker)) }}
-              </template>
-              <template #item.daysRemaining="{ item }">
-                <span v-if="corpDaysRemaining(item) === null" class="text-medium-emphasis">—</span>
-                <span v-else>{{ formatNumber(corpDaysRemaining(item)!) }}</span>
-              </template>
-            </v-data-table>
-          </v-card>
-
-          <!-- Buildings section -->
-          <v-card v-if="corpBuildings" class="mb-4">
-            <v-card-title class="text-subtitle-1">
-              Buildings
-              <v-chip size="x-small" class="ml-2" variant="tonal">
-                {{ corpBuildings.totalBuildings }} total
-              </v-chip>
-            </v-card-title>
-            <v-card-text>
-              <v-chip
-                v-for="(count, ticker) in corpBuildings.buildings"
-                :key="ticker"
-                size="small"
-                variant="tonal"
-                class="mr-1 mb-1"
-              >
-                {{ ticker }}: {{ count }}
-              </v-chip>
-            </v-card-text>
-          </v-card>
-
-          <!-- Workforce section -->
-          <v-card v-if="corpWorkforce">
-            <v-card-title class="text-subtitle-1">Workforce</v-card-title>
-            <v-data-table
-              :items="corpWorkforce.workforce"
-              :headers="corpWorkforceHeaders"
-              density="compact"
-              :items-per-page="-1"
-              hide-default-footer
-            >
-              <template #item.totalPopulation="{ item }">
-                {{ item.totalPopulation.toLocaleString() }}
-              </template>
-              <template #item.totalRequired="{ item }">
-                {{ item.totalRequired.toLocaleString() }}
-              </template>
-            </v-data-table>
-          </v-card>
-        </template>
+        <CorpOverviewPanel
+          v-model="state.corpOverviewSubTab"
+          :corp-data="corpData"
+          :corp-buildings="corpBuildings"
+          :corp-workforce="corpWorkforce"
+          :repair-days="repairDays"
+          @copy-csv="onCorpCopyCsv"
+        />
       </v-tabs-window-item>
 
       <!-- ==================== SHOPPING LIST TAB ==================== -->
@@ -731,6 +618,7 @@ import { useSettingsStore } from '../stores/settings'
 import { locationService } from '../services/locationService'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
+import CorpOverviewPanel from '../components/BurnRepair/CorpOverviewPanel.vue'
 import type {
   BurnRepairMyBasesResponse,
   BurnRepairBuildingInstance,
@@ -739,6 +627,7 @@ import type {
   BurnRepairCorpResponse,
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
+  BurnRepairCorpMaterial,
   BurnRepairShoppingListResponse,
   Currency,
 } from '@kawakawa/types'
@@ -771,6 +660,7 @@ const { state } = usePageState('burn-repair', {
   myBasesPriceListVersion: null as number | null,
   /** Per-planet override for the price lookup location; empty/missing = use price list default */
   myBasesPricesFromByPlanet: {} as Record<string, string>,
+  corpOverviewSubTab: 'consumables',
   shoppingListOrigin: '',
   shoppingListBase: '',
   shoppingListDays: 7,
@@ -901,43 +791,9 @@ const myBasesHeaders = computed(() => [
   },
 ])
 
-const corpMaterialHeaders = [
-  { title: 'Material', key: 'commodityTicker', sortable: false },
-  { title: 'Burn/Day', key: 'burnDaily', sortable: false, align: 'center' as const },
-  { title: 'Inputs/Day', key: 'inputsDaily', sortable: false, align: 'center' as const },
-  { title: 'Repair', key: 'repairTotal', sortable: false, align: 'center' as const },
-  { title: 'Production/Day', key: 'productionDaily', sortable: false, align: 'center' as const },
-  { title: 'Net/Day', key: 'netDaily', sortable: false, align: 'center' as const },
-  { title: 'Available', key: 'available', sortable: false, align: 'center' as const },
-  { title: 'Days Remaining', key: 'daysRemaining', sortable: false, align: 'center' as const },
-]
-
 function corpAvailableFor(ticker: string): number {
   return corpData.value?.availableSurplus?.[ticker] ?? 0
 }
-
-/**
- * Days the corp-wide surplus would cover the daily shortage.
- * Only meaningful when (burn + inputs) > production. Returns null otherwise.
- */
-function corpDaysRemaining(m: {
-  commodityTicker: string
-  burnDaily: number
-  inputsDaily: number
-  productionDaily: number
-}): number | null {
-  const deficit = m.burnDaily + m.inputsDaily - m.productionDaily
-  if (deficit <= 0) return null
-  const available = corpAvailableFor(m.commodityTicker)
-  if (available <= 0) return 0
-  return available / deficit
-}
-
-const corpWorkforceHeaders = [
-  { title: 'Type', key: 'type', sortable: false },
-  { title: 'Total Population', key: 'totalPopulation', sortable: false },
-  { title: 'Total Required', key: 'totalRequired', sortable: false },
-]
 
 const shoppingListHeaders = [
   { title: 'Material', key: 'commodityTicker', sortable: false },
@@ -1146,27 +1002,23 @@ const filteredPlanets = computed(() => {
 
 // ==================== HELPERS ====================
 
-function formatNumber(n: number): string {
-  if (n === 0) return '-'
-  return n % 1 === 0 ? n.toLocaleString() : n.toFixed(2)
-}
+import {
+  formatNumber,
+  repairDaily as repairDailyPure,
+  netDaily as netDailyPure,
+} from '../utils/burnRepairFormat'
 
-/**
- * Daily repair consumption — amortize the total repair cost across repairDays.
- * When repairDays=0 (repair now), the whole amount is "due today".
- */
 function repairDaily(m: { repairTotal: number }): number {
-  return repairDays.value > 0 ? m.repairTotal / repairDays.value : m.repairTotal
+  return repairDailyPure(m, repairDays.value)
 }
 
-/** Net/Day includes repair drain; positive = surplus, negative = shortage. */
 function netDaily(m: {
   burnDaily: number
   inputsDaily: number
   productionDaily: number
   repairTotal: number
 }): number {
-  return m.productionDaily - m.burnDaily - m.inputsDaily - repairDaily(m)
+  return netDailyPure(m, repairDays.value)
 }
 
 /**
@@ -1321,7 +1173,10 @@ function copyMyBasesCsv(planet: BurnRepairPlanetSummary): void {
   void copyCsv(headers, rows, `${planet.planetName} materials`)
 }
 
-function copyCorpMaterialsCsv(): void {
+function onCorpCopyCsv(payload: {
+  scope: 'consumables' | 'fabs' | 'other'
+  materials: BurnRepairCorpMaterial[]
+}): void {
   const headers = [
     'Material',
     'Burn/Day',
@@ -1332,8 +1187,10 @@ function copyCorpMaterialsCsv(): void {
     'Available',
     'Days Remaining',
   ]
-  const rows = (corpData.value?.materials ?? []).map(m => {
-    const days = corpDaysRemaining(m)
+  const rows = payload.materials.map(m => {
+    const deficit = m.burnDaily + m.inputsDaily - m.productionDaily
+    const avail = corpAvailableFor(m.commodityTicker)
+    const days = deficit <= 0 ? '' : avail <= 0 ? 0 : avail / deficit
     return [
       m.commodityTicker,
       m.burnDaily,
@@ -1341,11 +1198,12 @@ function copyCorpMaterialsCsv(): void {
       m.repairTotal,
       m.productionDaily,
       m.productionDaily - m.burnDaily - m.inputsDaily,
-      corpAvailableFor(m.commodityTicker),
-      days === null ? '' : days,
+      avail,
+      days,
     ]
   })
-  void copyCsv(headers, rows, 'Corp materials')
+  const label = `Corp materials (${payload.scope})`
+  void copyCsv(headers, rows, label)
 }
 
 function copyShoppingListCsv(): void {

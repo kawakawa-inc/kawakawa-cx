@@ -5,7 +5,6 @@
 import { eq, and } from 'drizzle-orm'
 import {
   db,
-  fioUserPlanets,
   fioPlanetWorkforce,
   fioPlanetProduction,
   fioInventory,
@@ -39,62 +38,6 @@ export async function getFilteredStock(
   return inventory
     .filter(item => storageTypes.includes(item.storageType))
     .reduce((sum, item) => sum + item.quantity, 0)
-}
-
-/**
- * Calculate daily production input and output rates for a commodity at a planet.
- * Shared between 'inputs' (net consumption) and 'production_output' (net supply).
- */
-async function getProductionRates(
-  userPlanetDbId: number,
-  commodityTicker: string,
-  assumeMaxCondition: boolean
-): Promise<{ dailyInput: number; dailyOutput: number }> {
-  const productionRows = await db
-    .select({
-      capacity: fioPlanetProduction.capacity,
-      condition: fioPlanetProduction.condition,
-      orders: fioPlanetProduction.orders,
-    })
-    .from(fioPlanetProduction)
-    .where(eq(fioPlanetProduction.userPlanetId, userPlanetDbId))
-
-  let dailyInput = 0
-  let dailyOutput = 0
-  for (const row of productionRows) {
-    const capacity = row.capacity
-    if (capacity <= 0) continue
-
-    const orders = row.orders as {
-      Recurring: boolean
-      StartedEpochMs: number | null
-      DurationMs: number
-      Inputs: { MaterialTicker: string; MaterialAmount: number }[]
-      Outputs: { MaterialTicker: string; MaterialAmount: number }[]
-    }[]
-
-    const uniqueOrders = orders.filter(o => o.Recurring && o.DurationMs > 0 && !o.StartedEpochMs)
-    if (uniqueOrders.length === 0) continue
-
-    const conditionFactor = assumeMaxCondition ? Number(row.condition) : 1
-    const totalDurationDays =
-      (uniqueOrders.reduce((sum, o) => sum + o.DurationMs, 0) * conditionFactor) / 86_400_000
-
-    for (const order of uniqueOrders) {
-      for (const input of order.Inputs) {
-        if (input.MaterialTicker === commodityTicker) {
-          dailyInput += (input.MaterialAmount * capacity) / totalDurationDays
-        }
-      }
-      for (const output of order.Outputs ?? []) {
-        if (output.MaterialTicker === commodityTicker) {
-          dailyOutput += (output.MaterialAmount * capacity) / totalDurationDays
-        }
-      }
-    }
-  }
-
-  return { dailyInput, dailyOutput }
 }
 
 /**

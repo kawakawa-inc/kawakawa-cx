@@ -1,8 +1,10 @@
-import { Controller, Get, Post, Route, Security, Tags, Request, Body, Path } from 'tsoa'
+import { Controller, Get, Post, Route, Security, Tags, Request, Body } from 'tsoa'
 import {
   db,
   burnRepairCache,
   userRoles,
+  users,
+  userSettings,
   fioUserPlanets,
   fioPlanetBuildings,
   fioPlanetWorkforce,
@@ -10,7 +12,7 @@ import {
   fioInventory,
   sellOrders,
 } from '../db/index.js'
-import { eq, inArray, sql, and, gt } from 'drizzle-orm'
+import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import * as userSettingsService from '@kawakawa/services/user-settings'
 import { getRepairableTickers } from '@kawakawa/services/supply'
@@ -21,6 +23,7 @@ import type {
   BurnRepairBuildingInstance,
   BurnRepairCorpResponse,
   BurnRepairCorpMaterial,
+  BurnRepairCorpPerUserRow,
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
   BurnRepairWorkforceEntry,
@@ -129,7 +132,9 @@ export class BurnRepairController extends Controller {
   public async getCorpOverview(
     @Request() request: { user: JwtPayload }
   ): Promise<BurnRepairCorpResponse> {
-    const { activeUserIds, staleUserCount } = await this.getIncludedUserIds(request.user.userId)
+    const { activeUserIds, staleUserCount, fioAgeMap } = await this.getIncludedUserIds(
+      request.user.userId
+    )
 
     if (activeUserIds.length === 0) {
       return {
@@ -137,10 +142,11 @@ export class BurnRepairController extends Controller {
         includedUserCount: 0,
         staleUserCount,
         availableSurplus: {},
+        perUser: [],
       }
     }
 
-    const [rows, availableSurplus] = await Promise.all([
+    const [rows, perUserRows, availableSurplus, usernameMap] = await Promise.all([
       db
         .select({
           commodityTicker: burnRepairCache.commodityTicker,
@@ -153,7 +159,20 @@ export class BurnRepairController extends Controller {
         .where(inArray(burnRepairCache.userId, activeUserIds))
         .groupBy(burnRepairCache.commodityTicker)
         .orderBy(burnRepairCache.commodityTicker),
+      db
+        .select({
+          userId: burnRepairCache.userId,
+          commodityTicker: burnRepairCache.commodityTicker,
+          burnDaily: sql<string>`SUM(${burnRepairCache.burnDaily})`,
+          inputsDaily: sql<string>`SUM(${burnRepairCache.inputsDaily})`,
+          repairTotal: sql<string>`SUM(${burnRepairCache.repairTotal})`,
+          productionDaily: sql<string>`SUM(${burnRepairCache.productionDaily})`,
+        })
+        .from(burnRepairCache)
+        .where(inArray(burnRepairCache.userId, activeUserIds))
+        .groupBy(burnRepairCache.userId, burnRepairCache.commodityTicker),
       this.computeAvailableSurplus(activeUserIds),
+      this.getDisplayUsernames(activeUserIds),
     ])
 
     const materials: BurnRepairCorpMaterial[] = rows.map(r => ({
@@ -164,12 +183,58 @@ export class BurnRepairController extends Controller {
       productionDaily: Number(r.productionDaily),
     }))
 
+    const perUser: BurnRepairCorpPerUserRow[] = perUserRows.map(r => ({
+      userId: r.userId,
+      username: usernameMap.get(r.userId) ?? `user:${r.userId}`,
+      commodityTicker: r.commodityTicker,
+      burnDaily: Number(r.burnDaily),
+      inputsDaily: Number(r.inputsDaily),
+      repairTotal: Number(r.repairTotal),
+      productionDaily: Number(r.productionDaily),
+      fioDataAge: fioAgeMap.get(r.userId) ?? null,
+    }))
+
     return {
       materials,
       includedUserCount: activeUserIds.length,
       staleUserCount,
       availableSurplus,
+      perUser,
     }
+  }
+
+  /**
+   * Build a userId → display name map for the given users.
+   * Prefers the FIO username (fio.username user setting, JSON-encoded) which
+   * matches the PrUn in-game name 1:1. Falls back to users.username when unset.
+   */
+  private async getDisplayUsernames(userIds: number[]): Promise<Map<number, string>> {
+    const map = new Map<number, string>()
+    if (userIds.length === 0) return map
+
+    const [loginRows, fioRows] = await Promise.all([
+      db
+        .select({ id: users.id, username: users.username })
+        .from(users)
+        .where(inArray(users.id, userIds)),
+      db
+        .select({ userId: userSettings.userId, value: userSettings.value })
+        .from(userSettings)
+        .where(
+          and(inArray(userSettings.userId, userIds), eq(userSettings.settingKey, 'fio.username'))
+        ),
+    ])
+
+    for (const r of loginRows) map.set(r.id, r.username)
+    for (const r of fioRows) {
+      try {
+        const parsed = JSON.parse(r.value)
+        if (typeof parsed === 'string' && parsed.length > 0) map.set(r.userId, parsed)
+      } catch {
+        // Malformed setting value; keep login username fallback
+      }
+    }
+    return map
   }
 
   /**
@@ -334,24 +399,38 @@ export class BurnRepairController extends Controller {
     return { items, days, originLocationId, basePlanetId }
   }
 
-  /** Data older than this is excluded from corp-wide calculations */
+  /** FIO uploads older than this mean the player hasn't logged into PrUn with FIO enabled recently — exclude them from corp aggregates. */
   private static readonly STALE_DATA_DAYS = 30
 
   /**
    * Resolve which user IDs are included in corp-wide views.
-   * Filters by burnRepair.includedRoles AND cache freshness (30-day cutoff).
-   * Returns active user IDs and the count of stale users that were excluded.
+   *
+   * Filters by `burnRepair.includedRoles` AND FIO upload freshness: a user is
+   * kept only when the oldest `fio_user_storage.fio_uploaded_at` across their
+   * storages is within the cutoff. Users without any FIO uploads are excluded.
+   *
+   * We check FIO upload age (not `burn_repair_cache.computed_at`) because
+   * computed_at is bumped whenever our backend recomputes — it says nothing
+   * about whether the underlying FIO data is fresh. An inactive player whose
+   * cache was recomputed today still has stale game data.
+   *
+   * The FIO age map is returned alongside the IDs so callers can reuse it
+   * without re-querying.
    */
-  private async getIncludedUserIds(
-    requestingUserId: number
-  ): Promise<{ activeUserIds: number[]; staleUserCount: number }> {
+  private async getIncludedUserIds(requestingUserId: number): Promise<{
+    activeUserIds: number[]
+    staleUserCount: number
+    fioAgeMap: Map<number, string>
+  }> {
     const includedRoles =
       ((await userSettingsService.getSetting(
         requestingUserId,
         'burnRepair.includedRoles'
       )) as string[]) ?? []
 
-    if (includedRoles.length === 0) return { activeUserIds: [], staleUserCount: 0 }
+    if (includedRoles.length === 0) {
+      return { activeUserIds: [], staleUserCount: 0, fioAgeMap: new Map() }
+    }
 
     // Get all users with matching roles
     const roleRows = await db
@@ -360,24 +439,37 @@ export class BurnRepairController extends Controller {
       .where(inArray(userRoles.roleId, includedRoles))
 
     const allUserIds = [...new Set(roleRows.map(r => r.userId))]
-    if (allUserIds.length === 0) return { activeUserIds: [], staleUserCount: 0 }
+    if (allUserIds.length === 0) {
+      return { activeUserIds: [], staleUserCount: 0, fioAgeMap: new Map() }
+    }
 
-    // Find users with fresh cache data (computedAt within the last 30 days)
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - BurnRepairController.STALE_DATA_DAYS)
 
-    const freshRows = await db
-      .select({ userId: burnRepairCache.userId })
-      .from(burnRepairCache)
-      .where(
-        and(inArray(burnRepairCache.userId, allUserIds), gt(burnRepairCache.computedAt, cutoff))
-      )
-      .groupBy(burnRepairCache.userId)
+    // Oldest FIO upload across each user's storages. Users with no rows (never
+    // uploaded to FIO) are absent from the result and excluded below.
+    const ageRows = await db
+      .select({
+        userId: fioUserStorage.userId,
+        oldest: sql<Date | null>`MIN(${fioUserStorage.fioUploadedAt})`,
+      })
+      .from(fioUserStorage)
+      .where(inArray(fioUserStorage.userId, allUserIds))
+      .groupBy(fioUserStorage.userId)
 
-    const activeUserIds = freshRows.map(r => r.userId)
+    const fioAgeMap = new Map<number, string>()
+    const activeUserIds: number[] = []
+    for (const r of ageRows) {
+      if (r.oldest === null || r.oldest === undefined) continue
+      const date = r.oldest instanceof Date ? r.oldest : new Date(r.oldest)
+      const iso = date.toISOString()
+      fioAgeMap.set(r.userId, iso)
+      if (date > cutoff) activeUserIds.push(r.userId)
+    }
+
     const staleUserCount = allUserIds.length - activeUserIds.length
 
-    return { activeUserIds, staleUserCount }
+    return { activeUserIds, staleUserCount, fioAgeMap }
   }
 
   /**

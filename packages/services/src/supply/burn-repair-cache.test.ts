@@ -33,7 +33,7 @@ vi.mock('../user-settings/user-settings-service.js', () => ({
   getSetting: vi.fn(),
 }))
 
-import { db, burnRepairCache } from '@kawakawa/db'
+import { db } from '@kawakawa/db'
 import { getUserPlanetData } from '../fio/sync-user-planets.js'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
 

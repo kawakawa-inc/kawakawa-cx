@@ -41,6 +41,8 @@ export default tseslint.config(
         console: 'readonly',
         fetch: 'readonly',
         navigator: 'readonly',
+        confirm: 'readonly',
+        queueMicrotask: 'readonly',
         CustomEvent: 'readonly',
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
@@ -49,6 +51,7 @@ export default tseslint.config(
         // DOM types
         HTMLInputElement: 'readonly',
         HTMLElement: 'readonly',
+        HTMLDivElement: 'readonly',
         HTMLFormElement: 'readonly',
         File: 'readonly',
         Event: 'readonly',

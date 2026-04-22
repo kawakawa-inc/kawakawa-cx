@@ -168,6 +168,26 @@ export interface BurnRepairCorpMaterial {
   productionDaily: number
 }
 
+/** Per-user-per-ticker row used for Top Producers/Consumers dashboards */
+export interface BurnRepairCorpPerUserRow {
+  userId: number
+  /** FIO username (from fio.username setting), falling back to users.username */
+  username: string
+  commodityTicker: string
+  burnDaily: number
+  inputsDaily: number
+  repairTotal: number
+  productionDaily: number
+  /**
+   * Oldest FIO-reported upload timestamp across this user's storages (ISO string,
+   * or null if FIO has never uploaded for them). This is the "last time the user
+   * logged into PrUn with a FIO-enabled browser" signal — a user-level property,
+   * so it's the same for every ticker belonging to a given user. Using the
+   * oldest (MIN) across storages gives a worst-case staleness read.
+   */
+  fioDataAge: string | null
+}
+
 /** Response for GET /burn-repair/corp */
 export interface BurnRepairCorpResponse {
   materials: BurnRepairCorpMaterial[]
@@ -180,6 +200,8 @@ export interface BurnRepairCorpResponse {
    * not part of the burn rate math.
    */
   availableSurplus: Record<string, number>
+  /** Per-user-per-ticker rollups for dashboard Top Producers/Consumers */
+  perUser: BurnRepairCorpPerUserRow[]
 }
 
 /** Response for GET /burn-repair/corp/buildings */

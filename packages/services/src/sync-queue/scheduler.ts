@@ -4,19 +4,24 @@
 // logic inside the API process. Dedup in the enqueue layer means multiple
 // API instances are safe — worst case they race to enqueue and one wins.
 
-import { db, users } from '@kawakawa/db'
+import { db, users, syncJobs } from '@kawakawa/db'
+import { and, eq, sql } from 'drizzle-orm'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
 import { enqueue, enqueueUserFullSync } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
 
 const log = createLogger({ service: 'sync-queue', entity: 'scheduler' })
 
-const HOUR_MS = 60 * 60 * 1000
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 
-const USER_SYNC_INTERVAL_MS = Number(process.env.SYNC_USER_INTERVAL_MS) || HOUR_MS
+/** How often the scheduler checks for users due to sync. */
+const USER_SYNC_INTERVAL_MS = Number(process.env.SYNC_USER_INTERVAL_MS) || 15 * MINUTE_MS
+/** Only enqueue a user if their last successful sync is at least this old. */
+const USER_SYNC_STALE_MS = Number(process.env.SYNC_USER_STALE_MS) || HOUR_MS
 const GLOBAL_SYNC_INTERVAL_MS = Number(process.env.SYNC_GLOBAL_INTERVAL_MS) || DAY_MS
-/** Delay before the first user-sync run after API boot (avoids thundering restarts). */
+/** Delay before the first user-sync run after boot (avoids thundering restarts). */
 const USER_SYNC_STARTUP_DELAY_MS = Number(process.env.SYNC_STARTUP_DELAY_MS) || 60_000
 
 let userSyncTimer: ReturnType<typeof setInterval> | null = null
@@ -32,6 +37,7 @@ export function startScheduler(): void {
   log.info(
     {
       userIntervalMs: USER_SYNC_INTERVAL_MS,
+      userStaleMs: USER_SYNC_STALE_MS,
       globalIntervalMs: GLOBAL_SYNC_INTERVAL_MS,
       startupDelayMs: USER_SYNC_STARTUP_DELAY_MS,
     },
@@ -86,23 +92,51 @@ async function scheduleGlobalSyncs(): Promise<void> {
 
 async function scheduleUserSyncs(): Promise<void> {
   try {
+    const staleBefore = new Date(Date.now() - USER_SYNC_STALE_MS)
+
+    // Most recent successful inventory sync per user. user-inventory and
+    // user-planets-list are enqueued together via enqueueUserFullSync, so
+    // one is a sufficient proxy for both.
+    const lastSyncs = await db
+      .select({
+        userId: syncJobs.userId,
+        lastFinished: sql<Date>`MAX(${syncJobs.finishedAt})`.as('last_finished'),
+      })
+      .from(syncJobs)
+      .where(and(eq(syncJobs.jobType, 'user-inventory'), eq(syncJobs.status, 'done')))
+      .groupBy(syncJobs.userId)
+
+    const lastByUser = new Map<number, Date>()
+    for (const row of lastSyncs) {
+      if (row.userId != null && row.lastFinished) {
+        lastByUser.set(row.userId, new Date(row.lastFinished))
+      }
+    }
+
     const allUsers = await db.select({ userId: users.id }).from(users)
 
     let enqueued = 0
-    let skipped = 0
+    let skippedFresh = 0
+    let skippedSettings = 0
     for (const user of allUsers) {
+      const last = lastByUser.get(user.userId)
+      if (last && last > staleBefore) {
+        skippedFresh++
+        continue
+      }
+
       const autoSync = (await userSettingsService.getSetting(
         user.userId,
         'fio.autoSync'
       )) as boolean
       if (!autoSync) {
-        skipped++
+        skippedSettings++
         continue
       }
 
       const { fioUsername, fioApiKey } = await userSettingsService.getFioCredentials(user.userId)
       if (!fioUsername || !fioApiKey) {
-        skipped++
+        skippedSettings++
         continue
       }
 
@@ -110,7 +144,10 @@ async function scheduleUserSyncs(): Promise<void> {
       enqueued++
     }
 
-    log.info({ enqueued, skipped, total: allUsers.length }, 'Scheduled user syncs')
+    log.info(
+      { enqueued, skippedFresh, skippedSettings, total: allUsers.length },
+      'Scheduled user syncs'
+    )
   } catch (err) {
     log.error({ err }, 'Failed to schedule user syncs')
   }

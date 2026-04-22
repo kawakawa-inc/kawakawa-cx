@@ -18,6 +18,8 @@ vi.mock('../db/index.js', () => {
       commodityTicker: 'commodity_ticker',
     },
     userRoles: { userId: 'user_id', roleId: 'role_id' },
+    users: { id: 'id', username: 'username' },
+    userSettings: { userId: 'user_id', settingKey: 'setting_key', value: 'value' },
     fioUserPlanets: { id: 'id', userId: 'user_id' },
     fioPlanetBuildings: { userPlanetId: 'user_planet_id', buildingTicker: 'building_ticker' },
     fioPlanetWorkforce: {
@@ -26,7 +28,12 @@ vi.mock('../db/index.js', () => {
       population: 'population',
       required: 'required',
     },
-    fioUserStorage: { id: 'id', userId: 'user_id', locationId: 'location_id' },
+    fioUserStorage: {
+      id: 'id',
+      userId: 'user_id',
+      locationId: 'location_id',
+      fioUploadedAt: 'fio_uploaded_at',
+    },
     fioInventory: {
       userStorageId: 'user_storage_id',
       commodityTicker: 'commodity_ticker',
@@ -107,7 +114,6 @@ describe('BurnRepairController', () => {
         }),
       } as unknown as ReturnType<typeof db.select>)
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.mocked(db.query.fioUserPlanets.findMany).mockResolvedValue([
         {
           id: 10,
@@ -182,16 +188,21 @@ describe('BurnRepairController', () => {
         }),
       }
 
-      // Query 2: find users with fresh cache data (user 3 is stale — not returned)
-      const freshChain = {
+      // Query 2: oldest FIO upload per user — user 3's data is 50 days old so excluded.
+      const now = Date.now()
+      const freshAgeChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }]),
+            groupBy: vi.fn().mockResolvedValue([
+              { userId: 1, oldest: new Date(now - 2 * 86_400_000) },
+              { userId: 2, oldest: new Date(now - 10 * 86_400_000) },
+              { userId: 3, oldest: new Date(now - 50 * 86_400_000) },
+            ]),
           }),
         }),
       }
 
-      // Query 3: aggregate query
+      // Query 3: aggregate query (corp-wide totals)
       const aggregateChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -210,8 +221,34 @@ describe('BurnRepairController', () => {
         }),
       }
 
-      // Query 4: sell orders for surplus aggregation (no orders for this test)
+      // Query 4: per-user aggregation (empty for this test — covered separately)
+      const perUserChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      }
+
+      // Query 5: sell orders for surplus aggregation (no orders for this test)
       const sellOrdersChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+
+      // Query 6: login usernames
+      const loginChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: 1, username: 'alice' },
+            { id: 2, username: 'bob' },
+          ]),
+        }),
+      }
+
+      // Query 7: fio.username settings
+      const fioChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([]),
         }),
@@ -219,9 +256,12 @@ describe('BurnRepairController', () => {
 
       vi.mocked(db.select)
         .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(freshChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(freshAgeChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
 
       const result = await controller.getCorpOverview(mockRequest)
 
@@ -231,6 +271,170 @@ describe('BurnRepairController', () => {
       expect(result.materials[0].commodityTicker).toBe('RAT')
       expect(result.materials[0].burnDaily).toBe(8)
       expect(result.availableSurplus).toEqual({})
+      expect(result.perUser).toEqual([])
+    })
+
+    it('should exclude users who have never uploaded to FIO', async () => {
+      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['member'])
+
+      const rolesChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }]),
+        }),
+      }
+
+      // Only user 1 has uploaded to FIO; user 2 has never connected.
+      const ageChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi
+              .fn()
+              .mockResolvedValue([{ userId: 1, oldest: new Date() }]),
+          }),
+        }),
+      }
+
+      const aggregateChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      }
+      const perUserChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      }
+      const sellOrdersChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+      const loginChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ id: 1, username: 'alice' }]),
+        }),
+      }
+      const fioChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(ageChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
+
+      const result = await controller.getCorpOverview(mockRequest)
+
+      expect(result.includedUserCount).toBe(1)
+      expect(result.staleUserCount).toBe(1) // user 2 excluded: no FIO uploads
+    })
+
+    it('should return per-user rollups with FIO username, falling back to login username', async () => {
+      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['member'])
+
+      const rolesChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }]),
+        }),
+      }
+      // Both users uploaded recently, so both pass the freshness filter.
+      // The returned `oldest` doubles as the FIO data age surfaced per user.
+      const ageChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([
+              { userId: 1, oldest: new Date('2026-04-20T00:00:00Z') },
+              { userId: 2, oldest: new Date('2026-04-15T00:00:00Z') },
+            ]),
+          }),
+        }),
+      }
+      const aggregateChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      }
+      // User 1 produces RAT, user 2 consumes RAT
+      const perUserChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([
+              {
+                userId: 1,
+                commodityTicker: 'RAT',
+                burnDaily: '0.0000',
+                inputsDaily: '0.0000',
+                repairTotal: '0.0000',
+                productionDaily: '5.0000',
+              },
+              {
+                userId: 2,
+                commodityTicker: 'RAT',
+                burnDaily: '3.0000',
+                inputsDaily: '0.0000',
+                repairTotal: '0.0000',
+                productionDaily: '0.0000',
+              },
+            ]),
+          }),
+        }),
+      }
+      const sellOrdersChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }
+      const loginChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: 1, username: 'alice-login' },
+            { id: 2, username: 'bob-login' },
+          ]),
+        }),
+      }
+      // User 1 has a FIO username override; user 2 does not → should fall back to login username
+      const fioChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ userId: 1, value: JSON.stringify('AliceFIO') }]),
+        }),
+      }
+
+      vi.mocked(db.select)
+        .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(ageChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
+
+      const result = await controller.getCorpOverview(mockRequest)
+
+      expect(result.perUser).toHaveLength(2)
+      const alice = result.perUser.find(r => r.userId === 1)!
+      const bob = result.perUser.find(r => r.userId === 2)!
+      expect(alice.username).toBe('AliceFIO')
+      expect(alice.productionDaily).toBe(5)
+      expect(alice.fioDataAge).toBe('2026-04-20T00:00:00.000Z')
+      expect(bob.username).toBe('bob-login')
+      expect(bob.burnDaily).toBe(3)
+      expect(bob.fioDataAge).toBe('2026-04-15T00:00:00.000Z')
     })
   })
 

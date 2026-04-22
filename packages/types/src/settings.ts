@@ -353,24 +353,6 @@ export const SETTING_DEFINITIONS = {
     description: 'Roles whose burn/repair data is included in corp-wide aggregation',
   } satisfies SettingDef<string[], 'string[]'>,
 
-  'burnRepair.corpOverview.consumablesTickers': {
-    key: 'burnRepair.corpOverview.consumablesTickers',
-    type: 'string[]',
-    defaultValue: [] as string[],
-    category: SETTING_CATEGORIES.BURN_REPAIR,
-    label: 'Corp Overview — Consumables Tickers',
-    description: 'Tickers shown on the Consumables sub-tab of Corp Overview',
-  } satisfies SettingDef<string[], 'string[]'>,
-
-  'burnRepair.corpOverview.fabsTickers': {
-    key: 'burnRepair.corpOverview.fabsTickers',
-    type: 'string[]',
-    defaultValue: [] as string[],
-    category: SETTING_CATEGORIES.BURN_REPAIR,
-    label: 'Corp Overview — Fabs Tickers',
-    description: 'Tickers shown on the Fabs sub-tab of Corp Overview',
-  } satisfies SettingDef<string[], 'string[]'>,
-
   // ==================== DISCORD SETTINGS ====================
   'discord.messageVisibility': {
     key: 'discord.messageVisibility',

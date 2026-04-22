@@ -815,6 +815,31 @@ export const savedMarketFilters = pgTable(
   })
 )
 
+// ==================== CORP OVERVIEW VIEWS ====================
+// User-owned, shareable views for the Burn & Repair Corp Overview page.
+// A view = a ticker scope + a list of dashboard card configs.
+export const corpOverviewViews = pgTable(
+  'corp_overview_views',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    tickers: jsonb('tickers').notNull(), // string[]; empty array = all corp tickers
+    cards: jsonb('cards').notNull(), // ViewCard[]
+    privacy: filterPrivacyEnum('privacy').notNull().default('private'),
+    isPinned: boolean('is_pinned').notNull().default(false),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('corp_overview_views_user_idx').on(table.userId),
+    privacyIdx: index('corp_overview_views_privacy_idx').on(table.privacy),
+    pinnedIdx: index('corp_overview_views_pinned_idx').on(table.isPinned),
+  })
+)
+
 // ==================== INVOICE LINE ITEMS (Individual items within an invoice) ====================
 // Each line item represents a buy or sell action within the invoice
 // Before submission: stores intent (which order to reserve from / fill)
@@ -1310,6 +1335,15 @@ export const shoppingListsRelations = relations(shoppingLists, ({ one }) => ({
 export const savedMarketFiltersRelations = relations(savedMarketFilters, ({ one }) => ({
   user: one(users, {
     fields: [savedMarketFilters.userId],
+    references: [users.id],
+  }),
+}))
+
+// ==================== CORP OVERVIEW VIEW RELATIONS ====================
+
+export const corpOverviewViewsRelations = relations(corpOverviewViews, ({ one }) => ({
+  user: one(users, {
+    fields: [corpOverviewViews.userId],
     references: [users.id],
   }),
 }))

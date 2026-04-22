@@ -43,6 +43,9 @@ import type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
+  CorpOverviewView,
+  CreateCorpOverviewViewRequest,
+  UpdateCorpOverviewViewRequest,
   LogisticsGraph,
   LogisticsFlow,
   CreateLogisticsFlowRequest,
@@ -4635,6 +4638,136 @@ const realApi = {
     return response.json()
   },
 
+  // ==================== CORP OVERVIEW VIEWS ====================
+
+  listCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
+    const response = await fetchWithLogging('/api/corp-overview-views', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list views: ${response.statusText}`)
+    return response.json()
+  },
+
+  getPinnedCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
+    const response = await fetchWithLogging('/api/corp-overview-views/pinned', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get pinned views: ${response.statusText}`)
+    return response.json()
+  },
+
+  browseCorpOverviewViews: async (
+    search?: string,
+    page?: number
+  ): Promise<CorpOverviewView[]> => {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (page) params.set('page', String(page))
+    const query = params.toString() ? `?${params.toString()}` : ''
+    const response = await fetchWithLogging(`/api/corp-overview-views/browse${query}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to browse views: ${response.statusText}`)
+    return response.json()
+  },
+
+  getCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to get view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  createCorpOverviewView: async (
+    request: CreateCorpOverviewViewRequest
+  ): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging('/api/corp-overview-views', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      throw new Error(`Failed to create view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  updateCorpOverviewView: async (
+    id: number,
+    request: UpdateCorpOverviewViewRequest
+  ): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to update this view')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to update view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  deleteCorpOverviewView: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('You do not have permission to delete this view')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to delete view: ${response.statusText}`)
+    }
+  },
+
+  togglePinCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/pin`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only public views can be pinned')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to pin views')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to toggle pin: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
   // ==================== LOGISTICS ====================
 
   getLogisticsGraph: async (): Promise<LogisticsGraph> => {
@@ -5142,6 +5275,17 @@ export const api = {
     delete: (id: number) => realApi.deleteSavedFilter(id),
     togglePin: (id: number) => realApi.togglePinSavedFilter(id),
   },
+  corpOverviewViews: {
+    list: () => realApi.listCorpOverviewViews(),
+    getPinned: () => realApi.getPinnedCorpOverviewViews(),
+    browse: (search?: string, page?: number) => realApi.browseCorpOverviewViews(search, page),
+    get: (id: number) => realApi.getCorpOverviewView(id),
+    create: (request: CreateCorpOverviewViewRequest) => realApi.createCorpOverviewView(request),
+    update: (id: number, request: UpdateCorpOverviewViewRequest) =>
+      realApi.updateCorpOverviewView(id, request),
+    delete: (id: number) => realApi.deleteCorpOverviewView(id),
+    togglePin: (id: number) => realApi.togglePinCorpOverviewView(id),
+  },
   supplyPlanning: {
     getPlanets: () => realApi.getSupplyPlanets(),
   },
@@ -5252,5 +5396,9 @@ export type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
+  // Corp Overview Views
+  CorpOverviewView,
+  CreateCorpOverviewViewRequest,
+  UpdateCorpOverviewViewRequest,
   SupplyPlanetSummary,
 }

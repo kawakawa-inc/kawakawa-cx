@@ -735,6 +735,11 @@ export * from './xit.js'
 
 export * from './shopping-list.js'
 
+// ==================== CORP OVERVIEW VIEWS ====================
+
+export * from './corp-metrics.js'
+export * from './corp-overview-view.js'
+
 // ==================== SAVED MARKET FILTERS ====================
 
 export type FilterPrivacy = 'private' | 'link' | 'public'

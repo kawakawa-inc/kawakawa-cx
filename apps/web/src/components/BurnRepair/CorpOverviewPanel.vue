@@ -7,224 +7,252 @@
   </template>
 
   <template v-else>
-    <div class="d-flex align-center mb-3 ga-2">
+    <div class="d-flex align-center ga-2 mb-3 flex-wrap">
+      <CorpViewSelector
+        :model-value="viewId"
+        :views="views"
+        :loading="viewsLoading"
+        :current-username="currentUsername"
+        :can-pin="canPin"
+        @update:model-value="onViewChange"
+        @new="openNewViewDialog"
+        @edit="openEditViewDialog"
+        @delete="confirmDeleteView"
+        @toggle-pin="togglePin"
+        @snackbar="(m, c) => emit('snackbar', m, c)"
+      />
+
       <v-chip size="small" variant="tonal">
         {{ corpData.includedUserCount }} users included
       </v-chip>
       <v-chip v-if="corpData.staleUserCount > 0" size="small" variant="tonal" color="warning">
-        {{ corpData.staleUserCount }} inactive (data &gt; 30 days old)
+        {{ corpData.staleUserCount }} inactive (FIO data &gt; 30 days old)
       </v-chip>
+
+      <v-spacer />
+
+      <v-btn
+        v-if="activeView.cards.length > 0 && corpData.materials.length > 0"
+        variant="tonal"
+        size="small"
+        prepend-icon="mdi-content-copy"
+        @click="onCopyCsv"
+      >
+        Copy CSV
+      </v-btn>
     </div>
 
-    <v-tabs v-model="activeSubTab" density="compact" class="mb-3">
-      <v-tab value="consumables">Consumables</v-tab>
-      <v-tab value="fabs">Fabs</v-tab>
-      <v-tab value="other">Other</v-tab>
-    </v-tabs>
+    <template v-if="activeView.cards.length > 0">
+      <CorpDashboard
+        :cards="activeView.cards"
+        :corp-data="corpData"
+        :ticker-set="tickerSet"
+        :repair-days="repairDays"
+      />
+    </template>
+    <template v-else>
+      <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+        This view has no cards. {{ canEditActive ? 'Open it to add some.' : '' }}
+      </v-alert>
+    </template>
 
-    <v-tabs-window v-model="activeSubTab">
-      <v-tabs-window-item value="consumables">
-        <TickerListManager
-          label="Consumables"
-          :model-value="consumablesTickers"
-          :read-only="!isAdmin"
-          @update:model-value="updateTickers('burnRepair.corpOverview.consumablesTickers', $event)"
-        />
-        <template v-if="consumablesSet.size === 0">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            No Consumables tickers configured.
-            {{ isAdmin ? 'Use the manager above to add some.' : 'Ask an admin to configure them.' }}
-          </v-alert>
-        </template>
-        <template v-else>
-          <CorpDashboard
-            mode="consumables"
-            :materials="corpData.materials"
-            :per-user="corpData.perUser"
-            :available-surplus="corpData.availableSurplus"
-            :repair-days="repairDays"
-            :ticker-set="consumablesSet"
-          />
-          <MaterialsTable
-            title="Materials"
-            :materials="filteredBy(consumablesSet)"
-            :available-surplus="corpData.availableSurplus"
-            @copy-csv="
-              emit('copy-csv', { scope: 'consumables', materials: filteredBy(consumablesSet) })
-            "
-          />
-        </template>
-      </v-tabs-window-item>
+    <MaterialsTable
+      title="Materials"
+      :materials="filteredMaterials"
+      :available-surplus="corpData.availableSurplus"
+      @copy-csv="onCopyCsv"
+    />
 
-      <v-tabs-window-item value="fabs">
-        <TickerListManager
-          label="Fabs"
-          :model-value="fabsTickers"
-          :read-only="!isAdmin"
-          @update:model-value="updateTickers('burnRepair.corpOverview.fabsTickers', $event)"
-        />
-        <template v-if="fabsSet.size === 0">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            No Fabs tickers configured.
-            {{ isAdmin ? 'Use the manager above to add some.' : 'Ask an admin to configure them.' }}
-          </v-alert>
-        </template>
-        <template v-else>
-          <CorpDashboard
-            mode="fabs"
-            :materials="corpData.materials"
-            :per-user="corpData.perUser"
-            :available-surplus="corpData.availableSurplus"
-            :repair-days="repairDays"
-            :ticker-set="fabsSet"
-          />
-          <MaterialsTable
-            title="Materials"
-            :materials="filteredBy(fabsSet)"
-            :available-surplus="corpData.availableSurplus"
-            @copy-csv="emit('copy-csv', { scope: 'fabs', materials: filteredBy(fabsSet) })"
-          />
-          <!-- Buildings + workforce belong with fab planning -->
-          <v-card v-if="corpBuildings" class="mb-4 mt-4">
-            <v-card-title class="text-subtitle-1">
-              Buildings
-              <v-chip size="x-small" class="ml-2" variant="tonal">
-                {{ corpBuildings.totalBuildings }} total
-              </v-chip>
-            </v-card-title>
-            <v-card-text>
-              <v-chip
-                v-for="(count, ticker) in corpBuildings.buildings"
-                :key="ticker"
-                size="small"
-                variant="tonal"
-                class="mr-1 mb-1"
-              >
-                {{ ticker }}: {{ count }}
-              </v-chip>
-            </v-card-text>
-          </v-card>
+    <v-card v-if="corpBuildings && corpBuildings.totalBuildings > 0" class="mb-4 mt-4">
+      <v-card-title class="text-subtitle-1">
+        Buildings
+        <v-chip size="x-small" class="ml-2" variant="tonal">
+          {{ corpBuildings.totalBuildings }} total
+        </v-chip>
+      </v-card-title>
+      <v-card-text>
+        <v-chip
+          v-for="(count, ticker) in corpBuildings.buildings"
+          :key="ticker"
+          size="small"
+          variant="tonal"
+          class="mr-1 mb-1"
+        >
+          {{ ticker }}: {{ count }}
+        </v-chip>
+      </v-card-text>
+    </v-card>
 
-          <v-card v-if="corpWorkforce">
-            <v-card-title class="text-subtitle-1">Workforce</v-card-title>
-            <v-data-table
-              :items="corpWorkforce.workforce"
-              :headers="workforceHeaders"
-              density="compact"
-              :items-per-page="-1"
-              hide-default-footer
-            >
-              <template #item.totalPopulation="{ item }">
-                {{ item.totalPopulation.toLocaleString() }}
-              </template>
-              <template #item.totalRequired="{ item }">
-                {{ item.totalRequired.toLocaleString() }}
-              </template>
-            </v-data-table>
-          </v-card>
+    <v-card v-if="corpWorkforce && corpWorkforce.workforce.length > 0">
+      <v-card-title class="text-subtitle-1">Workforce</v-card-title>
+      <v-data-table
+        :items="corpWorkforce.workforce"
+        :headers="workforceHeaders"
+        density="compact"
+        :items-per-page="-1"
+        hide-default-footer
+      >
+        <template #item.totalPopulation="{ item }">
+          {{ item.totalPopulation.toLocaleString() }}
         </template>
-      </v-tabs-window-item>
+        <template #item.totalRequired="{ item }">
+          {{ item.totalRequired.toLocaleString() }}
+        </template>
+      </v-data-table>
+    </v-card>
 
-      <v-tabs-window-item value="other">
-        <template v-if="otherSet.size === 0">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            All corp tickers are covered by Consumables or Fabs.
-          </v-alert>
-        </template>
-        <template v-else>
-          <CorpDashboard
-            mode="other"
-            :materials="corpData.materials"
-            :per-user="corpData.perUser"
-            :available-surplus="corpData.availableSurplus"
-            :repair-days="repairDays"
-            :ticker-set="otherSet"
-          />
-          <MaterialsTable
-            title="Materials"
-            :materials="filteredBy(otherSet)"
-            :available-surplus="corpData.availableSurplus"
-            @copy-csv="emit('copy-csv', { scope: 'other', materials: filteredBy(otherSet) })"
-          />
-        </template>
-      </v-tabs-window-item>
-    </v-tabs-window>
+    <SaveCorpViewDialog
+      v-model="saveDialogOpen"
+      :view="editingView"
+      :corp-data="corpData"
+      :repair-days="repairDays"
+      @create="onCreateView"
+      @update="onUpdateView"
+    />
+
+    <ConfirmationDialog
+      v-model="deleteDialogOpen"
+      title="Delete view?"
+      :message="deletingView ? `'${deletingView.name}' will be removed permanently.` : ''"
+      confirm-text="Delete"
+      confirm-color="error"
+      @confirm="onDeleteConfirmed"
+    />
   </template>
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
-import TickerListManager from './TickerListManager.vue'
-import CorpDashboard from './CorpDashboard.vue'
-import MaterialsTable from './MaterialsTable.vue'
-import { useSettingsStore } from '../../stores/settings'
-import { useUserStore } from '../../stores/user'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type {
   BurnRepairCorpResponse,
   BurnRepairCorpBuildingsResponse,
-  BurnRepairCorpWorkforceResponse,
   BurnRepairCorpMaterial,
+  BurnRepairCorpWorkforceResponse,
+  CorpOverviewView,
+  CreateCorpOverviewViewRequest,
+  UpdateCorpOverviewViewRequest,
 } from '@kawakawa/types'
+import { api } from '../../services/api'
+import { useUserStore } from '../../stores/user'
+import CorpViewSelector from './CorpViewSelector.vue'
+import CorpDashboard from './CorpDashboard.vue'
+import MaterialsTable from './MaterialsTable.vue'
+import SaveCorpViewDialog from './SaveCorpViewDialog.vue'
+import ConfirmationDialog from '../ConfirmationDialog.vue'
+import {
+  BUILT_IN_ALL_VIEW,
+  BUILT_IN_VIEW_ID,
+  isBuiltInViewId,
+  normalizeView,
+} from './viewTemplates'
 
 const props = defineProps<{
   corpData: BurnRepairCorpResponse | null
   corpBuildings: BurnRepairCorpBuildingsResponse | null
   corpWorkforce: BurnRepairCorpWorkforceResponse | null
   repairDays: number
-  modelValue: string
+  modelValue: number
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void
+  (e: 'update:modelValue', value: number): void
   (
     e: 'copy-csv',
-    payload: { scope: 'consumables' | 'fabs' | 'other'; materials: BurnRepairCorpMaterial[] }
+    payload: { viewName: string; materials: BurnRepairCorpMaterial[] }
   ): void
+  (e: 'snackbar', message: string, color?: string): void
 }>()
 
-const settingsStore = useSettingsStore()
 const userStore = useUserStore()
+const route = useRoute()
+const router = useRouter()
+const currentUsername = computed<string | null>(() => userStore.getUser()?.username ?? null)
+const canPin = computed(
+  () => userStore.getUser()?.roles?.some(r => r.id === 'administrator') ?? false
+)
 
-const activeSubTab = computed<string>({
+const viewId = computed<number>({
   get: () => props.modelValue,
   set: v => emit('update:modelValue', v),
 })
 
-const isAdmin = computed(() => {
-  const user = userStore.getUser()
-  return user?.roles?.some(r => r.id === 'administrator') ?? false
-})
+const views = ref<CorpOverviewView[]>([])
+const viewsLoading = ref(false)
+
+async function loadViews(): Promise<void> {
+  viewsLoading.value = true
+  try {
+    const raw = await api.corpOverviewViews.list()
+    views.value = raw.map(normalizeView)
+  } catch (e) {
+    console.error('Failed to load views', e)
+    emit('snackbar', 'Failed to load views', 'error')
+  } finally {
+    viewsLoading.value = false
+  }
+}
 
 /**
- * Read ticker lists from the user settings store. Since both keys are
- * admin-only writable but read by everyone, the settings store returns the
- * global-default value when the user has no override — exactly what we want.
+ * Handle a `?view=<id>` deep link. Runs after the initial list fetch so we can
+ * prefer matching a view the user already owns/sees, and fall back to a direct
+ * fetch for link-privacy views shared by URL. Strips the query param on success
+ * so the persisted `usePageState` value becomes the source of truth.
  */
-const consumablesTickers = computed<string[]>(
-  () => settingsStore.getSetting<string[]>('burnRepair.corpOverview.consumablesTickers') ?? []
-)
-const fabsTickers = computed<string[]>(
-  () => settingsStore.getSetting<string[]>('burnRepair.corpOverview.fabsTickers') ?? []
-)
+async function consumeViewQueryParam(): Promise<void> {
+  const raw = route.query.view
+  const idStr = Array.isArray(raw) ? raw[0] : raw
+  if (!idStr) return
+  const parsed = Number(idStr)
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return
 
-const consumablesSet = computed(() => new Set(consumablesTickers.value))
-const fabsSet = computed(() => new Set(fabsTickers.value))
-
-const otherSet = computed(() => {
-  const set = new Set<string>()
-  if (!props.corpData) return set
-  for (const m of props.corpData.materials) {
-    if (!consumablesSet.value.has(m.commodityTicker) && !fabsSet.value.has(m.commodityTicker)) {
-      set.add(m.commodityTicker)
+  try {
+    let view = views.value.find(v => v.id === parsed)
+    if (!view) {
+      // Not in the default list (likely a link-privacy share). Fetch directly.
+      view = normalizeView(await api.corpOverviewViews.get(parsed))
+      views.value = [view, ...views.value]
     }
+    viewId.value = view.id
+  } catch (e) {
+    const msg = (e as Error).message || 'View not found'
+    emit('snackbar', `Shared view unavailable: ${msg}`, 'error')
+  } finally {
+    // Always strip the param — either we loaded the view or we're staying on
+    // whatever was previously selected; keeping the query around would re-fire
+    // the lookup on every refresh.
+    const { view: _drop, ...rest } = route.query
+    void router.replace({ query: rest })
   }
-  return set
+}
+
+onMounted(async () => {
+  await loadViews()
+  await consumeViewQueryParam()
 })
 
-function filteredBy(set: Set<string>): BurnRepairCorpMaterial[] {
+const activeView = computed<CorpOverviewView>(() => {
+  if (isBuiltInViewId(viewId.value)) return BUILT_IN_ALL_VIEW
+  const found = views.value.find(v => v.id === viewId.value)
+  return found ?? BUILT_IN_ALL_VIEW
+})
+
+const canEditActive = computed(
+  () =>
+    !isBuiltInViewId(activeView.value.id) &&
+    activeView.value.userName === currentUsername.value
+)
+
+const tickerSet = computed<Set<string> | null>(() =>
+  activeView.value.tickers.length > 0 ? new Set(activeView.value.tickers) : null
+)
+
+const filteredMaterials = computed<BurnRepairCorpMaterial[]>(() => {
   if (!props.corpData) return []
+  if (!tickerSet.value) return props.corpData.materials
+  const set = tickerSet.value
   return props.corpData.materials.filter(m => set.has(m.commodityTicker))
-}
+})
 
 const workforceHeaders = [
   { title: 'Type', key: 'type', sortable: false },
@@ -232,42 +260,90 @@ const workforceHeaders = [
   { title: 'Total Required', key: 'totalRequired', sortable: false },
 ]
 
-/**
- * Admin writes go through the global-defaults endpoint. The settings store
- * only updates per-user overrides, so we don't use updateSetting here.
- */
-import { api } from '../../services/api'
-
-let saveTimer: ReturnType<typeof setTimeout> | undefined
-const SAVE_DEBOUNCE_MS = 400
-
-async function updateTickers(
-  key: 'burnRepair.corpOverview.consumablesTickers' | 'burnRepair.corpOverview.fabsTickers',
-  value: string[]
-): Promise<void> {
-  if (!isAdmin.value) return
-  clearTimeout(saveTimer)
-  // Optimistic local update so the UI reflects the change immediately.
-  settingsStore.settingsValues.value[key] = value
-  saveTimer = setTimeout(async () => {
-    try {
-      await api.adminGlobalDefaults.update({ settings: { [key]: value } })
-    } catch (e) {
-      console.error('Failed to update global default', key, e)
-    }
-  }, SAVE_DEBOUNCE_MS)
+function onViewChange(id: number): void {
+  // Falling back to built-in is always safe.
+  if (isBuiltInViewId(id) || views.value.some(v => v.id === id)) {
+    viewId.value = id
+  } else {
+    viewId.value = BUILT_IN_VIEW_ID
+  }
 }
 
-/**
- * When the corp-data load first populates, auto-select Consumables if nothing
- * was stored. (Parent passes a persisted value via v-model, so this is just a
- * safety net for empty strings.)
- */
-watch(
-  () => props.modelValue,
-  v => {
-    if (!v) emit('update:modelValue', 'consumables')
-  },
-  { immediate: true }
-)
+// -------- Save dialog (create + edit) --------
+const saveDialogOpen = ref(false)
+const editingView = ref<CorpOverviewView | null>(null)
+
+function openNewViewDialog(): void {
+  editingView.value = null
+  saveDialogOpen.value = true
+}
+
+function openEditViewDialog(v: CorpOverviewView): void {
+  editingView.value = v
+  saveDialogOpen.value = true
+}
+
+async function onCreateView(body: CreateCorpOverviewViewRequest): Promise<void> {
+  try {
+    const created = normalizeView(await api.corpOverviewViews.create(body))
+    views.value = [created, ...views.value]
+    viewId.value = created.id
+    emit('snackbar', `View '${created.name}' created`, 'success')
+  } catch (e) {
+    console.error('Failed to create view', e)
+    emit('snackbar', (e as Error).message || 'Failed to create view', 'error')
+  }
+}
+
+async function onUpdateView(id: number, body: UpdateCorpOverviewViewRequest): Promise<void> {
+  try {
+    const updated = normalizeView(await api.corpOverviewViews.update(id, body))
+    views.value = views.value.map(v => (v.id === id ? updated : v))
+    emit('snackbar', `View '${updated.name}' updated`, 'success')
+  } catch (e) {
+    console.error('Failed to update view', e)
+    emit('snackbar', (e as Error).message || 'Failed to update view', 'error')
+  }
+}
+
+// -------- Delete --------
+const deleteDialogOpen = ref(false)
+const deletingView = ref<CorpOverviewView | null>(null)
+
+function confirmDeleteView(v: CorpOverviewView): void {
+  deletingView.value = v
+  deleteDialogOpen.value = true
+}
+
+async function onDeleteConfirmed(): Promise<void> {
+  const v = deletingView.value
+  if (!v) return
+  try {
+    await api.corpOverviewViews.delete(v.id)
+    views.value = views.value.filter(x => x.id !== v.id)
+    if (viewId.value === v.id) viewId.value = BUILT_IN_VIEW_ID
+    emit('snackbar', `View '${v.name}' deleted`, 'success')
+  } catch (e) {
+    console.error('Failed to delete view', e)
+    emit('snackbar', (e as Error).message || 'Failed to delete view', 'error')
+  } finally {
+    deletingView.value = null
+  }
+}
+
+// -------- Pin --------
+async function togglePin(v: CorpOverviewView): Promise<void> {
+  try {
+    const updated = normalizeView(await api.corpOverviewViews.togglePin(v.id))
+    views.value = views.value.map(x => (x.id === v.id ? updated : x))
+  } catch (e) {
+    console.error('Failed to toggle pin', e)
+    emit('snackbar', (e as Error).message || 'Failed to toggle pin', 'error')
+  }
+}
+
+// -------- CSV --------
+function onCopyCsv(): void {
+  emit('copy-csv', { viewName: activeView.value.name, materials: filteredMaterials.value })
+}
 </script>

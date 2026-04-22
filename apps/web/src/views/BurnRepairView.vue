@@ -491,12 +491,13 @@
       <!-- ==================== CORP OVERVIEW TAB ==================== -->
       <v-tabs-window-item value="corp">
         <CorpOverviewPanel
-          v-model="state.corpOverviewSubTab"
+          v-model="state.corpOverviewViewId"
           :corp-data="corpData"
           :corp-buildings="corpBuildings"
           :corp-workforce="corpWorkforce"
           :repair-days="repairDays"
           @copy-csv="onCorpCopyCsv"
+          @snackbar="onCorpSnackbar"
         />
       </v-tabs-window-item>
 
@@ -660,7 +661,7 @@ const { state } = usePageState('burn-repair', {
   myBasesPriceListVersion: null as number | null,
   /** Per-planet override for the price lookup location; empty/missing = use price list default */
   myBasesPricesFromByPlanet: {} as Record<string, string>,
-  corpOverviewSubTab: 'consumables',
+  corpOverviewViewId: -1 as number, // -1 = built-in "All" view
   shoppingListOrigin: '',
   shoppingListBase: '',
   shoppingListDays: 7,
@@ -1174,7 +1175,7 @@ function copyMyBasesCsv(planet: BurnRepairPlanetSummary): void {
 }
 
 function onCorpCopyCsv(payload: {
-  scope: 'consumables' | 'fabs' | 'other'
+  viewName: string
   materials: BurnRepairCorpMaterial[]
 }): void {
   const headers = [
@@ -1202,8 +1203,13 @@ function onCorpCopyCsv(payload: {
       days,
     ]
   })
-  const label = `Corp materials (${payload.scope})`
-  void copyCsv(headers, rows, label)
+  void copyCsv(headers, rows, `Corp materials (${payload.viewName})`)
+}
+
+function onCorpSnackbar(message: string, color = 'success'): void {
+  snackbar.message = message
+  snackbar.color = color
+  snackbar.show = true
 }
 
 function copyShoppingListCsv(): void {

@@ -8,6 +8,7 @@ import {
   integer,
   decimal,
   timestamp,
+  date,
   varchar,
   pgEnum,
   boolean,
@@ -840,6 +841,64 @@ export const corpOverviewViews = pgTable(
   })
 )
 
+// ==================== CORP SNAPSHOT — PER USER × TICKER ====================
+// Daily snapshot of each included user's concrete burn/input/production rates
+// and current-state repair total, per commodity. Upserted at the end of each
+// computeBurnRepairCache pass. Rates here are computed with repairDays=0 and
+// willRepair=false — "what the buildings actually are" at snapshot time, not
+// the user's planning-window projection.
+export const corpSnapshotUserTicker = pgTable(
+  'corp_snapshot_user_ticker',
+  {
+    id: serial('id').primaryKey(),
+    snapshotAt: date('snapshot_at').notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    burnDaily: decimal('burn_daily', { precision: 12, scale: 4 }).notNull(),
+    inputsDaily: decimal('inputs_daily', { precision: 12, scale: 4 }).notNull(),
+    productionDaily: decimal('production_daily', { precision: 12, scale: 4 }).notNull(),
+    /** Concrete repair materials owed right now — NOT projected over a planning window. */
+    repairTotal: decimal('repair_total', { precision: 12, scale: 4 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniq: uniqueIndex('corp_snapshot_user_ticker_uniq').on(
+      table.userId,
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTickerTime: index('corp_snapshot_user_ticker_ticker_time_idx').on(
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTime: index('corp_snapshot_user_ticker_time_idx').on(table.snapshotAt),
+  })
+)
+
+// ==================== CORP SNAPSHOT — TICKER STOCK ====================
+// Daily snapshot of corp-wide available stock per commodity (sum of remaining
+// sell-order quantities across included users). Written by the daily stock
+// capture cron, not per-user sync.
+export const corpSnapshotTickerStock = pgTable(
+  'corp_snapshot_ticker_stock',
+  {
+    id: serial('id').primaryKey(),
+    snapshotAt: date('snapshot_at').notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    stock: integer('stock').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniq: uniqueIndex('corp_snapshot_ticker_stock_uniq').on(
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTime: index('corp_snapshot_ticker_stock_time_idx').on(table.snapshotAt),
+  })
+)
+
 // ==================== INVOICE LINE ITEMS (Individual items within an invoice) ====================
 // Each line item represents a buy or sell action within the invoice
 // Before submission: stores intent (which order to reserve from / fill)
@@ -1347,6 +1406,17 @@ export const corpOverviewViewsRelations = relations(corpOverviewViews, ({ one })
     references: [users.id],
   }),
 }))
+
+// ==================== CORP SNAPSHOT RELATIONS ====================
+
+export const corpSnapshotUserTickerRelations = relations(corpSnapshotUserTicker, ({ one }) => ({
+  user: one(users, {
+    fields: [corpSnapshotUserTicker.userId],
+    references: [users.id],
+  }),
+}))
+
+// corp_snapshot_ticker_stock has no FK relations beyond its own timestamp-ticker key.
 
 // ==================== PRICING SYSTEM RELATIONS ====================
 

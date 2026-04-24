@@ -7,6 +7,7 @@
 import { db, users, syncJobs } from '@kawakawa/db'
 import { and, eq, sql } from 'drizzle-orm'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
+import { captureCorpStockSnapshot } from '../supply/corp-stock.js'
 import { enqueue, enqueueUserFullSync } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
 
@@ -23,9 +24,12 @@ const USER_SYNC_STALE_MS = Number(process.env.SYNC_USER_STALE_MS) || HOUR_MS
 const GLOBAL_SYNC_INTERVAL_MS = Number(process.env.SYNC_GLOBAL_INTERVAL_MS) || DAY_MS
 /** Delay before the first user-sync run after boot (avoids thundering restarts). */
 const USER_SYNC_STARTUP_DELAY_MS = Number(process.env.SYNC_STARTUP_DELAY_MS) || 60_000
+/** Daily corp-stock snapshot interval (for histogram views). */
+const STOCK_SNAPSHOT_INTERVAL_MS = Number(process.env.STOCK_SNAPSHOT_INTERVAL_MS) || DAY_MS
 
 let userSyncTimer: ReturnType<typeof setInterval> | null = null
 let globalSyncTimer: ReturnType<typeof setInterval> | null = null
+let stockSnapshotTimer: ReturnType<typeof setInterval> | null = null
 let startupTimer: ReturnType<typeof setTimeout> | null = null
 
 export function startScheduler(): void {
@@ -50,6 +54,14 @@ export function startScheduler(): void {
     void scheduleGlobalSyncs()
   }, GLOBAL_SYNC_INTERVAL_MS)
 
+  // Corp-wide stock snapshot: capture once at boot so fresh deploys have
+  // today's row, then daily. Idempotent per (ticker, UTC-day) — safe to run
+  // more often than strictly needed.
+  void runStockSnapshot()
+  stockSnapshotTimer = setInterval(() => {
+    void runStockSnapshot()
+  }, STOCK_SNAPSHOT_INTERVAL_MS)
+
   // User syncs wait a bit after boot, then run on the hourly cadence.
   // The delay prevents a burst if the API restarts frequently during deploys.
   startupTimer = setTimeout(() => {
@@ -70,11 +82,23 @@ export function stopScheduler(): void {
     clearInterval(globalSyncTimer)
     globalSyncTimer = null
   }
+  if (stockSnapshotTimer) {
+    clearInterval(stockSnapshotTimer)
+    stockSnapshotTimer = null
+  }
   if (startupTimer) {
     clearTimeout(startupTimer)
     startupTimer = null
   }
   log.info('Sync queue scheduler stopped')
+}
+
+async function runStockSnapshot(): Promise<void> {
+  try {
+    await captureCorpStockSnapshot()
+  } catch (err) {
+    log.error({ err }, 'Failed to capture corp stock snapshot')
+  }
 }
 
 async function scheduleGlobalSyncs(): Promise<void> {

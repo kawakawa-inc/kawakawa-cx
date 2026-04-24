@@ -3,8 +3,8 @@
 // per user per planet per ticker. Results are stored in burn_repair_cache
 // so corp-wide aggregation is a plain SQL SUM query.
 
-import { db, burnRepairCache, fioUserPlanets } from '@kawakawa/db'
-import { eq, desc } from 'drizzle-orm'
+import { db, burnRepairCache, corpSnapshotUserTicker, fioUserPlanets } from '@kawakawa/db'
+import { eq, desc, sql } from 'drizzle-orm'
 import { getUserPlanetData } from '../fio/sync-user-planets.js'
 import { toPlanetInput, getRepairableTickers } from './planet-data-helpers.js'
 import {
@@ -16,6 +16,8 @@ import {
 import * as userSettingsService from '../user-settings/user-settings-service.js'
 import type { PlanetOverrides } from '@kawakawa/types'
 import { createLogger } from '../utils/logger.js'
+
+type PlanetData = Awaited<ReturnType<typeof getUserPlanetData>>[number]
 
 const log = createLogger({ service: 'burn-repair-cache' })
 
@@ -161,8 +163,115 @@ export async function computeBurnRepairCache(
     await db.insert(burnRepairCache).values(rows)
   }
 
+  // 6. Write today's historical snapshot. Uses concrete "as-is" parameters
+  // (willRepair=false, repairDays=0) so historical rows stay comparable across
+  // users regardless of each member's planning-window setting. Idempotent per
+  // (userId, ticker, UTC-day) — repeated syncs on the same day overwrite.
+  await writeUserSnapshotRows(userId, planets, excludedPlanets, repairableTickers, now)
+
   log.info(
     { userId, planets: planets.length, cacheRows: rows.length },
     'Burn/repair cache computed'
   )
+}
+
+/**
+ * Sum per-ticker base rates across a user's planets, computed with
+ * willRepair=false and repairDays=0 — the "current game state" view — and
+ * upsert today's row per ticker into `corp_snapshot_user_ticker`.
+ *
+ * Intentionally independent of `burn_repair_cache`: snapshots track reality,
+ * the cache tracks each user's live planning projection. Two users with
+ * different repairDays settings should produce comparable snapshot rows.
+ */
+async function writeUserSnapshotRows(
+  userId: number,
+  planets: PlanetData[],
+  excludedPlanets: Set<string>,
+  repairableTickers: Set<string>,
+  now: Date
+): Promise<void> {
+  interface Totals {
+    burnDaily: number
+    inputsDaily: number
+    productionDaily: number
+    repairTotal: number
+  }
+  const byTicker = new Map<string, Totals>()
+  const bump = (ticker: string, patch: Partial<Totals>): void => {
+    const existing = byTicker.get(ticker) ?? {
+      burnDaily: 0,
+      inputsDaily: 0,
+      productionDaily: 0,
+      repairTotal: 0,
+    }
+    byTicker.set(ticker, {
+      burnDaily: existing.burnDaily + (patch.burnDaily ?? 0),
+      inputsDaily: existing.inputsDaily + (patch.inputsDaily ?? 0),
+      productionDaily: existing.productionDaily + (patch.productionDaily ?? 0),
+      repairTotal: existing.repairTotal + (patch.repairTotal ?? 0),
+    })
+  }
+
+  for (const planet of planets) {
+    if (
+      excludedPlanets.has(planet.planetNaturalId.toLowerCase()) ||
+      excludedPlanets.has(planet.planetName.toLowerCase())
+    ) {
+      continue
+    }
+
+    const input = toPlanetInput(planet)
+
+    const burnResults = calculateWorkforceBurn(input.workforce, 1, { fractional: true })
+    for (const r of burnResults) bump(r.ticker, { burnDaily: r.amount })
+
+    // willRepair=false → rates reflect current condition, no ideal-repair projection.
+    const inputResults = calculateProductionNeeds(input.production, 1, false, {
+      fractional: true,
+    })
+    for (const r of inputResults) bump(r.ticker, { inputsDaily: r.amount })
+
+    const outputResults = calculateProductionOutputs(input.production, 1, false, {
+      fractional: true,
+    })
+    for (const r of outputResults) bump(r.ticker, { productionDaily: r.amount })
+
+    // repairDays=0 → concrete materials owed right now, not projected forward.
+    const repairable = input.buildings.filter(b => repairableTickers.has(b.buildingTicker))
+    for (const building of repairable) {
+      const needs = calculateBuildingRepairNeeds(building, 0, now)
+      for (const n of needs) bump(n.ticker, { repairTotal: n.amount })
+    }
+  }
+
+  if (byTicker.size === 0) return
+
+  const snapshotAt = now.toISOString().slice(0, 10)
+  const rows = [...byTicker.entries()].map(([commodityTicker, t]) => ({
+    snapshotAt,
+    userId,
+    commodityTicker,
+    burnDaily: String(t.burnDaily),
+    inputsDaily: String(t.inputsDaily),
+    productionDaily: String(t.productionDaily),
+    repairTotal: String(t.repairTotal),
+  }))
+
+  await db
+    .insert(corpSnapshotUserTicker)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [
+        corpSnapshotUserTicker.userId,
+        corpSnapshotUserTicker.commodityTicker,
+        corpSnapshotUserTicker.snapshotAt,
+      ],
+      set: {
+        burnDaily: sql`excluded.burn_daily`,
+        inputsDaily: sql`excluded.inputs_daily`,
+        productionDaily: sql`excluded.production_daily`,
+        repairTotal: sql`excluded.repair_total`,
+      },
+    })
 }

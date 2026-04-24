@@ -4,30 +4,25 @@
  * `BUILT_IN_ALL_VIEW` is the "no view selected" fallback — always present in
  * the View selector, can't be edited or deleted, sourced client-side so it
  * doesn't need a system user in the DB.
- *
- * `VIEW_TEMPLATES` are starting points surfaced in the Create-View dialog.
- * Picking one seeds the form; nothing gets persisted until the user saves.
  */
 
 import type {
   CorpOverviewView,
+  GraphConfig,
   MetricKey,
   ViewCard,
   ViewCardFilter,
   ViewCardSort,
+  ViewCardType,
 } from '@kawakawa/types'
 
 /** Sentinel id for the built-in view. Real rows always have positive IDs. */
 export const BUILT_IN_VIEW_ID = -1
 
-/**
- * Standard cards reused across templates. The four non-Fab-specific cards
- * match the original sub-tab "Other" card set: Gaps, Surplus, Producers,
- * Consumers.
- */
 const TOP_GAPS: ViewCard = {
   name: 'Top Gaps',
   groupBy: 'ticker',
+  type: 'table',
   filters: [{ metric: 'gap', op: '>', value: 0 }],
   sortBy: [{ metric: 'gap', direction: 'desc' }],
   columns: ['gap', 'stock', 'daysRemaining', 'daysOfCover'],
@@ -37,6 +32,7 @@ const TOP_GAPS: ViewCard = {
 const TOP_SURPLUS: ViewCard = {
   name: 'Top Surplus',
   groupBy: 'ticker',
+  type: 'table',
   filters: [{ metric: 'netDailyNoRepair', op: '>', value: 0 }],
   sortBy: [{ metric: 'netDailyNoRepair', direction: 'desc' }],
   columns: ['netDailyNoRepair', 'stock', 'daysOfCover'],
@@ -46,6 +42,7 @@ const TOP_SURPLUS: ViewCard = {
 const TOP_PRODUCERS: ViewCard = {
   name: 'Top Producers',
   groupBy: 'user-ticker',
+  type: 'table',
   filters: [{ metric: 'productionDaily', op: '>', value: 0 }],
   sortBy: [{ metric: 'productionDaily', direction: 'desc' }],
   columns: ['username', 'productionDaily'],
@@ -55,27 +52,10 @@ const TOP_PRODUCERS: ViewCard = {
 const TOP_CONSUMERS: ViewCard = {
   name: 'Top Consumers',
   groupBy: 'user-ticker',
+  type: 'table',
   filters: [{ metric: 'consumptionDaily', op: '>', value: 0 }],
   sortBy: [{ metric: 'consumptionDaily', direction: 'desc' }],
   columns: ['username', 'consumptionDaily'],
-  limit: 5,
-}
-
-const TOP_REPAIR_NEEDS: ViewCard = {
-  name: 'Top Repair Needs',
-  groupBy: 'ticker',
-  filters: [{ metric: 'repairPerDay', op: '>', value: 0 }],
-  sortBy: [{ metric: 'repairPerDay', direction: 'desc' }],
-  columns: ['repairPerDay', 'repairTotal', 'stock'],
-  limit: 5,
-}
-
-const TOP_INPUT_NEEDS: ViewCard = {
-  name: 'Top Input Needs',
-  groupBy: 'ticker',
-  filters: [{ metric: 'inputGap', op: '>', value: 0 }],
-  sortBy: [{ metric: 'inputGap', direction: 'desc' }],
-  columns: ['productionDaily', 'consumptionDaily', 'inputGap', 'stock', 'daysRemaining'],
   limit: 5,
 }
 
@@ -94,61 +74,6 @@ export const BUILT_IN_ALL_VIEW: CorpOverviewView = {
   isPinned: false,
   createdAt: '',
 }
-
-export interface ViewTemplate {
-  /** Dropdown label shown in the "Start from template" menu. */
-  label: string
-  description: string
-  /** Everything except id/userId/userName/createdAt — those come from the save. */
-  view: Pick<CorpOverviewView, 'name' | 'tickers' | 'cards' | 'privacy' | 'isPinned'>
-}
-
-export const VIEW_TEMPLATES: ViewTemplate[] = [
-  {
-    label: 'All materials',
-    description: 'Mirrors the built-in All view — no ticker filter, four summary cards.',
-    view: {
-      name: 'All materials',
-      tickers: [],
-      cards: [TOP_GAPS, TOP_SURPLUS, TOP_PRODUCERS, TOP_CONSUMERS],
-      privacy: 'private',
-      isPinned: false,
-    },
-  },
-  {
-    label: 'Consumables',
-    description: 'Workforce-burn focus. Seeded with no tickers — add your consumable set.',
-    view: {
-      name: 'Consumables',
-      tickers: [],
-      cards: [TOP_GAPS, TOP_SURPLUS, TOP_PRODUCERS, TOP_CONSUMERS],
-      privacy: 'private',
-      isPinned: false,
-    },
-  },
-  {
-    label: 'Fabs',
-    description: 'Repair and production-input focus. Seeded with no tickers — add fab materials.',
-    view: {
-      name: 'Fabs',
-      tickers: [],
-      cards: [TOP_REPAIR_NEEDS, TOP_INPUT_NEEDS, TOP_PRODUCERS, TOP_CONSUMERS],
-      privacy: 'private',
-      isPinned: false,
-    },
-  },
-  {
-    label: 'Empty',
-    description: 'Blank view — add tickers and cards from scratch.',
-    view: {
-      name: 'New view',
-      tickers: [],
-      cards: [],
-      privacy: 'private',
-      isPinned: false,
-    },
-  },
-]
 
 /** True iff the given id refers to the built-in (non-DB) view. */
 export function isBuiltInViewId(id: number): boolean {
@@ -172,7 +97,11 @@ export function normalizeView(view: CorpOverviewView): CorpOverviewView {
 }
 
 function normalizeCard(card: unknown): ViewCard {
-  const raw = card as Partial<ViewCard> & { primaryMetric?: MetricKey }
+  const raw = card as Partial<ViewCard> & {
+    primaryMetric?: MetricKey
+    type?: ViewCardType
+    graph?: GraphConfig
+  }
   const groupBy: ViewCard['groupBy'] = raw.groupBy === 'user-ticker' ? 'user-ticker' : 'ticker'
   const legacyPrimary = typeof raw.primaryMetric === 'string' ? raw.primaryMetric : null
   const filters: ViewCardFilter[] = Array.isArray(raw.filters)
@@ -185,12 +114,51 @@ function normalizeCard(card: unknown): ViewCard {
     : legacyPrimary
       ? [{ metric: legacyPrimary, direction: 'desc' }]
       : []
+  const type: ViewCardType = raw.type === 'graph' ? 'graph' : 'table'
+  const tickers =
+    Array.isArray(raw.tickers) && raw.tickers.every(t => typeof t === 'string')
+      ? (raw.tickers as string[])
+      : undefined
   return {
     name: typeof raw.name === 'string' ? raw.name : 'Card',
     groupBy,
+    type,
     filters,
     sortBy,
     columns: Array.isArray(raw.columns) ? raw.columns : [],
     limit: typeof raw.limit === 'number' ? raw.limit : 5,
+    tickers: tickers && tickers.length > 0 ? tickers : undefined,
+    graph: type === 'graph' ? normalizeGraph(raw.graph) : undefined,
+  }
+}
+
+/**
+ * Coerce a GraphConfig from its stored shape into the current one.
+ *
+ * Handles the yMetric → yMetrics[] split: any legacy card saved with a single
+ * `yMetric` gets promoted to a one-element `yMetrics` array. Cards saved under
+ * the new shape pass through unchanged.
+ */
+function normalizeGraph(raw: unknown): GraphConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const g = raw as Partial<GraphConfig> & { yMetric?: MetricKey }
+
+  const yMetrics: MetricKey[] = Array.isArray(g.yMetrics)
+    ? g.yMetrics
+    : g.yMetric
+      ? [g.yMetric]
+      : []
+
+  return {
+    yMetrics,
+    tickers: Array.isArray(g.tickers) ? g.tickers : undefined,
+    seriesBy: g.seriesBy === 'user' ? 'user' : 'corp',
+    seriesLimit: typeof g.seriesLimit === 'number' ? g.seriesLimit : 5,
+    rangePreset: g.rangePreset ?? '90d',
+    rangeFrom: g.rangeFrom,
+    rangeTo: g.rangeTo,
+    yMin: g.yMin,
+    yMax: g.yMax,
+    includeOther: g.includeOther === true,
   }
 }

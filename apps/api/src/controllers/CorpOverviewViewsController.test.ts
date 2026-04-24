@@ -40,6 +40,7 @@ const ownerRequest = {
 const validCard: ViewCard = {
   name: 'Top Gaps',
   groupBy: 'ticker',
+  type: 'table',
   filters: [{ metric: 'gap', op: '>', value: 0 }],
   sortBy: [{ metric: 'gap', direction: 'desc' }],
   columns: ['gap', 'stock', 'daysRemaining'],
@@ -101,6 +102,7 @@ describe('CorpOverviewViewsController', () => {
       const bad: ViewCard = {
         name: 'x',
         groupBy: 'user-ticker',
+        type: 'table',
         filters: [{ metric: 'username', op: '=', value: 0 }],
         sortBy: [{ metric: 'productionDaily', direction: 'desc' }],
         columns: ['username', 'productionDaily'],
@@ -169,6 +171,7 @@ describe('CorpOverviewViewsController', () => {
       const bad: ViewCard = {
         name: 'x',
         groupBy: 'user-ticker',
+        type: 'table',
         filters: [],
         sortBy: [{ metric: 'productionDaily', direction: 'desc' }],
         columns: ['productionDaily', 'stock'], // stock is ticker-only

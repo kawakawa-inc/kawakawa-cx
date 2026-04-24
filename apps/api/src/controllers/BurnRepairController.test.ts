@@ -56,6 +56,9 @@ vi.mock('@kawakawa/services/user-settings', () => ({
 
 vi.mock('@kawakawa/services/supply', () => ({
   getRepairableTickers: vi.fn(async () => new Set(['FRM'])),
+  resolveActiveMembers: vi.fn(),
+  resolveDisplayUsernames: vi.fn(async () => new Map()),
+  computeCorpStock: vi.fn(),
 }))
 
 vi.mock('@kawakawa/services/market', () => ({
@@ -63,14 +66,26 @@ vi.mock('@kawakawa/services/market', () => ({
 }))
 
 import { db } from '../db/index.js'
-import * as userSettingsService from '@kawakawa/services/user-settings'
+import {
+  computeCorpStock,
+  getRepairableTickers,
+  resolveActiveMembers,
+  resolveDisplayUsernames,
+} from '@kawakawa/services/supply'
 
 describe('BurnRepairController', () => {
   let controller: BurnRepairController
   const mockRequest = { user: { userId: 1, username: 'test', roles: [] } }
 
   beforeEach(() => {
-    vi.clearAllMocks()
+    // resetAllMocks clears both call history AND queued .mockReturnValueOnce
+    // values — important because tests chain multiple return values and leaks
+    // between tests surface as confusing "not a function" errors. Side effect:
+    // factory-level default implementations are wiped too, so we re-install
+    // the innocuous defaults that most tests rely on.
+    vi.resetAllMocks()
+    vi.mocked(getRepairableTickers).mockResolvedValue(new Set(['FRM']))
+    vi.mocked(resolveDisplayUsernames).mockResolvedValue(new Map())
     controller = new BurnRepairController()
   })
 
@@ -169,40 +184,29 @@ describe('BurnRepairController', () => {
   })
 
   describe('getCorpOverview', () => {
-    it('should return empty when no included roles', async () => {
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue([])
+    it('should return empty when resolveActiveMembers yields no users', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [],
+        staleUserCount: 0,
+        staleUserIds: [],
+        fioAgeMap: new Map(),
+      })
 
       const result = await controller.getCorpOverview(mockRequest)
       expect(result.materials).toEqual([])
       expect(result.includedUserCount).toBe(0)
     })
 
-    it('should aggregate burn/repair across included users, excluding stale', async () => {
-      // Mock: includedRoles = ['member']
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['member'])
+    it('should aggregate burn/repair across active members, report stale count', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [1, 2],
+        staleUserCount: 1,
+        staleUserIds: [3],
+        fioAgeMap: new Map(),
+      })
+      vi.mocked(computeCorpStock).mockResolvedValue({})
 
-      // Query 1: find users with role 'member'
-      const rolesChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }, { userId: 3 }]),
-        }),
-      }
-
-      // Query 2: oldest FIO upload per user — user 3's data is 50 days old so excluded.
-      const now = Date.now()
-      const freshAgeChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([
-              { userId: 1, oldest: new Date(now - 2 * 86_400_000) },
-              { userId: 2, oldest: new Date(now - 10 * 86_400_000) },
-              { userId: 3, oldest: new Date(now - 50 * 86_400_000) },
-            ]),
-          }),
-        }),
-      }
-
-      // Query 3: aggregate query (corp-wide totals)
+      // Query 1: aggregate query (corp-wide totals)
       const aggregateChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -221,7 +225,7 @@ describe('BurnRepairController', () => {
         }),
       }
 
-      // Query 4: per-user aggregation (empty for this test — covered separately)
+      // Query 2: per-user aggregation (empty for this test — covered separately)
       const perUserChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -230,38 +234,9 @@ describe('BurnRepairController', () => {
         }),
       }
 
-      // Query 5: sell orders for surplus aggregation (no orders for this test)
-      const sellOrdersChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }
-
-      // Query 6: login usernames
-      const loginChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            { id: 1, username: 'alice' },
-            { id: 2, username: 'bob' },
-          ]),
-        }),
-      }
-
-      // Query 7: fio.username settings
-      const fioChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }
-
       vi.mocked(db.select)
-        .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(freshAgeChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
 
       const result = await controller.getCorpOverview(mockRequest)
 
@@ -274,25 +249,30 @@ describe('BurnRepairController', () => {
       expect(result.perUser).toEqual([])
     })
 
-    it('should exclude users who have never uploaded to FIO', async () => {
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['member'])
+    // FIO-age filtering (both the stale-data cutoff and the never-uploaded
+    // exclusion) is exercised by the corp-members service tests. The
+    // controller just forwards whatever resolveActiveMembers returns.
 
-      const rolesChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }]),
-        }),
-      }
-
-      // Only user 1 has uploaded to FIO; user 2 has never connected.
-      const ageChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi
-              .fn()
-              .mockResolvedValue([{ userId: 1, oldest: new Date() }]),
-          }),
-        }),
-      }
+    it('should forward per-user rows with display names from the service and FIO ages from the member resolver', async () => {
+      // Username resolution logic itself lives in resolveDisplayUsernames; the
+      // controller just stitches its result onto each row. FIO age comes from
+      // the active-members resolver. Both get forwarded as-is.
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [1, 2],
+        staleUserCount: 0,
+        staleUserIds: [],
+        fioAgeMap: new Map([
+          [1, '2026-04-20T00:00:00.000Z'],
+          [2, '2026-04-15T00:00:00.000Z'],
+        ]),
+      })
+      vi.mocked(computeCorpStock).mockResolvedValue({})
+      vi.mocked(resolveDisplayUsernames).mockResolvedValue(
+        new Map([
+          [1, 'AliceFIO'],
+          [2, 'bob-login'],
+        ])
+      )
 
       const aggregateChain = {
         from: vi.fn().mockReturnValue({
@@ -303,74 +283,6 @@ describe('BurnRepairController', () => {
           }),
         }),
       }
-      const perUserChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      }
-      const sellOrdersChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }
-      const loginChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ id: 1, username: 'alice' }]),
-        }),
-      }
-      const fioChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }
-
-      vi.mocked(db.select)
-        .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(ageChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
-
-      const result = await controller.getCorpOverview(mockRequest)
-
-      expect(result.includedUserCount).toBe(1)
-      expect(result.staleUserCount).toBe(1) // user 2 excluded: no FIO uploads
-    })
-
-    it('should return per-user rollups with FIO username, falling back to login username', async () => {
-      vi.mocked(userSettingsService.getSetting).mockResolvedValue(['member'])
-
-      const rolesChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 1 }, { userId: 2 }]),
-        }),
-      }
-      // Both users uploaded recently, so both pass the freshness filter.
-      // The returned `oldest` doubles as the FIO data age surfaced per user.
-      const ageChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([
-              { userId: 1, oldest: new Date('2026-04-20T00:00:00Z') },
-              { userId: 2, oldest: new Date('2026-04-15T00:00:00Z') },
-            ]),
-          }),
-        }),
-      }
-      const aggregateChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockReturnValue({
-              orderBy: vi.fn().mockResolvedValue([]),
-            }),
-          }),
-        }),
-      }
-      // User 1 produces RAT, user 2 consumes RAT
       const perUserChain = {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -395,34 +307,10 @@ describe('BurnRepairController', () => {
           }),
         }),
       }
-      const sellOrdersChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }
-      const loginChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            { id: 1, username: 'alice-login' },
-            { id: 2, username: 'bob-login' },
-          ]),
-        }),
-      }
-      // User 1 has a FIO username override; user 2 does not → should fall back to login username
-      const fioChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 1, value: JSON.stringify('AliceFIO') }]),
-        }),
-      }
 
       vi.mocked(db.select)
-        .mockReturnValueOnce(rolesChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(ageChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
         .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(sellOrdersChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(loginChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(fioChain as unknown as ReturnType<typeof db.select>)
 
       const result = await controller.getCorpOverview(mockRequest)
 

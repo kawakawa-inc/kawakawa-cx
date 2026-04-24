@@ -30,7 +30,6 @@
     <v-tabs v-model="state.activeTab" class="mb-4">
       <v-tab value="my-bases">My Bases</v-tab>
       <v-tab value="corp">Corp Overview</v-tab>
-      <v-tab value="shopping-list">Shopping List</v-tab>
     </v-tabs>
 
     <v-tabs-window v-model="state.activeTab">
@@ -496,6 +495,8 @@
           :corp-buildings="corpBuildings"
           :corp-workforce="corpWorkforce"
           :repair-days="repairDays"
+          :excluded-user-ids="state.corpOverviewExcludedUserIds"
+          @update:excluded-user-ids="v => (state.corpOverviewExcludedUserIds = v)"
           @copy-csv="onCorpCopyCsv"
           @snackbar="onCorpSnackbar"
         />
@@ -662,10 +663,19 @@ const { state } = usePageState('burn-repair', {
   /** Per-planet override for the price lookup location; empty/missing = use price list default */
   myBasesPricesFromByPlanet: {} as Record<string, string>,
   corpOverviewViewId: -1 as number, // -1 = built-in "All" view
+  /** User IDs the user has manually excluded from corp aggregation for planning. */
+  corpOverviewExcludedUserIds: [] as number[],
   shoppingListOrigin: '',
   shoppingListBase: '',
   shoppingListDays: 7,
 })
+
+// Shopping list tab is temporarily hidden — users who had it persisted as
+// their active tab would otherwise land on a blank window. Bounce them to
+// My Bases until we bring the feature back.
+if (state.activeTab === 'shopping-list') {
+  state.activeTab = 'my-bases'
+}
 
 const settingsStore = useSettingsStore()
 
@@ -911,11 +921,14 @@ function priceFor(planetId: string, ticker: string): number {
 }
 
 async function loadCorpData() {
+  // Pass the (possibly empty) planning-exclusion list. Server treats empty as
+  // "include everyone" — same shape as before the feature.
+  const excluded = state.corpOverviewExcludedUserIds
   try {
     const [corp, buildings, workforce] = await Promise.all([
-      api.burnRepair.corp(),
-      api.burnRepair.corpBuildings(),
-      api.burnRepair.corpWorkforce(),
+      api.burnRepair.corp(excluded),
+      api.burnRepair.corpBuildings(excluded),
+      api.burnRepair.corpWorkforce(excluded),
     ])
     corpData.value = corp
     corpBuildings.value = buildings
@@ -924,6 +937,17 @@ async function loadCorpData() {
     console.error('Failed to load corp data', e)
   }
 }
+
+// Refetch corp data whenever the planning exclusion changes so all three
+// endpoints (materials, buildings, workforce) stay in sync. usePageState
+// persists the list across reloads, so a saved set survives navigation.
+watch(
+  () => state.corpOverviewExcludedUserIds,
+  () => {
+    void loadCorpData()
+  },
+  { deep: true }
+)
 
 async function loadLocations() {
   try {

@@ -1,7 +1,14 @@
 <template>
   <v-row dense class="mb-4">
     <v-col v-for="(card, idx) in cards" :key="card.name + idx" cols="12" md="6">
-      <v-card height="100%">
+      <template v-if="card.type === 'graph'">
+        <CorpGraphCard
+          :card="card"
+          :ticker-set="tickerSet"
+          :excluded-user-ids="excludedUserIds"
+        />
+      </template>
+      <v-card v-else height="100%">
         <v-card-title class="text-subtitle-2 d-flex align-center">
           {{ card.name }}
           <v-chip size="x-small" class="ml-2" variant="tonal">{{ rowsByCard[idx].length }}</v-chip>
@@ -52,13 +59,38 @@ import {
 } from '../../utils/corpMetrics'
 import CommodityDisplay from '../CommodityDisplay.vue'
 import FioAgeChip from '../FioAgeChip.vue'
+import CorpGraphCard from './CorpGraphCard.vue'
+import { commodityService } from '../../services/commodityService'
+import { resolveTickerScope } from '../../utils/tickerScope'
+import type { Commodity } from '../../types'
+import { onMounted, ref } from 'vue'
 
 const props = defineProps<{
   cards: ViewCard[]
   corpData: BurnRepairCorpResponse
   tickerSet: Set<string> | null
   repairDays: number
+  /** Forwarded to graph cards so historical queries respect the planning exclusion. */
+  excludedUserIds: number[]
 }>()
+
+// Card-level ticker overrides may contain `category:` refs — keep the live
+// catalog so resolution stays consistent with the view-level scope.
+const commodityCatalog = ref<Commodity[]>([])
+onMounted(async () => {
+  const cached = commodityService.getAllCommoditiesSync()
+  commodityCatalog.value =
+    cached.length > 0 ? cached : await commodityService.getAllCommodities()
+})
+
+function effectiveTickerSet(card: ViewCard): Set<string> | null {
+  // Card-level override wins; empty / undefined falls back to the view scope.
+  if (card.tickers && card.tickers.length > 0) {
+    const resolved = resolveTickerScope(card.tickers, commodityCatalog.value)
+    if (resolved && resolved.size > 0) return resolved
+  }
+  return props.tickerSet
+}
 
 interface TableHeader {
   title: string
@@ -111,10 +143,11 @@ const metricColumnsByCard = computed<MetricKey[][]>(() =>
 
 const rowsByCard = computed<MetricRow[][]>(() =>
   props.cards.map(card => {
+    const scope = effectiveTickerSet(card)
     const base: MetricRow[] =
       card.groupBy === 'ticker'
-        ? computeTickerRows(props.corpData, props.tickerSet, props.repairDays)
-        : computeUserTickerRows(props.corpData, props.tickerSet, props.repairDays)
+        ? computeTickerRows(props.corpData, scope, props.repairDays)
+        : computeUserTickerRows(props.corpData, scope, props.repairDays)
     return filterSortAndLimit(base, card.filters, card.sortBy, card.limit)
   })
 )

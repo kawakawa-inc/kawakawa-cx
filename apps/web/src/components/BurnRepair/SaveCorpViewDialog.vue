@@ -41,27 +41,44 @@
 
         <v-row v-if="isNew" dense class="mb-2">
           <v-col cols="12">
-            <v-select
+            <v-autocomplete
               :model-value="null"
-              :items="templateOptions"
-              label="Start from template (optional)"
+              :items="copyFromOptions"
+              :loading="copyFromLoading"
+              item-title="title"
+              item-value="id"
+              label="Copy from existing (optional) — leave empty for a blank view"
               density="compact"
               variant="outlined"
               hide-details
               clearable
-              @update:model-value="applyTemplate"
-            />
+              @update:model-value="copyFromExisting"
+            >
+              <template #item="{ item, props: itemProps }">
+                <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle">
+                  <template #prepend>
+                    <v-icon size="small">{{ item.raw.icon }}</v-icon>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-autocomplete>
           </v-col>
         </v-row>
 
-        <div class="text-subtitle-2 mt-3 mb-2">Tickers</div>
-        <p class="text-caption text-medium-emphasis mb-2">
-          Leave empty to include every corp ticker in this view.
-        </p>
-        <TickerListManager
-          label="view"
+        <div class="d-flex align-center mt-3 mb-1 ga-2">
+          <v-icon size="small">mdi-tag-multiple</v-icon>
+          <span class="text-subtitle-2">Tickers</span>
+          <v-tooltip location="top" max-width="360" open-delay="150">
+            <template #activator="{ props: tipProps }">
+              <v-icon v-bind="tipProps" size="x-small" color="grey">mdi-information-outline</v-icon>
+            </template>
+            Type a ticker (e.g. <code>RAT</code>) or pick a category (e.g.
+            <code>Consumables</code>) — categories stay live, so new commodities flow in
+            automatically. Leave empty to include every corp ticker.
+          </v-tooltip>
+        </div>
+        <TickerCategoryInput
           :model-value="draft.tickers"
-          :read-only="false"
           @update:model-value="v => (draft.tickers = v)"
         />
 
@@ -78,7 +95,7 @@
           <template v-if="draft.cards.length === 0">
             <v-list-item>
               <v-list-item-title class="text-caption text-medium-emphasis">
-                No cards yet — add one or pick a template.
+                No cards yet — add one or copy from an existing view.
               </v-list-item-title>
             </v-list-item>
           </template>
@@ -148,9 +165,14 @@ import type {
   ViewCard,
 } from '@kawakawa/types'
 import { CORP_METRIC_DEFS } from '@kawakawa/types'
-import TickerListManager from './TickerListManager.vue'
+import TickerCategoryInput from './TickerCategoryInput.vue'
 import EditCorpCardDialog from './EditCorpCardDialog.vue'
-import { VIEW_TEMPLATES } from './viewTemplates'
+import { BUILT_IN_ALL_VIEW, normalizeView } from './viewTemplates'
+import { api } from '../../services/api'
+import { commodityService } from '../../services/commodityService'
+import { resolveTickerScope } from '../../utils/tickerScope'
+import type { Commodity } from '../../types'
+import { onMounted } from 'vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -158,6 +180,10 @@ const props = defineProps<{
   view: CorpOverviewView | null
   corpData: BurnRepairCorpResponse | null
   repairDays: number
+  /** User's own + pinned views — source for the "Copy from existing" picker. */
+  userViews: CorpOverviewView[]
+  /** Current username — used to label views as "yours" vs "public" in the picker. */
+  currentUsername: string | null
 }>()
 
 const emit = defineEmits<{
@@ -202,8 +228,17 @@ watch(
   { immediate: true }
 )
 
+// Resolve `category:Name` entries against the live commodity catalog so the
+// card-edit preview filters real materials, not the raw `category:...` strings.
+const commodityCatalog = ref<Commodity[]>([])
+onMounted(async () => {
+  const cached = commodityService.getAllCommoditiesSync()
+  commodityCatalog.value =
+    cached.length > 0 ? cached : await commodityService.getAllCommodities()
+})
+
 const tickerSet = computed(() =>
-  draft.value.tickers.length > 0 ? new Set(draft.value.tickers) : null
+  resolveTickerScope(draft.value.tickers, commodityCatalog.value)
 )
 
 const isValid = computed(() => draft.value.name.trim().length > 0)
@@ -218,23 +253,117 @@ function privacyIcon(p: FilterPrivacy): string {
   return p === 'public' ? 'mdi-earth' : p === 'link' ? 'mdi-link' : 'mdi-lock'
 }
 
-const templateOptions = VIEW_TEMPLATES.map(t => ({ title: t.label, value: t.label }))
+// -------- Copy from existing --------
+interface CopyFromOption {
+  id: string
+  title: string
+  subtitle: string
+  icon: string
+  view: CorpOverviewView
+}
 
-function applyTemplate(label: string | null): void {
-  if (!label) return
-  const tpl = VIEW_TEMPLATES.find(t => t.label === label)
-  if (!tpl) return
-  // Preserve name + privacy if the user already set them — the template only
-  // seeds ticker/card defaults.
+const publicViews = ref<CorpOverviewView[]>([])
+const copyFromLoading = ref(false)
+
+async function loadPublicViews(): Promise<void> {
+  if (publicViews.value.length > 0) return
+  copyFromLoading.value = true
+  try {
+    const raw = await api.corpOverviewViews.browse()
+    publicViews.value = raw.map(normalizeView)
+  } catch (e) {
+    console.error('Failed to load public views', e)
+  } finally {
+    copyFromLoading.value = false
+  }
+}
+
+// Reload public views when the dialog opens for a new view — other corp
+// members may have published views since last time.
+watch(
+  () => [props.modelValue, isNew.value] as const,
+  ([modelValue, isNewView]) => {
+    if (modelValue && isNewView) void loadPublicViews()
+  }
+)
+
+const copyFromOptions = computed<CopyFromOption[]>(() => {
+  const out: CopyFromOption[] = [
+    {
+      id: 'built-in',
+      title: BUILT_IN_ALL_VIEW.name,
+      subtitle: 'All tickers, default cards',
+      icon: 'mdi-view-grid',
+      view: BUILT_IN_ALL_VIEW,
+    },
+  ]
+  const seen = new Set<number>([BUILT_IN_ALL_VIEW.id])
+  for (const v of props.userViews) {
+    if (seen.has(v.id)) continue
+    seen.add(v.id)
+    const mine = v.userName === props.currentUsername
+    out.push({
+      id: String(v.id),
+      title: v.name,
+      subtitle: mine ? 'Your view' : `From ${v.userName}`,
+      icon: mine ? 'mdi-account' : 'mdi-pin',
+      view: v,
+    })
+  }
+  for (const v of publicViews.value) {
+    if (seen.has(v.id)) continue
+    seen.add(v.id)
+    out.push({
+      id: String(v.id),
+      title: v.name,
+      subtitle: `Public · ${v.userName}`,
+      icon: 'mdi-earth',
+      view: v,
+    })
+  }
+  return out
+})
+
+function copyFromExisting(id: string | null): void {
+  if (!id) return
+  const opt = copyFromOptions.value.find(o => o.id === id)
+  if (!opt) return
+  // Preserve whatever the user typed for name/privacy; only seed tickers+cards.
   draft.value = {
-    name: draft.value.name.trim() ? draft.value.name : tpl.view.name,
+    name: draft.value.name,
     privacy: draft.value.privacy,
-    tickers: [...tpl.view.tickers],
-    cards: tpl.view.cards.map(c => ({ ...c, columns: [...c.columns] })),
+    tickers: [...opt.view.tickers],
+    cards: opt.view.cards.map(c => ({
+      ...c,
+      columns: [...c.columns],
+      filters: c.filters.map(f => ({ ...f })),
+      sortBy: c.sortBy.map(s => ({ ...s })),
+      graph: c.graph ? { ...c.graph } : undefined,
+    })),
   }
 }
 
 function cardSubtitle(card: ViewCard): string {
+  if (card.type === 'graph' && card.graph) {
+    const metrics = card.graph.yMetrics
+    const metricLabel =
+      metrics.length === 0
+        ? '(no metric)'
+        : metrics.length === 1
+          ? (CORP_METRIC_DEFS[metrics[0]]?.label ?? metrics[0])
+          : `${metrics.length} metrics`
+    const seriesBy = card.graph.seriesBy === 'user' ? 'per user' : 'corp-aggregate'
+    const range =
+      card.graph.rangeFrom && card.graph.rangeTo
+        ? `${card.graph.rangeFrom} → ${card.graph.rangeTo}`
+        : card.graph.rangePreset
+    const tickerScope =
+      card.graph.tickers && card.graph.tickers.length > 0
+        ? ` · ${card.graph.tickers.length} ticker${card.graph.tickers.length === 1 ? '' : 's'}`
+        : ''
+    return `Graph · ${metricLabel} over ${range}${tickerScope} · ${seriesBy}`
+  }
+
   const groupLabel = card.groupBy === 'ticker' ? 'by ticker' : 'by user × ticker'
   const sortDesc =
     card.sortBy.length === 0
@@ -245,7 +374,11 @@ function cardSubtitle(card: ViewCard): string {
   const filterCount = card.filters.length
   const filterLabel =
     filterCount === 0 ? 'no filter' : `${filterCount} filter${filterCount === 1 ? '' : 's'}`
-  return `Top ${card.limit} ${groupLabel} · ${sortDesc} · ${filterLabel}`
+  const tickerScope =
+    card.tickers && card.tickers.length > 0
+      ? ` · ${card.tickers.length} ticker${card.tickers.length === 1 ? '' : 's'}`
+      : ''
+  return `Top ${card.limit} ${groupLabel} · ${sortDesc} · ${filterLabel}${tickerScope}`
 }
 
 // -------- Card editor orchestration --------

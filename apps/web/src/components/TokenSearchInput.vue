@@ -62,6 +62,23 @@
           <span v-if="suggestion.hint" class="suggestion-hint">{{ suggestion.hint }}</span>
         </div>
       </div>
+      <div v-else-if="showHelp" class="suggestions-dropdown help-dropdown" :style="dropdownStyle">
+        <div class="help-title">Start typing to search. You can add:</div>
+        <div v-for="(tok, i) in helpTokens" :key="i" class="help-row">
+          <v-chip
+            :color="tok.color ?? 'grey'"
+            :prepend-icon="tok.icon"
+            size="x-small"
+            class="help-chip"
+          >
+            {{ tok.label }}
+          </v-chip>
+          <div class="help-body">
+            <code class="help-example">{{ tok.example }}</code>
+            <span class="help-desc">{{ tok.description }}</span>
+          </div>
+        </div>
+      </div>
     </Teleport>
   </div>
 </template>
@@ -101,6 +118,19 @@ export interface ExtraSuggestionType {
   typeLabel: string
   color: string
   options: { value: string; display: string }[]
+}
+
+/**
+ * One row shown in the empty-state cheat sheet. Pages describe the tokens
+ * they understand so the help dropdown stays true to what each search
+ * actually accepts.
+ */
+export interface HelpToken {
+  label: string
+  color?: string
+  example: string
+  description: string
+  icon?: string
 }
 
 // Initialize shopping list store
@@ -153,6 +183,11 @@ interface Props {
   getCommodityName?: (ticker: string) => string
   /** Additional suggestion types (e.g., category, storage) */
   extraSuggestionTypes?: ExtraSuggestionType[]
+  /**
+   * Empty-state cheat sheet shown on focus when the input is blank. Pages
+   * declare what tokens they understand so the help stays accurate.
+   */
+  helpTokens?: HelpToken[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -162,7 +197,12 @@ const props = withDefaults(defineProps<Props>(), {
   getLocationDisplay: (locationId: string) => locationId,
   getCommodityName: (ticker: string) => ticker,
   extraSuggestionTypes: () => [],
+  helpTokens: () => [],
 })
+
+const showHelp = computed(
+  () => isFocused.value && inputText.value.trim().length === 0 && props.helpTokens.length > 0
+)
 
 const emit = defineEmits<{
   (e: 'update:chips', chips: SearchChip[]): void
@@ -967,5 +1007,49 @@ defineExpose({
   margin-left: auto;
   font-size: 12px;
   color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+.suggestions-dropdown.help-dropdown {
+  padding: 10px 12px;
+}
+
+.help-dropdown .help-title {
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  margin-bottom: 8px;
+}
+
+.help-dropdown .help-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.help-dropdown .help-chip {
+  flex-shrink: 0;
+  margin-top: 2px;
+  min-width: 80px;
+  justify-content: center;
+}
+
+.help-dropdown .help-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.help-dropdown .help-example {
+  font-family: ui-monospace, monospace;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  padding: 1px 6px;
+  border-radius: 3px;
+  align-self: flex-start;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.help-dropdown .help-desc {
+  color: rgba(var(--v-theme-on-surface), 0.7);
 }
 </style>

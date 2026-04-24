@@ -168,6 +168,19 @@ export interface BurnRepairCorpMaterial {
   productionDaily: number
 }
 
+/**
+ * A corp member who has been excluded from the current view, either because
+ * their FIO data is past the staleness cutoff or because the requesting user
+ * manually unchecked them in the planning dropdown.
+ */
+export interface ExcludedMember {
+  userId: number
+  username: string
+  /** ISO timestamp of the user's oldest FIO upload; null if they've never uploaded. */
+  fioDataAge: string | null
+  reason: 'fio-stale' | 'manual'
+}
+
 /** Per-user-per-ticker row used for Top Producers/Consumers dashboards */
 export interface BurnRepairCorpPerUserRow {
   userId: number
@@ -202,6 +215,13 @@ export interface BurnRepairCorpResponse {
   availableSurplus: Record<string, number>
   /** Per-user-per-ticker rollups for dashboard Top Producers/Consumers */
   perUser: BurnRepairCorpPerUserRow[]
+  /**
+   * Members who would otherwise contribute but were excluded — either by the
+   * FIO-staleness gate or by the requesting user's manual exclusion list.
+   * Surfaced so the UI can render a "N excluded" chip with a per-member
+   * breakdown tooltip.
+   */
+  excludedMembers: ExcludedMember[]
 }
 
 /** Response for GET /burn-repair/corp/buildings */

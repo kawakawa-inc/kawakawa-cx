@@ -20,10 +20,12 @@
     "@kawakawa/client": "workspace:*",
     "@kawakawa/types": "workspace:*",
     "@mdi/font": "^7.4.47",
+    "chart.js": "^4",
     "cytoscape": "^3.33.2",
     "cytoscape-dagre": "^2.5.0",
     "serve": "^14.2.0",
     "vue": "^3.4.0",
+    "vue-chartjs": "^5",
     "vue-router": "^4.6.3",
     "vuetify": "^3.4.0"
   },

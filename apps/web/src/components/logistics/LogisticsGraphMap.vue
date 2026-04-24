@@ -8,6 +8,7 @@
         :get-commodity-name="getCommodityName"
         :get-location-display="getLocationDisplay"
         :extra-suggestion-types="kindSuggestions"
+        :help-tokens="graphHelpTokens"
         @update:chips="onChipsUpdate"
       />
       <div class="d-flex align-center mt-2 ga-2">
@@ -83,6 +84,7 @@ import TokenSearchInput, {
   type SearchChip,
   type SearchChipType,
   type ExtraSuggestionType,
+  type HelpToken,
 } from '../TokenSearchInput.vue'
 import { commodityService } from '../../services/commodityService'
 import { locationService } from '../../services/locationService'
@@ -692,6 +694,27 @@ const kindSuggestions = computed<ExtraSuggestionType[]>(() => [
     ],
   },
 ])
+
+const graphHelpTokens: HelpToken[] = [
+  {
+    label: 'Commodity',
+    color: 'primary',
+    example: 'COF',
+    description: 'Ticker or material name — keeps only edges for that material.',
+  },
+  {
+    label: 'Location',
+    color: 'secondary',
+    example: 'Montem',
+    description: 'Planet or station — keeps only nodes at that location.',
+  },
+  {
+    label: 'Kind',
+    color: 'teal',
+    example: 'demand',
+    description: 'One of `demand`, `surplus`, `fixed` — keeps edges of that kind.',
+  },
+]
 
 // ==================== Lifecycle ====================
 

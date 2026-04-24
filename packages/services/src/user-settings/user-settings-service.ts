@@ -37,10 +37,13 @@ const ADMIN_DEFAULTS_PREFIX = 'defaults.'
 // ==================== ADMIN DEFAULTS ====================
 
 /**
- * Get admin-configured defaults from the settings table
- * Uses a separate cache since these rarely change
+ * Get admin-configured defaults from the settings table.
+ *
+ * Exported so callers without a requesting user (e.g. scheduled cron jobs)
+ * can read the same corp-wide defaults that user-scoped settings cascade
+ * against. Uses an internal cache shared with the per-user read path.
  */
-async function getAdminDefaults(): Promise<Record<string, unknown>> {
+export async function getAdminDefaults(): Promise<Record<string, unknown>> {
   // Return from cache if valid
   if (adminDefaultsCache && Date.now() - adminDefaultsCacheTime < CACHE_TTL_MS) {
     return adminDefaultsCache

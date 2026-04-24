@@ -46,6 +46,8 @@ import type {
   CorpOverviewView,
   CreateCorpOverviewViewRequest,
   UpdateCorpOverviewViewRequest,
+  SnapshotQueryRequest,
+  SnapshotSeriesResponse,
   LogisticsGraph,
   LogisticsFlow,
   CreateLogisticsFlowRequest,
@@ -845,6 +847,17 @@ const handleRefreshedToken = (response: Response): void => {
     // Dispatch event so app can update user state if needed
     window.dispatchEvent(new CustomEvent('token-refreshed', { detail: { token: refreshedToken } }))
   }
+}
+
+/**
+ * Build the `?excludedUserIds=...` suffix shared by every corp endpoint that
+ * supports the planning-exclusion feature. Returns an empty string when the
+ * list is empty/missing so endpoints look the same as before for the default
+ * "no exclusions" case.
+ */
+function corpQueryString(excludedUserIds?: number[]): string {
+  if (!excludedUserIds || excludedUserIds.length === 0) return ''
+  return `?excludedUserIds=${encodeURIComponent(excludedUserIds.join(','))}`
 }
 
 // Real API calls (to be used when backend is ready)
@@ -4768,6 +4781,38 @@ const realApi = {
     return response.json()
   },
 
+  // ==================== CORP SNAPSHOTS (histogram query) ====================
+
+  queryCorpSnapshots: async (req: SnapshotQueryRequest): Promise<SnapshotSeriesResponse> => {
+    const params = new URLSearchParams()
+    params.set('yMetric', req.yMetric)
+    params.set('seriesBy', req.seriesBy)
+    if (req.preset) params.set('preset', req.preset)
+    if (req.from) params.set('from', req.from)
+    if (req.to) params.set('to', req.to)
+    if (req.bucket) params.set('bucket', req.bucket)
+    if (req.tickers && req.tickers.length > 0) params.set('tickers', req.tickers.join(','))
+    if (req.seriesLimit !== undefined) params.set('seriesLimit', String(req.seriesLimit))
+    if (req.excludedUserIds && req.excludedUserIds.length > 0) {
+      params.set('excludedUserIds', req.excludedUserIds.join(','))
+    }
+    if (req.includeOther) params.set('includeOther', 'true')
+
+    const response = await fetchWithLogging(`/api/corp-snapshots?${params.toString()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid snapshot query')
+      }
+      throw new Error(`Failed to query corp snapshots: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
   // ==================== LOGISTICS ====================
 
   getLogisticsGraph: async (): Promise<LogisticsGraph> => {
@@ -4938,31 +4983,41 @@ const realApi = {
     return response.json()
   },
 
-  getBurnRepairCorp: async (): Promise<BurnRepairCorpResponse> => {
-    const response = await fetchWithLogging('/api/burn-repair/corp', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  // CSV-encode the planning exclusion list — empty/missing => no param.
+  // Inlined here (rather than in a util) so the api.ts file stays self-
+  // contained for the corp endpoints.
+
+  getBurnRepairCorp: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
     handleRefreshedToken(response)
     if (!response.ok) throw new Error(`Failed to get corp burn/repair: ${response.statusText}`)
     return response.json()
   },
 
-  getBurnRepairCorpBuildings: async (): Promise<BurnRepairCorpBuildingsResponse> => {
-    const response = await fetchWithLogging('/api/burn-repair/corp/buildings', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  getBurnRepairCorpBuildings: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpBuildingsResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp/buildings${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
     handleRefreshedToken(response)
     if (!response.ok) throw new Error(`Failed to get corp buildings: ${response.statusText}`)
     return response.json()
   },
 
-  getBurnRepairCorpWorkforce: async (): Promise<BurnRepairCorpWorkforceResponse> => {
-    const response = await fetchWithLogging('/api/burn-repair/corp/workforce', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  getBurnRepairCorpWorkforce: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpWorkforceResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp/workforce${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
     handleRefreshedToken(response)
     if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
     return response.json()
@@ -5286,14 +5341,19 @@ export const api = {
     delete: (id: number) => realApi.deleteCorpOverviewView(id),
     togglePin: (id: number) => realApi.togglePinCorpOverviewView(id),
   },
+  corpSnapshots: {
+    query: (req: SnapshotQueryRequest) => realApi.queryCorpSnapshots(req),
+  },
   supplyPlanning: {
     getPlanets: () => realApi.getSupplyPlanets(),
   },
   burnRepair: {
     myBases: () => realApi.getBurnRepairMyBases(),
-    corp: () => realApi.getBurnRepairCorp(),
-    corpBuildings: () => realApi.getBurnRepairCorpBuildings(),
-    corpWorkforce: () => realApi.getBurnRepairCorpWorkforce(),
+    corp: (excludedUserIds?: number[]) => realApi.getBurnRepairCorp(excludedUserIds),
+    corpBuildings: (excludedUserIds?: number[]) =>
+      realApi.getBurnRepairCorpBuildings(excludedUserIds),
+    corpWorkforce: (excludedUserIds?: number[]) =>
+      realApi.getBurnRepairCorpWorkforce(excludedUserIds),
     shoppingList: (body: BurnRepairShoppingListRequest) => realApi.getBurnRepairShoppingList(body),
   },
   logistics: {
@@ -5400,5 +5460,8 @@ export type {
   CorpOverviewView,
   CreateCorpOverviewViewRequest,
   UpdateCorpOverviewViewRequest,
+  // Corp Snapshots
+  SnapshotQueryRequest,
+  SnapshotSeriesResponse,
   SupplyPlanetSummary,
 }

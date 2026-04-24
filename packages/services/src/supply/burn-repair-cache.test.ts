@@ -4,16 +4,29 @@ import { computeBurnRepairCache } from './burn-repair-cache.js'
 // Mock dependencies
 vi.mock('@kawakawa/db', () => {
   const burnRepairCache = { userId: 'user_id' }
+  const corpSnapshotUserTicker = {
+    userId: 'user_id',
+    commodityTicker: 'commodity_ticker',
+    snapshotAt: 'snapshot_at',
+  }
+  // The snapshot insert uses .values(rows).onConflictDoUpdate(...); the burn
+  // cache insert just uses .values(rows). A single stub that resolves on both
+  // terminal methods covers both paths.
+  const insertChain = {
+    values: vi.fn().mockReturnValue({
+      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+      then: (resolve: (v: unknown) => void) => Promise.resolve(undefined).then(resolve),
+    }),
+  }
   return {
     db: {
       delete: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue(undefined),
       }),
-      insert: vi.fn().mockReturnValue({
-        values: vi.fn().mockResolvedValue(undefined),
-      }),
+      insert: vi.fn().mockReturnValue(insertChain),
     },
     burnRepairCache,
+    corpSnapshotUserTicker,
   }
 })
 

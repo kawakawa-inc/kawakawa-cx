@@ -1,22 +1,21 @@
-import { Controller, Get, Post, Route, Security, Tags, Request, Body } from 'tsoa'
+import { Controller, Get, Post, Query, Route, Security, Tags, Request, Body } from 'tsoa'
 import {
   db,
   burnRepairCache,
-  userRoles,
-  users,
-  userSettings,
   fioUserPlanets,
   fioPlanetBuildings,
   fioPlanetWorkforce,
   fioUserStorage,
   fioInventory,
-  sellOrders,
 } from '../db/index.js'
 import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
-import * as userSettingsService from '@kawakawa/services/user-settings'
-import { getRepairableTickers } from '@kawakawa/services/supply'
-import { enrichSellOrdersWithQuantities } from '@kawakawa/services/market'
+import {
+  computeCorpStock,
+  getRepairableTickers,
+  resolveActiveMembers,
+  resolveDisplayUsernames,
+} from '@kawakawa/services/supply'
 import type {
   BurnRepairMyBasesResponse,
   BurnRepairPlanetSummary,
@@ -24,6 +23,7 @@ import type {
   BurnRepairCorpResponse,
   BurnRepairCorpMaterial,
   BurnRepairCorpPerUserRow,
+  ExcludedMember,
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
   BurnRepairWorkforceEntry,
@@ -127,13 +127,40 @@ export class BurnRepairController extends Controller {
   /**
    * Get corp-wide aggregated burn/repair data.
    * Sums across all users whose roles match the burnRepair.includedRoles setting.
+   *
+   * `excludedUserIds` is a CSV of user IDs to additionally exclude on top of
+   * the role + FIO-freshness filter. Used by the "Users included" planning
+   * dropdown so the corp view can be modeled as if specific members weren't
+   * around (e.g. summer-vacation gap planning).
    */
   @Get('corp')
   public async getCorpOverview(
-    @Request() request: { user: JwtPayload }
+    @Request() request: { user: JwtPayload },
+    @Query() excludedUserIds?: string
   ): Promise<BurnRepairCorpResponse> {
-    const { activeUserIds, staleUserCount, fioAgeMap } = await this.getIncludedUserIds(
-      request.user.userId
+    const resolved = await resolveActiveMembers(request.user.userId)
+    const manuallyExcludedIds = parseExcludedUserIds(excludedUserIds).filter(id =>
+      resolved.activeUserIds.includes(id)
+    )
+    const activeUserIds = applyExclusion(resolved.activeUserIds, excludedUserIds)
+    const staleUserCount = resolved.staleUserCount
+    const fioAgeMap = resolved.fioAgeMap
+
+    // Resolve display names for both groups: still-active members (for perUser
+    // rows) and excluded members (for the chip tooltip). One batched lookup
+    // keeps it to a single round trip even when the exclusion list is large.
+    const allDisplayNameIds = [
+      ...activeUserIds,
+      ...manuallyExcludedIds,
+      ...resolved.staleUserIds,
+    ]
+    const usernameMap = await resolveDisplayUsernames([...new Set(allDisplayNameIds)])
+
+    const excludedMembers = buildExcludedMembers(
+      manuallyExcludedIds,
+      resolved.staleUserIds,
+      fioAgeMap,
+      usernameMap
     )
 
     if (activeUserIds.length === 0) {
@@ -143,10 +170,11 @@ export class BurnRepairController extends Controller {
         staleUserCount,
         availableSurplus: {},
         perUser: [],
+        excludedMembers,
       }
     }
 
-    const [rows, perUserRows, availableSurplus, usernameMap] = await Promise.all([
+    const [rows, perUserRows, availableSurplus] = await Promise.all([
       db
         .select({
           commodityTicker: burnRepairCache.commodityTicker,
@@ -171,8 +199,7 @@ export class BurnRepairController extends Controller {
         .from(burnRepairCache)
         .where(inArray(burnRepairCache.userId, activeUserIds))
         .groupBy(burnRepairCache.userId, burnRepairCache.commodityTicker),
-      this.computeAvailableSurplus(activeUserIds),
-      this.getDisplayUsernames(activeUserIds),
+      computeCorpStock(activeUserIds),
     ])
 
     const materials: BurnRepairCorpMaterial[] = rows.map(r => ({
@@ -200,74 +227,8 @@ export class BurnRepairController extends Controller {
       staleUserCount,
       availableSurplus,
       perUser,
+      excludedMembers,
     }
-  }
-
-  /**
-   * Build a userId → display name map for the given users.
-   * Prefers the FIO username (fio.username user setting, JSON-encoded) which
-   * matches the PrUn in-game name 1:1. Falls back to users.username when unset.
-   */
-  private async getDisplayUsernames(userIds: number[]): Promise<Map<number, string>> {
-    const map = new Map<number, string>()
-    if (userIds.length === 0) return map
-
-    const [loginRows, fioRows] = await Promise.all([
-      db
-        .select({ id: users.id, username: users.username })
-        .from(users)
-        .where(inArray(users.id, userIds)),
-      db
-        .select({ userId: userSettings.userId, value: userSettings.value })
-        .from(userSettings)
-        .where(
-          and(inArray(userSettings.userId, userIds), eq(userSettings.settingKey, 'fio.username'))
-        ),
-    ])
-
-    for (const r of loginRows) map.set(r.id, r.username)
-    for (const r of fioRows) {
-      try {
-        const parsed = JSON.parse(r.value)
-        if (typeof parsed === 'string' && parsed.length > 0) map.set(r.userId, parsed)
-      } catch {
-        // Malformed setting value; keep login username fallback
-      }
-    }
-    return map
-  }
-
-  /**
-   * Sum corp-wide remaining sell-order quantity per ticker.
-   * Uses the same enrichment pipeline as /sell-orders so reservations and FIO-aware
-   * fulfilment are accounted for; we just collapse to ticker totals.
-   */
-  private async computeAvailableSurplus(userIds: number[]): Promise<Record<string, number>> {
-    if (userIds.length === 0) return {}
-
-    const orders = await db
-      .select({
-        id: sellOrders.id,
-        userId: sellOrders.userId,
-        commodityTicker: sellOrders.commodityTicker,
-        locationId: sellOrders.locationId,
-        limitMode: sellOrders.limitMode,
-        limitQuantity: sellOrders.limitQuantity,
-      })
-      .from(sellOrders)
-      .where(inArray(sellOrders.userId, userIds))
-
-    if (orders.length === 0) return {}
-
-    const quantityMap = await enrichSellOrdersWithQuantities(orders)
-
-    const totals: Record<string, number> = {}
-    for (const o of orders) {
-      const q = quantityMap.get(o.id)?.remainingQuantity ?? 0
-      if (q <= 0) continue
-      totals[o.commodityTicker] = (totals[o.commodityTicker] ?? 0) + q
-    }
-    return totals
   }
 
   /**
@@ -275,9 +236,11 @@ export class BurnRepairController extends Controller {
    */
   @Get('corp/buildings')
   public async getCorpBuildings(
-    @Request() request: { user: JwtPayload }
+    @Request() request: { user: JwtPayload },
+    @Query() excludedUserIds?: string
   ): Promise<BurnRepairCorpBuildingsResponse> {
-    const { activeUserIds } = await this.getIncludedUserIds(request.user.userId)
+    const resolved = await resolveActiveMembers(request.user.userId)
+    const activeUserIds = applyExclusion(resolved.activeUserIds, excludedUserIds)
 
     if (activeUserIds.length === 0) {
       return { buildings: {}, totalBuildings: 0 }
@@ -310,9 +273,11 @@ export class BurnRepairController extends Controller {
    */
   @Get('corp/workforce')
   public async getCorpWorkforce(
-    @Request() request: { user: JwtPayload }
+    @Request() request: { user: JwtPayload },
+    @Query() excludedUserIds?: string
   ): Promise<BurnRepairCorpWorkforceResponse> {
-    const { activeUserIds } = await this.getIncludedUserIds(request.user.userId)
+    const resolved = await resolveActiveMembers(request.user.userId)
+    const activeUserIds = applyExclusion(resolved.activeUserIds, excludedUserIds)
 
     if (activeUserIds.length === 0) {
       return { workforce: [] }
@@ -399,78 +364,9 @@ export class BurnRepairController extends Controller {
     return { items, days, originLocationId, basePlanetId }
   }
 
-  /** FIO uploads older than this mean the player hasn't logged into PrUn with FIO enabled recently — exclude them from corp aggregates. */
-  private static readonly STALE_DATA_DAYS = 30
-
-  /**
-   * Resolve which user IDs are included in corp-wide views.
-   *
-   * Filters by `burnRepair.includedRoles` AND FIO upload freshness: a user is
-   * kept only when the oldest `fio_user_storage.fio_uploaded_at` across their
-   * storages is within the cutoff. Users without any FIO uploads are excluded.
-   *
-   * We check FIO upload age (not `burn_repair_cache.computed_at`) because
-   * computed_at is bumped whenever our backend recomputes — it says nothing
-   * about whether the underlying FIO data is fresh. An inactive player whose
-   * cache was recomputed today still has stale game data.
-   *
-   * The FIO age map is returned alongside the IDs so callers can reuse it
-   * without re-querying.
-   */
-  private async getIncludedUserIds(requestingUserId: number): Promise<{
-    activeUserIds: number[]
-    staleUserCount: number
-    fioAgeMap: Map<number, string>
-  }> {
-    const includedRoles =
-      ((await userSettingsService.getSetting(
-        requestingUserId,
-        'burnRepair.includedRoles'
-      )) as string[]) ?? []
-
-    if (includedRoles.length === 0) {
-      return { activeUserIds: [], staleUserCount: 0, fioAgeMap: new Map() }
-    }
-
-    // Get all users with matching roles
-    const roleRows = await db
-      .select({ userId: userRoles.userId })
-      .from(userRoles)
-      .where(inArray(userRoles.roleId, includedRoles))
-
-    const allUserIds = [...new Set(roleRows.map(r => r.userId))]
-    if (allUserIds.length === 0) {
-      return { activeUserIds: [], staleUserCount: 0, fioAgeMap: new Map() }
-    }
-
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - BurnRepairController.STALE_DATA_DAYS)
-
-    // Oldest FIO upload across each user's storages. Users with no rows (never
-    // uploaded to FIO) are absent from the result and excluded below.
-    const ageRows = await db
-      .select({
-        userId: fioUserStorage.userId,
-        oldest: sql<Date | null>`MIN(${fioUserStorage.fioUploadedAt})`,
-      })
-      .from(fioUserStorage)
-      .where(inArray(fioUserStorage.userId, allUserIds))
-      .groupBy(fioUserStorage.userId)
-
-    const fioAgeMap = new Map<number, string>()
-    const activeUserIds: number[] = []
-    for (const r of ageRows) {
-      if (r.oldest === null || r.oldest === undefined) continue
-      const date = r.oldest instanceof Date ? r.oldest : new Date(r.oldest)
-      const iso = date.toISOString()
-      fioAgeMap.set(r.userId, iso)
-      if (date > cutoff) activeUserIds.push(r.userId)
-    }
-
-    const staleUserCount = allUserIds.length - activeUserIds.length
-
-    return { activeUserIds, staleUserCount, fioAgeMap }
-  }
+  // Active-member resolution + FIO stock aggregation moved to the shared
+  // services in `@kawakawa/services/supply` so the scheduled snapshot cron
+  // uses the same logic. See `resolveActiveMembers` and `computeCorpStock`.
 
   /**
    * Get a user's total inventory at a location, grouped by ticker.
@@ -494,4 +390,61 @@ export class BurnRepairController extends Controller {
     }
     return stock
   }
+}
+
+/** CSV → unique sanitized integer IDs. Shared by applyExclusion + member detail. */
+export function parseExcludedUserIds(excludedUserIds?: string): number[] {
+  if (!excludedUserIds) return []
+  return [
+    ...new Set(
+      excludedUserIds
+        .split(',')
+        .map(s => Number(s.trim()))
+        .filter(n => Number.isInteger(n) && n > 0)
+    ),
+  ]
+}
+
+/**
+ * Subtract a CSV exclusion list from the active members. Garbage IDs in the
+ * input are silently dropped; empty or missing input is a no-op. Used by every
+ * corp endpoint to support the "Users included" planning dropdown without each
+ * handler reimplementing the parse/filter dance.
+ */
+export function applyExclusion(activeUserIds: number[], excludedUserIds?: string): number[] {
+  const excluded = new Set(parseExcludedUserIds(excludedUserIds))
+  if (excluded.size === 0) return activeUserIds
+  return activeUserIds.filter(id => !excluded.has(id))
+}
+
+/**
+ * Build the per-member breakdown the UI uses for the "N excluded" tooltip.
+ * Manual exclusions take precedence over the FIO-stale tag in the (rare) case
+ * a user falls into both buckets.
+ */
+function buildExcludedMembers(
+  manuallyExcludedIds: number[],
+  staleUserIds: number[],
+  fioAgeMap: Map<number, string>,
+  usernameMap: Map<number, string>
+): ExcludedMember[] {
+  const seen = new Set<number>()
+  const out: ExcludedMember[] = []
+  const push = (userId: number, reason: ExcludedMember['reason']): void => {
+    if (seen.has(userId)) return
+    seen.add(userId)
+    out.push({
+      userId,
+      username: usernameMap.get(userId) ?? `user:${userId}`,
+      fioDataAge: fioAgeMap.get(userId) ?? null,
+      reason,
+    })
+  }
+  for (const id of manuallyExcludedIds) push(id, 'manual')
+  for (const id of staleUserIds) push(id, 'fio-stale')
+  // Sort: manual first then stale, alphabetical within each group.
+  return out.sort((a, b) => {
+    if (a.reason !== b.reason) return a.reason === 'manual' ? -1 : 1
+    return a.username.localeCompare(b.username)
+  })
 }

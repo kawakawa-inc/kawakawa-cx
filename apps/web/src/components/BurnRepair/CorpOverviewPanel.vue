@@ -22,23 +22,24 @@
         @snackbar="(m, c) => emit('snackbar', m, c)"
       />
 
-      <v-chip size="small" variant="tonal">
-        {{ corpData.includedUserCount }} users included
-      </v-chip>
-      <v-chip v-if="corpData.staleUserCount > 0" size="small" variant="tonal" color="warning">
-        {{ corpData.staleUserCount }} inactive (FIO data &gt; 30 days old)
-      </v-chip>
+      <UsersIncludedMenu
+        :model-value="excludedUserIds"
+        :per-user="corpData.perUser"
+        :excluded-members="corpData.excludedMembers"
+        :included-count="corpData.includedUserCount"
+        @update:model-value="onExcludedChange"
+      />
+      <ExcludedMembersChip :members="corpData.excludedMembers" />
 
       <v-spacer />
 
       <v-btn
-        v-if="activeView.cards.length > 0 && corpData.materials.length > 0"
         variant="tonal"
         size="small"
-        prepend-icon="mdi-content-copy"
-        @click="onCopyCsv"
+        prepend-icon="mdi-content-duplicate"
+        @click="cloneCurrentView"
       >
-        Copy CSV
+        Clone view
       </v-btn>
     </div>
 
@@ -48,6 +49,7 @@
         :corp-data="corpData"
         :ticker-set="tickerSet"
         :repair-days="repairDays"
+        :excluded-user-ids="excludedUserIds"
       />
     </template>
     <template v-else>
@@ -106,6 +108,8 @@
       :view="editingView"
       :corp-data="corpData"
       :repair-days="repairDays"
+      :user-views="views"
+      :current-username="currentUsername"
       @create="onCreateView"
       @update="onUpdateView"
     />
@@ -146,6 +150,11 @@ import {
   isBuiltInViewId,
   normalizeView,
 } from './viewTemplates'
+import UsersIncludedMenu from './UsersIncludedMenu.vue'
+import ExcludedMembersChip from './ExcludedMembersChip.vue'
+import { commodityService } from '../../services/commodityService'
+import { resolveTickerScope } from '../../utils/tickerScope'
+import type { Commodity } from '../../types'
 
 const props = defineProps<{
   corpData: BurnRepairCorpResponse | null
@@ -153,16 +162,23 @@ const props = defineProps<{
   corpWorkforce: BurnRepairCorpWorkforceResponse | null
   repairDays: number
   modelValue: number
+  excludedUserIds: number[]
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: number): void
+  (e: 'update:excludedUserIds', value: number[]): void
   (
     e: 'copy-csv',
     payload: { viewName: string; materials: BurnRepairCorpMaterial[] }
   ): void
   (e: 'snackbar', message: string, color?: string): void
 }>()
+
+const excludedUserIds = computed(() => props.excludedUserIds)
+function onExcludedChange(next: number[]): void {
+  emit('update:excludedUserIds', next)
+}
 
 const userStore = useUserStore()
 const route = useRoute()
@@ -243,8 +259,19 @@ const canEditActive = computed(
     activeView.value.userName === currentUsername.value
 )
 
+// Resolve any `category:Name` entries in the view's scope against the live
+// commodity catalog so newly-added commodities flow into category-based views
+// without anyone re-saving the view.
+const commodityCatalog = ref<Commodity[]>([])
+async function loadCommodityCatalog(): Promise<void> {
+  const cached = commodityService.getAllCommoditiesSync()
+  commodityCatalog.value =
+    cached.length > 0 ? cached : await commodityService.getAllCommodities()
+}
+void loadCommodityCatalog()
+
 const tickerSet = computed<Set<string> | null>(() =>
-  activeView.value.tickers.length > 0 ? new Set(activeView.value.tickers) : null
+  resolveTickerScope(activeView.value.tickers, commodityCatalog.value)
 )
 
 const filteredMaterials = computed<BurnRepairCorpMaterial[]>(() => {
@@ -327,6 +354,7 @@ async function onDeleteConfirmed(): Promise<void> {
     console.error('Failed to delete view', e)
     emit('snackbar', (e as Error).message || 'Failed to delete view', 'error')
   } finally {
+    deleteDialogOpen.value = false
     deletingView.value = null
   }
 }
@@ -345,5 +373,31 @@ async function togglePin(v: CorpOverviewView): Promise<void> {
 // -------- CSV --------
 function onCopyCsv(): void {
   emit('copy-csv', { viewName: activeView.value.name, materials: filteredMaterials.value })
+}
+
+// -------- Clone --------
+async function cloneCurrentView(): Promise<void> {
+  const src = activeView.value
+  const body: CreateCorpOverviewViewRequest = {
+    name: `${src.name} (copy)`,
+    privacy: 'private',
+    tickers: [...src.tickers],
+    cards: src.cards.map(c => ({
+      ...c,
+      columns: [...c.columns],
+      filters: c.filters.map(f => ({ ...f })),
+      sortBy: c.sortBy.map(s => ({ ...s })),
+      graph: c.graph ? { ...c.graph } : undefined,
+    })),
+  }
+  try {
+    const created = normalizeView(await api.corpOverviewViews.create(body))
+    views.value = [created, ...views.value]
+    viewId.value = created.id
+    emit('snackbar', `Cloned '${src.name}' as '${created.name}'`, 'success')
+  } catch (e) {
+    console.error('Failed to clone view', e)
+    emit('snackbar', (e as Error).message || 'Failed to clone view', 'error')
+  }
 }
 </script>

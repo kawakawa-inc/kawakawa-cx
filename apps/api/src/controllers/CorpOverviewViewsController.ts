@@ -128,13 +128,37 @@ function validateCard(card: unknown, index: number): ViewCard {
     throw BadRequest(`cards[${index}].limit must be an integer between 1 and 100`)
   }
 
+  // Card type: defaults to 'table' when missing so pre-histogram cards in the
+  // DB still round-trip cleanly. Graph-specific validation arrives with the
+  // histogram feature; for now any `type` that's not 'graph' is treated as
+  // 'table', and graph config is preserved verbatim for forward compatibility.
+  const type: ViewCard['type'] = c.type === 'graph' ? 'graph' : 'table'
+
+  let cardTickers: string[] | undefined
+  if (c.tickers !== undefined) {
+    if (!Array.isArray(c.tickers)) {
+      throw BadRequest(`cards[${index}].tickers must be an array`)
+    }
+    const normalized: string[] = []
+    for (const [ti, t] of c.tickers.entries()) {
+      if (typeof t !== 'string' || t.trim().length === 0) {
+        throw BadRequest(`cards[${index}].tickers[${ti}] must be a non-empty string`)
+      }
+      normalized.push(normalizeScopeEntry(t.trim()))
+    }
+    cardTickers = normalized.length > 0 ? Array.from(new Set(normalized)) : undefined
+  }
+
   return {
     name: c.name.trim(),
     groupBy,
+    type,
     filters,
     sortBy,
     columns: c.columns as ViewCard['columns'],
     limit: c.limit,
+    tickers: cardTickers,
+    graph: type === 'graph' ? (c.graph as ViewCard['graph']) : undefined,
   }
 }
 
@@ -154,10 +178,21 @@ function validateTickers(tickers: unknown): string[] {
     if (typeof t !== 'string' || t.trim().length === 0) {
       throw BadRequest(`tickers[${i}] must be a non-empty string`)
     }
-    out.push(t.trim().toUpperCase())
+    out.push(normalizeScopeEntry(t.trim()))
   }
-  // De-dupe; preserve first-occurrence order.
   return Array.from(new Set(out))
+}
+
+const CATEGORY_PREFIX = 'category:'
+
+function normalizeScopeEntry(raw: string): string {
+  // Live category refs (`category:Name`) keep the human-readable name as-typed
+  // so the chip UI doesn't shout it back. Bare tickers stay uppercased to
+  // match the rest of the catalog.
+  if (raw.toLowerCase().startsWith(CATEGORY_PREFIX)) {
+    return CATEGORY_PREFIX + raw.slice(CATEGORY_PREFIX.length)
+  }
+  return raw.toUpperCase()
 }
 
 function validatePrivacy(p: unknown): 'private' | 'link' | 'public' {

@@ -12,6 +12,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.js
 # Copy all package.json files for dependency resolution
 COPY apps/sync-worker/package.json ./apps/sync-worker/
 COPY packages/types/package.json ./packages/types/
+COPY packages/parser/package.json ./packages/parser/
 COPY packages/db/package.json ./packages/db/
 COPY packages/services/package.json ./packages/services/
 
@@ -21,6 +22,7 @@ RUN pnpm install --frozen-lockfile
 # Copy source files
 COPY apps/sync-worker/ ./apps/sync-worker/
 COPY packages/types/ ./packages/types/
+COPY packages/parser/ ./packages/parser/
 COPY packages/db/ ./packages/db/
 COPY packages/services/ ./packages/services/
 
@@ -41,6 +43,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 # Copy package.json files
 COPY apps/sync-worker/package.json ./apps/sync-worker/
 COPY packages/types/package.json ./packages/types/
+COPY packages/parser/package.json ./packages/parser/
 COPY packages/db/package.json ./packages/db/
 COPY packages/services/package.json ./packages/services/
 
@@ -50,6 +53,7 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built artifacts from builder
 COPY --from=builder /app/apps/sync-worker/dist ./apps/sync-worker/dist
 COPY --from=builder /app/packages/types/dist ./packages/types/dist
+COPY --from=builder /app/packages/parser/dist ./packages/parser/dist
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
 COPY --from=builder /app/packages/services/dist ./packages/services/dist
 

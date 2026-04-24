@@ -123,4 +123,8 @@ if (
 app.listen(port, () => {
   logger.info({ port }, 'API server started')
   logger.info({ path: '/api/docs', port }, 'Swagger docs available')
+
+  // Note: the FIO sync queue worker + scheduler now run in the @kawakawa/sync-worker
+  // daemon (apps/sync-worker), not inside the API. Controllers still enqueue via
+  // @kawakawa/services/sync-queue; the daemon picks up those jobs and processes them.
 })

@@ -107,7 +107,7 @@ vi.mock('../utils/permissionService.js', () => ({
   invalidatePermissionCache: vi.fn(),
 }))
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   getFioCredentials: vi.fn(),
 }))
 

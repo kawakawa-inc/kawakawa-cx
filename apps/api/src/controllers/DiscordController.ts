@@ -10,7 +10,7 @@ import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest } from '../utils/errors.js'
 import { discordService } from '../services/discordService.js'
 import crypto from 'crypto'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 
 // In-memory store for OAuth state tokens (in production, use Redis or similar)
 const stateTokens = new Map<string, { userId: number; expiresAt: Date }>()

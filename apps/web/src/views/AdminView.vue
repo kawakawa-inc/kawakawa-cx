@@ -1863,6 +1863,26 @@
                             "
                             @update:model-value="saveGlobalDefault(setting.key, $event)"
                           />
+                          <!-- Included Roles (Burn/Repair): multi-select with role chips -->
+                          <v-select
+                            v-else-if="setting.key === 'burnRepair.includedRoles'"
+                            :model-value="
+                              (globalDefaultsForm[setting.key] ??
+                                setting.effectiveDefault) as string[]
+                            "
+                            :items="globalDefaultsRoles"
+                            density="compact"
+                            hide-details
+                            variant="outlined"
+                            prepend-inner-icon="mdi-account-group"
+                            multiple
+                            chips
+                            closable-chips
+                            :loading="
+                              savingGlobalDefault === setting.key || loadingGlobalDefaultsRoles
+                            "
+                            @update:model-value="saveGlobalDefault(setting.key, $event)"
+                          />
                           <!-- Boolean type -->
                           <v-switch
                             v-else-if="setting.definition.type === 'boolean'"
@@ -2765,6 +2785,8 @@ const openDefaultPanels = ref<string[]>([])
 // Global Defaults: Reference data for special fields
 const globalDefaultsPriceLists = ref<{ title: string; value: string }[]>([])
 const loadingGlobalDefaultsPriceLists = ref(false)
+const globalDefaultsRoles = ref<{ title: string; value: string }[]>([])
+const loadingGlobalDefaultsRoles = ref(false)
 
 // Timezone options
 const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -2959,16 +2981,10 @@ const syncUserFio = async (user: AdminUser) => {
   try {
     syncingUsers.value.add(user.id)
     const result = await api.admin.syncUserFio(user.id)
-    if (result.success) {
-      showSnackbar(`Synced ${result.inserted} items for ${result.username}`)
-      // Refresh the user list to update sync timestamp
-      await loadUsers()
-    } else {
-      showSnackbar(`Sync completed with errors: ${result.errors.join(', ')}`, 'error')
-    }
+    showSnackbar(`FIO sync queued for ${result.username}`)
   } catch (error) {
-    console.error('Failed to sync FIO', error)
-    const message = error instanceof Error ? error.message : 'Failed to sync FIO'
+    console.error('Failed to enqueue FIO sync', error)
+    const message = error instanceof Error ? error.message : 'Failed to enqueue FIO sync'
     showSnackbar(message, 'error')
   } finally {
     syncingUsers.value.delete(user.id)
@@ -4151,6 +4167,22 @@ const loadGlobalDefaults = async () => {
         console.error('Failed to load price lists for global defaults', error)
       } finally {
         loadingGlobalDefaultsPriceLists.value = false
+      }
+    }
+
+    // Load roles for the burnRepair.includedRoles setting
+    if (globalDefaultsRoles.value.length === 0) {
+      loadingGlobalDefaultsRoles.value = true
+      try {
+        const roles = await api.roles.list()
+        globalDefaultsRoles.value = roles.map((r: Role) => ({
+          title: r.name,
+          value: r.id,
+        }))
+      } catch (error) {
+        console.error('Failed to load roles for global defaults', error)
+      } finally {
+        loadingGlobalDefaultsRoles.value = false
       }
     }
 

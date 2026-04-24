@@ -849,17 +849,11 @@ const loadLastSync = async () => {
 const syncInventory = async () => {
   try {
     syncing.value = true
-    const result = await api.fioInventory.sync()
-    if (result.success) {
-      showSnackbar(`Synced ${result.inserted} items from ${result.storageLocations} locations`)
-      await loadInventory()
-      await loadLastSync()
-    } else {
-      showSnackbar(`Sync completed with errors: ${result.errors.join(', ')}`, 'warning')
-    }
+    await api.fioSync.startAll()
+    showSnackbar('FIO sync queued — you’ll be notified when it finishes')
   } catch (error) {
-    console.error('Failed to sync inventory', error)
-    const message = error instanceof Error ? error.message : 'Failed to sync inventory'
+    console.error('Failed to enqueue FIO sync', error)
+    const message = error instanceof Error ? error.message : 'Failed to enqueue FIO sync'
     showSnackbar(message, 'error')
   } finally {
     syncing.value = false

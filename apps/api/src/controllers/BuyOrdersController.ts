@@ -12,7 +12,13 @@ import {
   Request,
   SuccessResponse,
 } from 'tsoa'
-import type { Currency, OrderType, PricingMode } from '@kawakawa/types'
+import type {
+  Currency,
+  OrderType,
+  PricingMode,
+  BuyOrderSourceMode,
+  DemandSource,
+} from '@kawakawa/types'
 import { db, buyOrders, fioCommodities, fioLocations, orderReservations } from '../db/index.js'
 import { eq, and, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
@@ -30,17 +36,19 @@ interface BuyOrderResponse {
   quantity: number
   price: number
   currency: Currency
-  priceListCode: string | null // null = custom/fixed price, set = dynamic pricing from price list
+  priceListCode: string | null
   orderType: OrderType
-  activeReservationCount: number // count of pending/confirmed reservations
-  reservedQuantity: number // sum of quantities in active reservations
-  fulfilledQuantity: number // sum of quantities in fulfilled reservations
-  remainingQuantity: number // quantity - reservedQuantity - fulfilledQuantity
-  // Dynamic pricing fields
+  sourceMode: BuyOrderSourceMode
+  demandSource: DemandSource | null
+  targetDays: number | null
+  activeReservationCount: number
+  reservedQuantity: number
+  fulfilledQuantity: number
+  remainingQuantity: number
   pricingMode: PricingMode
-  effectivePrice: number | null // Calculated price from price list (null if not available)
-  isFallback: boolean // True if price came from price list's default location
-  priceLocationId: string | null // The location the price was fetched from (when isFallback)
+  effectivePrice: number | null
+  isFallback: boolean
+  priceLocationId: string | null
 }
 
 interface CreateBuyOrderRequest {
@@ -49,16 +57,20 @@ interface CreateBuyOrderRequest {
   quantity: number
   price: number
   currency: Currency
-  priceListCode?: string | null // null or undefined = custom/fixed price, set = dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
+  sourceMode?: BuyOrderSourceMode
+  demandSource?: DemandSource
+  targetDays?: number
 }
 
 interface UpdateBuyOrderRequest {
   quantity?: number
   price?: number
   currency?: Currency
-  priceListCode?: string | null // null = switch to custom pricing, string = switch to dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
+  targetDays?: number
 }
 
 /**
@@ -119,6 +131,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -172,6 +187,10 @@ export class BuyOrdersController extends Controller {
         currency: order.currency,
         priceListCode: order.priceListCode,
         orderType: order.orderType,
+        sourceMode: order.sourceMode,
+        demandSource: order.demandSource,
+        targetDays: order.targetDays,
+
         activeReservationCount: activeCount,
         reservedQuantity: reservedQty,
         fulfilledQuantity: fulfilledQty,
@@ -225,6 +244,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -272,6 +294,9 @@ export class BuyOrdersController extends Controller {
       currency: order.currency,
       priceListCode: order.priceListCode,
       orderType: order.orderType,
+      sourceMode: order.sourceMode,
+      demandSource: order.demandSource,
+      targetDays: order.targetDays,
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,
@@ -306,8 +331,22 @@ export class BuyOrdersController extends Controller {
       )
     }
 
-    // Validate quantity
-    if (body.quantity <= 0) {
+    const sourceMode = body.sourceMode ?? 'manual'
+
+    // Validate demand mode requirements
+    if (sourceMode === 'demand') {
+      if (!body.demandSource) {
+        this.setStatus(400)
+        throw BadRequest('demandSource is required for demand orders (burn or repair)')
+      }
+      if (body.demandSource === 'burn' && (!body.targetDays || body.targetDays <= 0)) {
+        this.setStatus(400)
+        throw BadRequest('targetDays must be > 0 for burn demand orders')
+      }
+    }
+
+    // Validate quantity (demand orders can start at 0, recalculated after creation)
+    if (sourceMode === 'manual' && body.quantity <= 0) {
       this.setStatus(400)
       throw BadRequest('Quantity must be greater than 0')
     }
@@ -378,11 +417,14 @@ export class BuyOrdersController extends Controller {
         userId,
         commodityTicker: body.commodityTicker,
         locationId: body.locationId,
-        quantity: body.quantity,
+        quantity: sourceMode === 'demand' ? 0 : body.quantity,
         price: body.price.toString(),
         currency: body.currency,
         priceListCode,
         orderType,
+        sourceMode,
+        demandSource: sourceMode === 'demand' ? body.demandSource! : null,
+        targetDays: sourceMode === 'demand' ? (body.targetDays ?? null) : null,
       })
       .returning()
 
@@ -417,7 +459,10 @@ export class BuyOrdersController extends Controller {
       currency: newOrder.currency,
       priceListCode: newOrder.priceListCode,
       orderType: newOrder.orderType,
-      activeReservationCount: 0, // New order has no reservations
+      sourceMode: newOrder.sourceMode,
+      demandSource: newOrder.demandSource,
+      targetDays: newOrder.targetDays,
+      activeReservationCount: 0,
       reservedQuantity: 0,
       fulfilledQuantity: 0,
       remainingQuantity: newOrder.quantity,
@@ -463,12 +508,6 @@ export class BuyOrdersController extends Controller {
       }
     }
 
-    // Validate quantity if provided
-    if (body.quantity !== undefined && body.quantity <= 0) {
-      this.setStatus(400)
-      throw BadRequest('Quantity must be greater than 0')
-    }
-
     // Determine final priceListCode (use existing if not provided)
     const finalPriceListCode =
       body.priceListCode !== undefined ? body.priceListCode : existing.priceListCode
@@ -490,15 +529,26 @@ export class BuyOrdersController extends Controller {
       }
     }
 
+    // Validate quantity — demand orders skip manual quantity validation
+    if (body.quantity !== undefined && existing.sourceMode === 'manual' && body.quantity <= 0) {
+      this.setStatus(400)
+      throw BadRequest('Quantity must be greater than 0')
+    }
+
     // Build update object
     const updateData: Partial<typeof buyOrders.$inferInsert> = {
       updatedAt: new Date(),
     }
-    if (body.quantity !== undefined) updateData.quantity = body.quantity
+    if (body.quantity !== undefined && existing.sourceMode === 'manual') {
+      updateData.quantity = body.quantity
+    }
     if (body.price !== undefined) updateData.price = body.price.toString()
     if (body.currency !== undefined) updateData.currency = body.currency
     if (body.priceListCode !== undefined) updateData.priceListCode = body.priceListCode
     if (body.orderType !== undefined) updateData.orderType = body.orderType
+    if (body.targetDays !== undefined && existing.sourceMode === 'demand') {
+      updateData.targetDays = body.targetDays
+    }
 
     // Update
     await db.update(buyOrders).set(updateData).where(eq(buyOrders.id, id))
@@ -534,6 +584,9 @@ export class BuyOrdersController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        sourceMode: buyOrders.sourceMode,
+        demandSource: buyOrders.demandSource,
+        targetDays: buyOrders.targetDays,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -576,6 +629,9 @@ export class BuyOrdersController extends Controller {
       currency: updated.currency,
       priceListCode: updated.priceListCode,
       orderType: updated.orderType,
+      sourceMode: updated.sourceMode,
+      demandSource: updated.demandSource,
+      targetDays: updated.targetDays,
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,

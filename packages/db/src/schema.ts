@@ -8,12 +8,14 @@ import {
   integer,
   decimal,
   timestamp,
+  date,
   varchar,
   pgEnum,
   boolean,
   uniqueIndex,
   index,
   jsonb,
+  foreignKey,
 } from 'drizzle-orm/pg-core'
 import { relations } from 'drizzle-orm'
 
@@ -36,6 +38,17 @@ export const sellOrderLimitModeEnum = pgEnum('sell_order_limit_mode', [
   'reserve',
 ])
 export const orderTypeEnum = pgEnum('order_type', ['internal', 'partner']) // Shared enum for sell/buy orders
+export const syncJobTypeEnum = pgEnum('sync_job_type', [
+  'user-inventory',
+  'user-planets-list',
+  'planet-detail',
+  'cache-recompute',
+  'commodities',
+  'locations',
+  'stations',
+])
+export const syncJobStatusEnum = pgEnum('sync_job_status', ['pending', 'running', 'done', 'failed'])
+export const syncJobSourceEnum = pgEnum('sync_job_source', ['user', 'system'])
 export const notificationTypeEnum = pgEnum('notification_type', [
   'reservation_placed',
   'reservation_confirmed',
@@ -50,6 +63,9 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'user_auto_approved',
   'user_approved',
   'user_rejected',
+  'sync_queued',
+  'sync_completed',
+  'sync_failed',
 ])
 export const reservationStatusEnum = pgEnum('reservation_status', [
   'pending',
@@ -86,6 +102,20 @@ export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
 
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'public'])
+
+export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
+export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
+export const demandSourceEnum = pgEnum('demand_source', ['burn', 'repair'])
+export const logisticsFlowKindEnum = pgEnum('logistics_flow_kind', ['demand', 'surplus', 'fixed'])
+export const logisticsClaimCategoryEnum = pgEnum('logistics_claim_category', [
+  'government',
+  'contract',
+  'reserve',
+  'other',
+])
+export const logisticsClaimSourceEnum = pgEnum('logistics_claim_source', ['manual', 'auto'])
+
+export const demandRateEnum = pgEnum('demand_rate', ['total', 'daily'])
 
 // ==================== SETTINGS (Generic key-value with history) ====================
 export const settings = pgTable(
@@ -342,6 +372,89 @@ export const fioInventory = pgTable(
   })
 )
 
+// ==================== FIO USER PLANETS (Planet base data for supply planning) ====================
+export const fioUserPlanets = pgTable(
+  'fio_user_planets',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    planetNaturalId: varchar('planet_natural_id', { length: 20 }).notNull(),
+    planetName: varchar('planet_name', { length: 100 }).notNull(),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniqueUserPlanet: uniqueIndex('fio_user_planets_user_planet_idx').on(
+      table.userId,
+      table.planetNaturalId
+    ),
+  })
+)
+
+// ==================== FIO PLANET BUILDINGS (Building data from /sites endpoint) ====================
+export const fioPlanetBuildings = pgTable(
+  'fio_planet_buildings',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    buildingId: varchar('building_id', { length: 40 }).notNull(),
+    buildingTicker: varchar('building_ticker', { length: 10 }).notNull(),
+    buildingCreated: timestamp('building_created').notNull(), // from epoch ms
+    buildingLastRepair: timestamp('building_last_repair'), // null = never repaired
+    condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
+    repairMaterials: jsonb('repair_materials').notNull(), // FioSiteMaterial[]
+    reclaimableMaterials: jsonb('reclaimable_materials').notNull(), // FioSiteMaterial[]
+    constructionCosts: jsonb('construction_costs').notNull(), // { MaterialTicker, MaterialAmount }[] — true CC including env materials
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_buildings_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== FIO PLANET WORKFORCE (Workforce burn from /workforce endpoint) ====================
+export const fioPlanetWorkforce = pgTable(
+  'fio_planet_workforce',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    workforceType: varchar('workforce_type', { length: 30 }).notNull(), // PIONEER, SETTLER, etc.
+    population: integer('population').notNull(),
+    required: integer('required').notNull(),
+    needs: jsonb('needs').notNull(), // FioWorkforceNeed[]
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_workforce_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== FIO PLANET PRODUCTION (Production from /production endpoint) ====================
+export const fioPlanetProduction = pgTable(
+  'fio_planet_production',
+  {
+    id: serial('id').primaryKey(),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    lineType: varchar('line_type', { length: 40 }).notNull(),
+    capacity: integer('capacity').notNull().default(0),
+    condition: decimal('condition', { precision: 6, scale: 4 }).notNull(),
+    efficiency: decimal('efficiency', { precision: 6, scale: 4 }).notNull(),
+    orders: jsonb('orders').notNull(), // FioProductionOrder[]
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetIdx: index('fio_planet_production_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
 // ==================== SELL ORDERS ====================
 export const sellOrders = pgTable(
   'sell_orders',
@@ -362,6 +475,9 @@ export const sellOrders = pgTable(
     orderType: orderTypeEnum('order_type').notNull().default('internal'), // internal = members only, partner = trade partners
     limitMode: sellOrderLimitModeEnum('limit_mode').notNull().default('none'),
     limitQuantity: integer('limit_quantity'), // Only used when limitMode is 'max_sell' or 'reserve'
+    reserveSource: reserveSourceEnum('reserve_source').notNull().default('manual'), // manual = fixed limitQuantity, demand = auto-calculated from burn
+    reserveDemandSource: demandSourceEnum('reserve_demand_source'), // null for manual, 'burn' for demand (repair not applicable to reserves)
+    reserveTargetDays: integer('reserve_target_days'), // days of burn to reserve (demand only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -392,6 +508,9 @@ export const buyOrders = pgTable(
     currency: currencyEnum('currency').notNull(),
     priceListCode: varchar('price_list_code', { length: 20 }), // null = custom/fixed price, set = dynamic pricing from price list
     orderType: orderTypeEnum('order_type').notNull().default('internal'), // internal = members only, partner = trade partners
+    sourceMode: buyOrderSourceModeEnum('source_mode').notNull().default('manual'), // manual = fixed qty, demand = auto-calculated
+    demandSource: demandSourceEnum('demand_source'), // null for manual, 'burn' or 'repair' for demand
+    targetDays: integer('target_days'), // days of stock to maintain (burn only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -400,6 +519,173 @@ export const buyOrders = pgTable(
     uniqueUserCommodityLocationTypeCurrency: uniqueIndex(
       'buy_orders_user_commodity_location_type_currency_idx'
     ).on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency),
+  })
+)
+
+// ==================== LOGISTICS FLOWS (directed graph edges) ====================
+// See docs/guides/logistics-plan.md. One row = one physical flow of a material
+// between two real locations. Solver sizes the edge based on `kind`:
+//   - demand:  amount = destination's required inflow (downstream pull)
+//   - surplus: amount = source's leftover after demand commitments (upstream push)
+//   - fixed:   amount = amountOverride (user-specified)
+export const logisticsFlows = pgTable(
+  'logistics_flows',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    fromLocationId: varchar('from_location_id', { length: 20 }).notNull(),
+    fromStorageTypes: jsonb('from_storage_types').notNull(), // string[]
+    toLocationId: varchar('to_location_id', { length: 20 }).notNull(),
+    toStorageTypes: jsonb('to_storage_types').notNull(), // string[]
+    kind: logisticsFlowKindEnum('kind').notNull(),
+    amountOverride: integer('amount_override'), // required when kind='fixed'
+    rate: demandRateEnum('rate').notNull().default('daily'),
+    priority: integer('priority'), // null = fall through to jump-distance ordering
+    note: text('note'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('logistics_flows_user_idx').on(table.userId),
+    fromIdx: index('logistics_flows_from_idx').on(table.userId, table.fromLocationId),
+    toIdx: index('logistics_flows_to_idx').on(table.userId, table.toLocationId),
+    commodityFk: foreignKey({
+      name: 'logistics_flows_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    fromLocationFk: foreignKey({
+      name: 'logistics_flows_from_location_fk',
+      columns: [table.fromLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    toLocationFk: foreignKey({
+      name: 'logistics_flows_to_location_fk',
+      columns: [table.toLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// ==================== LOCATION DEMAND CLAIMS (manual node augmentations) ====================
+// Manual demand entries that are not auto-derivable from FIO: government/COGC/upkeep,
+// contract deliveries, safety-stock reserves. Each row adds to nativeConsumption at
+// its location; the solver treats them identically to workforce burn once they've been
+// converted to a daily rate against burnDays.
+export const locationDemandClaims = pgTable(
+  'location_demand_claims',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    quantity: integer('quantity').notNull(),
+    rate: demandRateEnum('rate').notNull(),
+    category: logisticsClaimCategoryEnum('category').notNull(),
+    note: text('note'),
+    source: logisticsClaimSourceEnum('source').notNull().default('manual'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('location_demand_claims_user_idx').on(table.userId),
+    locationIdx: index('location_demand_claims_location_idx').on(table.userId, table.locationId),
+    commodityFk: foreignKey({
+      name: 'ldc_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    locationFk: foreignKey({
+      name: 'ldc_location_fk',
+      columns: [table.locationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// ==================== BURN/REPAIR CACHE (pre-computed supply needs per user per planet per ticker) ====================
+// Populated during FIO sync. Corp-wide aggregation is a plain SQL SUM query.
+export const burnRepairCache = pgTable(
+  'burn_repair_cache',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userPlanetId: integer('user_planet_id')
+      .notNull()
+      .references(() => fioUserPlanets.id, { onDelete: 'cascade' }),
+    planetNaturalId: varchar('planet_natural_id', { length: 20 }).notNull(),
+    planetName: varchar('planet_name', { length: 100 }).notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    burnDaily: decimal('burn_daily', { precision: 12, scale: 4 }).notNull().default('0'),
+    inputsDaily: decimal('inputs_daily', { precision: 12, scale: 4 }).notNull().default('0'),
+    repairTotal: decimal('repair_total', { precision: 12, scale: 4 }).notNull().default('0'),
+    productionDaily: decimal('production_daily', { precision: 12, scale: 4 })
+      .notNull()
+      .default('0'),
+    computedAt: timestamp('computed_at').defaultNow().notNull(),
+  },
+  table => ({
+    userPlanetTickerIdx: uniqueIndex('burn_repair_cache_user_planet_ticker_idx').on(
+      table.userId,
+      table.planetNaturalId,
+      table.commodityTicker
+    ),
+    userIdx: index('burn_repair_cache_user_idx').on(table.userId),
+    userPlanetIdx: index('burn_repair_cache_user_planet_idx').on(table.userPlanetId),
+  })
+)
+
+// ==================== SYNC QUEUE ====================
+// Centralized queue for all FIO-bound work. One worker pulls jobs by
+// (status, priority desc, next_attempt_at asc) and processes them one at a time,
+// so nothing parallel-slams the FIO API. Planet-detail jobs are enqueued as
+// children of a planets-list job; when the last child finishes, a
+// cache-recompute job is auto-enqueued for that user.
+export const syncJobs = pgTable(
+  'sync_jobs',
+  {
+    id: serial('id').primaryKey(),
+    jobType: syncJobTypeEnum('job_type').notNull(),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    /** Job-specific data, e.g. { planetNaturalId: "CB-282d" } for planet-detail. */
+    payload: jsonb('payload').notNull().default({}),
+    /** Higher = runs sooner. Defaults: 100 system, 200 user-requested. */
+    priority: integer('priority').notNull().default(100),
+    source: syncJobSourceEnum('source').notNull().default('system'),
+    status: syncJobStatusEnum('status').notNull().default('pending'),
+    parentJobId: integer('parent_job_id'),
+    notifyOnComplete: boolean('notify_on_complete').notNull().default(false),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    nextAttemptAt: timestamp('next_attempt_at').defaultNow().notNull(),
+    enqueuedAt: timestamp('enqueued_at').defaultNow().notNull(),
+    startedAt: timestamp('started_at'),
+    finishedAt: timestamp('finished_at'),
+    error: text('error'),
+  },
+  table => ({
+    // Worker's "next job" query — highest priority, oldest ready-to-run pending job.
+    pickNextIdx: index('sync_jobs_pick_next_idx').on(
+      table.status,
+      table.priority,
+      table.nextAttemptAt
+    ),
+    // Dedup lookup: does this user already have an unfinished job of this type?
+    userStatusIdx: index('sync_jobs_user_status_idx').on(table.userId, table.status, table.jobType),
+    // Children of a given parent (for completion tracking + cache-recompute fanout).
+    parentIdx: index('sync_jobs_parent_idx').on(table.parentJobId),
+    parentFk: foreignKey({
+      columns: [table.parentJobId],
+      foreignColumns: [table.id],
+      name: 'sync_jobs_parent_job_id_fk',
+    }).onDelete('set null'),
   })
 )
 
@@ -527,6 +813,89 @@ export const savedMarketFilters = pgTable(
     userIdx: index('saved_market_filters_user_idx').on(table.userId),
     privacyIdx: index('saved_market_filters_privacy_idx').on(table.privacy),
     pinnedIdx: index('saved_market_filters_pinned_idx').on(table.isPinned),
+  })
+)
+
+// ==================== CORP OVERVIEW VIEWS ====================
+// User-owned, shareable views for the Burn & Repair Corp Overview page.
+// A view = a ticker scope + a list of dashboard card configs.
+export const corpOverviewViews = pgTable(
+  'corp_overview_views',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    tickers: jsonb('tickers').notNull(), // string[]; empty array = all corp tickers
+    cards: jsonb('cards').notNull(), // ViewCard[]
+    privacy: filterPrivacyEnum('privacy').notNull().default('private'),
+    isPinned: boolean('is_pinned').notNull().default(false),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('corp_overview_views_user_idx').on(table.userId),
+    privacyIdx: index('corp_overview_views_privacy_idx').on(table.privacy),
+    pinnedIdx: index('corp_overview_views_pinned_idx').on(table.isPinned),
+  })
+)
+
+// ==================== CORP SNAPSHOT — PER USER × TICKER ====================
+// Daily snapshot of each included user's concrete burn/input/production rates
+// and current-state repair total, per commodity. Upserted at the end of each
+// computeBurnRepairCache pass. Rates here are computed with repairDays=0 and
+// willRepair=false — "what the buildings actually are" at snapshot time, not
+// the user's planning-window projection.
+export const corpSnapshotUserTicker = pgTable(
+  'corp_snapshot_user_ticker',
+  {
+    id: serial('id').primaryKey(),
+    snapshotAt: date('snapshot_at').notNull(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    burnDaily: decimal('burn_daily', { precision: 12, scale: 4 }).notNull(),
+    inputsDaily: decimal('inputs_daily', { precision: 12, scale: 4 }).notNull(),
+    productionDaily: decimal('production_daily', { precision: 12, scale: 4 }).notNull(),
+    /** Concrete repair materials owed right now — NOT projected over a planning window. */
+    repairTotal: decimal('repair_total', { precision: 12, scale: 4 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniq: uniqueIndex('corp_snapshot_user_ticker_uniq').on(
+      table.userId,
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTickerTime: index('corp_snapshot_user_ticker_ticker_time_idx').on(
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTime: index('corp_snapshot_user_ticker_time_idx').on(table.snapshotAt),
+  })
+)
+
+// ==================== CORP SNAPSHOT — TICKER STOCK ====================
+// Daily snapshot of corp-wide available stock per commodity (sum of remaining
+// sell-order quantities across included users). Written by the daily stock
+// capture cron, not per-user sync.
+export const corpSnapshotTickerStock = pgTable(
+  'corp_snapshot_ticker_stock',
+  {
+    id: serial('id').primaryKey(),
+    snapshotAt: date('snapshot_at').notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    stock: integer('stock').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    uniq: uniqueIndex('corp_snapshot_ticker_stock_uniq').on(
+      table.commodityTicker,
+      table.snapshotAt
+    ),
+    byTime: index('corp_snapshot_ticker_stock_time_idx').on(table.snapshotAt),
   })
 )
 
@@ -720,6 +1089,9 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   userRoles: many(userRoles),
   passwordResetTokens: many(passwordResetTokens),
   fioUserStorage: many(fioUserStorage),
+  fioUserPlanets: many(fioUserPlanets),
+  logisticsFlows: many(logisticsFlows),
+  locationDemandClaims: many(locationDemandClaims),
   sellOrders: many(sellOrders),
   buyOrders: many(buyOrders),
   notifications: many(notifications),
@@ -732,6 +1104,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [userDiscordProfiles.userId],
   }),
   createdPriceAdjustments: many(priceAdjustments), // Adjustments created by this user
+  burnRepairCache: many(burnRepairCache), // Pre-computed burn/repair needs
 }))
 
 export const userSettingsRelations = relations(userSettings, ({ one }) => ({
@@ -818,6 +1191,49 @@ export const fioInventoryRelations = relations(fioInventory, ({ one }) => ({
   }),
 }))
 
+export const fioUserPlanetsRelations = relations(fioUserPlanets, ({ one, many }) => ({
+  user: one(users, {
+    fields: [fioUserPlanets.userId],
+    references: [users.id],
+  }),
+  buildings: many(fioPlanetBuildings),
+  workforce: many(fioPlanetWorkforce),
+  production: many(fioPlanetProduction),
+  burnRepairCache: many(burnRepairCache),
+}))
+
+export const fioPlanetBuildingsRelations = relations(fioPlanetBuildings, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetBuildings.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const fioPlanetWorkforceRelations = relations(fioPlanetWorkforce, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetWorkforce.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const fioPlanetProductionRelations = relations(fioPlanetProduction, ({ one }) => ({
+  userPlanet: one(fioUserPlanets, {
+    fields: [fioPlanetProduction.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
+export const burnRepairCacheRelations = relations(burnRepairCache, ({ one }) => ({
+  user: one(users, {
+    fields: [burnRepairCache.userId],
+    references: [users.id],
+  }),
+  userPlanet: one(fioUserPlanets, {
+    fields: [burnRepairCache.userPlanetId],
+    references: [fioUserPlanets.id],
+  }),
+}))
+
 export const sellOrdersRelations = relations(sellOrders, ({ one, many }) => ({
   user: one(users, {
     fields: [sellOrders.userId],
@@ -848,6 +1264,40 @@ export const buyOrdersRelations = relations(buyOrders, ({ one, many }) => ({
     references: [fioLocations.naturalId],
   }),
   reservations: many(orderReservations),
+}))
+
+export const logisticsFlowsRelations = relations(logisticsFlows, ({ one }) => ({
+  user: one(users, {
+    fields: [logisticsFlows.userId],
+    references: [users.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [logisticsFlows.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+  fromLocation: one(fioLocations, {
+    fields: [logisticsFlows.fromLocationId],
+    references: [fioLocations.naturalId],
+  }),
+  toLocation: one(fioLocations, {
+    fields: [logisticsFlows.toLocationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const locationDemandClaimsRelations = relations(locationDemandClaims, ({ one }) => ({
+  user: one(users, {
+    fields: [locationDemandClaims.userId],
+    references: [users.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [locationDemandClaims.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+  location: one(fioLocations, {
+    fields: [locationDemandClaims.locationId],
+    references: [fioLocations.naturalId],
+  }),
 }))
 
 // ==================== DISCORD & SETTINGS RELATIONS ====================
@@ -947,6 +1397,26 @@ export const savedMarketFiltersRelations = relations(savedMarketFilters, ({ one 
     references: [users.id],
   }),
 }))
+
+// ==================== CORP OVERVIEW VIEW RELATIONS ====================
+
+export const corpOverviewViewsRelations = relations(corpOverviewViews, ({ one }) => ({
+  user: one(users, {
+    fields: [corpOverviewViews.userId],
+    references: [users.id],
+  }),
+}))
+
+// ==================== CORP SNAPSHOT RELATIONS ====================
+
+export const corpSnapshotUserTickerRelations = relations(corpSnapshotUserTicker, ({ one }) => ({
+  user: one(users, {
+    fields: [corpSnapshotUserTicker.userId],
+    references: [users.id],
+  }),
+}))
+
+// corp_snapshot_ticker_stock has no FK relations beyond its own timestamp-ticker key.
 
 // ==================== PRICING SYSTEM RELATIONS ====================
 

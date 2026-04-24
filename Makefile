@@ -1,6 +1,6 @@
 # Kawakawa CX - Development Commands
 
-.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web dev-bot bot-deploy start stop restart reload status logs search-logs
+.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web kill-sync-worker dev-bot dev-sync-worker bot-deploy start stop restart reload status logs search-logs
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -130,8 +130,19 @@ kill-web: ## Kill all running web processes
 	@sleep 1
 	@echo "Done."
 
+kill-sync-worker: ## Kill all running sync-worker processes
+	@echo "Killing sync-worker processes..."
+	@-pkill -f "@kawakawa/sync-worker" 2>/dev/null || true
+	@-pkill -f "apps/sync-worker.*tsx" 2>/dev/null || true
+	@-pkill -f "pnpm.*sync-worker dev" 2>/dev/null || true
+	@sleep 1
+	@echo "Done."
+
 dev-bot: ## Start Discord bot dev server with hot reload
 	NODE_ENV=development LOG_LEVEL=debug pnpm --filter @kawakawa/bot dev
+
+dev-sync-worker: ## Start FIO sync-worker daemon with hot reload
+	NODE_ENV=development LOG_LEVEL=debug pnpm --filter @kawakawa/sync-worker dev
 
 bot-deploy: ## Deploy slash commands to Discord
 	pnpm --filter @kawakawa/bot deploy-commands

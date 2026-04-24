@@ -32,6 +32,9 @@ jobs:
           - app: web
             context: .
             dockerfile: apps/web/Dockerfile
+          - app: sync-worker
+            context: .
+            dockerfile: apps/sync-worker/Dockerfile
 
     steps:
       - name: Checkout repository
@@ -129,6 +132,12 @@ jobs:
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.repository = env(IMAGE_PREFIX) + "-bot"' ${{ steps.app.outputs.spec_file }}
           yq -i '(.workers[] | select(.name == "kawa-bot")).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
+
+          # Update sync-worker
+          yq -i '(.workers[] | select(.name == "kawa-sync-worker")).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.workers[] | select(.name == "kawa-sync-worker")).image.registry = env(REGISTRY)' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.workers[] | select(.name == "kawa-sync-worker")).image.repository = env(IMAGE_PREFIX) + "-sync-worker"' ${{ steps.app.outputs.spec_file }}
+          yq -i '(.workers[] | select(.name == "kawa-sync-worker")).image.tag = strenv(IMAGE_TAG)' ${{ steps.app.outputs.spec_file }}
 
           # Update Web service
           yq -i '(.services[] | select(.name == "kawa-web")).image.registry_type = "GHCR"' ${{ steps.app.outputs.spec_file }}

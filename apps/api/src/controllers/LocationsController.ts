@@ -1,7 +1,7 @@
 import { Controller, Get, Path, Query, Route, Tags } from 'tsoa'
 import { db, fioLocations } from '../db/index.js'
 import { eq, sql } from 'drizzle-orm'
-import { fioClient } from '../services/fio/client.js'
+import { fioClient } from '@kawakawa/services/fio'
 import { BadRequest } from '../utils/errors.js'
 
 type LocationType = 'Station' | 'Planet'

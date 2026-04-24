@@ -51,7 +51,7 @@ vi.mock('../services/price-calculator.js', () => ({
   calculateEffectivePriceBatch: vi.fn(),
 }))
 
-vi.mock('../services/fio/client.js', () => ({
+vi.mock('@kawakawa/services/fio', () => ({
   fioClient: {
     getJumpCount: vi.fn(),
   },

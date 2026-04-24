@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AdminGlobalDefaultsController } from './AdminGlobalDefaultsController.js'
 import { db } from '../db/index.js'
 import { settingsService } from '../services/settingsService.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -20,11 +20,11 @@ vi.mock('../services/settingsService.js', () => ({
   },
 }))
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   clearCache: vi.fn(),
 }))
 
-vi.mock('../services/syncService.js', () => ({
+vi.mock('@kawakawa/services/sync-state', () => ({
   syncService: {
     bumpDataVersion: vi.fn(),
   },

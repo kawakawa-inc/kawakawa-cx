@@ -183,6 +183,7 @@
           :get-commodity-display="getCommodityDisplay"
           :get-location-display="getLocationDisplay"
           :get-commodity-name="getCommodityName"
+          :help-tokens="marketHelpTokens"
           placeholder="Search: COF, BEN, Buy, Sell..."
           class="flex-grow-1"
           @update:chips="onChipsUpdate"
@@ -831,7 +832,10 @@ import FioAgeChip from '../components/FioAgeChip.vue'
 import OrderTypeChip from '../components/OrderTypeChip.vue'
 import PricingModeChip from '../components/PricingModeChip.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
-import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
+import TokenSearchInput, {
+  type SearchChip,
+  type HelpToken,
+} from '../components/TokenSearchInput.vue'
 import InvoiceSummaryPanel from '../components/invoices/InvoiceSummaryPanel.vue'
 import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import ResizableSplitPanel from '../components/ResizableSplitPanel.vue'
@@ -934,6 +938,39 @@ const headers = [
 // Token search input ref and state
 const tokenSearchRef = ref<InstanceType<typeof TokenSearchInput> | null>(null)
 const searchChips = ref<SearchChip[]>([])
+
+const marketHelpTokens: HelpToken[] = [
+  {
+    label: 'Commodity',
+    color: 'primary',
+    example: 'COF',
+    description: 'A ticker or material name. Prefix with `commodity:` to force commodity match.',
+  },
+  {
+    label: 'Location',
+    color: 'secondary',
+    example: 'Montem',
+    description: 'Planet or station name / ID. Prefix with `location:` to disambiguate.',
+  },
+  {
+    label: 'User',
+    color: 'info',
+    example: 'user:alice',
+    description: 'Filter to listings posted by a specific corp member.',
+  },
+  {
+    label: 'Type',
+    color: 'success',
+    example: 'buy',
+    description: 'Use `buy` or `sell` to restrict to that side of the market.',
+  },
+  {
+    label: 'Shopping list',
+    color: 'purple',
+    example: '{"version":"1",...}',
+    description: 'Paste an XIT JSON or CSV shopping list to match everything on it at once.',
+  },
+]
 
 // Saved filters state
 const pinnedFilters = ref<SavedMarketFilter[]>([])

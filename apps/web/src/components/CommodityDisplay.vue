@@ -78,6 +78,9 @@ const showIcon = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  /* A few pixels of vertical breathing room so adjacent rows in compact
+     data tables don't visually touch each other. */
+  padding-block: 3px;
 }
 
 .commodity-icon {

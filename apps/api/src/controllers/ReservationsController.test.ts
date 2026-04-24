@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ReservationsController } from './ReservationsController.js'
 import { db } from '../db/index.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 import * as permissionService from '../utils/permissionService.js'
 
 vi.mock('../utils/permissionService.js', () => ({
@@ -53,7 +53,7 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
-vi.mock('../services/notificationService.js', () => ({
+vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: {
     create: vi.fn(),
   },

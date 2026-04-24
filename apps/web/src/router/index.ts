@@ -16,6 +16,8 @@ import NotificationsView from '../views/NotificationsView.vue'
 import PriceListView from '../views/PriceListView.vue'
 import PriceAdjustmentsView from '../views/PriceAdjustmentsView.vue'
 import PricingCalculatorView from '../views/PricingCalculatorView.vue'
+import LogisticsView from '../views/LogisticsView.vue'
+import BurnRepairView from '../views/BurnRepairView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -117,6 +119,18 @@ const router = createRouter({
       path: '/calculator',
       name: 'calculator',
       component: PricingCalculatorView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/logistics',
+      name: 'logistics',
+      component: LogisticsView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/burn-repair',
+      name: 'burn-repair',
+      component: BurnRepairView,
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {

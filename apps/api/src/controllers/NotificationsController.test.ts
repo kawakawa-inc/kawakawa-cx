@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NotificationsController } from './NotificationsController.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 import type { Notification } from '@kawakawa/types'
 
-vi.mock('../services/notificationService.js', () => ({
+vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: {
     getForUser: vi.fn(),
     getUnreadCount: vi.fn(),

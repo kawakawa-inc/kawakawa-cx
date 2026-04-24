@@ -454,6 +454,7 @@
                   :get-commodity-display="getCommodityDisplay"
                   :get-location-display="getLocationDisplay"
                   :get-commodity-name="getCommodityName"
+                  :help-tokens="invoiceHelpTokens"
                   @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>
@@ -1003,7 +1004,10 @@ import CommodityIcon from '../components/CommodityIcon.vue'
 import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import InvoiceStatusChip from '../components/invoices/InvoiceStatusChip.vue'
 import InvoiceExpandedRow from '../components/invoices/InvoiceExpandedRow.vue'
-import TokenSearchInput, { type SearchChip } from '../components/TokenSearchInput.vue'
+import TokenSearchInput, {
+  type SearchChip,
+  type HelpToken,
+} from '../components/TokenSearchInput.vue'
 import { useSettingsStore } from '../stores/settings'
 
 const userStore = useUserStore()
@@ -1226,6 +1230,27 @@ const availableInvoiceUserNames = computed(() => {
   }
   return Array.from(names).sort()
 })
+
+const invoiceHelpTokens: HelpToken[] = [
+  {
+    label: 'User',
+    color: 'info',
+    example: 'alice',
+    description: 'Counterparty username. Prefix with `user:` to force a user match.',
+  },
+  {
+    label: 'Commodity',
+    color: 'primary',
+    example: 'COF',
+    description: 'Ticker or material name — matches invoices containing that commodity.',
+  },
+  {
+    label: 'Location',
+    color: 'secondary',
+    example: 'Montem',
+    description: 'Planet or station — matches invoices tied to that location.',
+  },
+]
 
 const filteredInvoices = computed(() => {
   let result = invoices.value

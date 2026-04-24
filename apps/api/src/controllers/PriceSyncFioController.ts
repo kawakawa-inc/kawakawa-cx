@@ -13,9 +13,13 @@ import {
 import {
   syncFioExchangePrices,
   getFioExchangeSyncStatus,
-  type FioPriceField,
   type FioExchangesSyncResult,
-} from '../services/fio/index.js'
+} from '@kawakawa/services/fio'
+
+// Local re-declaration of FioPriceField (the same string union type used in
+// @kawakawa/services/fio). TSOA cannot resolve type declarations across
+// package boundaries, so we declare it locally for the OpenAPI schema.
+export type FioPriceField = 'MMBuy' | 'MMSell' | 'PriceAverage' | 'Ask' | 'Bid'
 import type { Currency } from '@kawakawa/types'
 
 /**

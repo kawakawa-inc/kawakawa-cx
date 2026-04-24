@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { InvoicesController } from './InvoicesController.js'
 import { db } from '../db/index.js'
-import { notificationService } from '../services/notificationService.js'
+import { notificationService } from '@kawakawa/services/notifications'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -71,7 +71,7 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
-vi.mock('../services/notificationService.js', () => ({
+vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: {
     create: vi.fn(),
   },
@@ -81,11 +81,11 @@ vi.mock('../services/price-calculator.js', () => ({
   calculateEffectivePriceWithFallback: vi.fn().mockResolvedValue({ finalPrice: 100 }),
 }))
 
-vi.mock('../services/fio/sync-user-inventory.js', () => ({
+vi.mock('@kawakawa/services/fio', () => ({
   syncUserInventory: vi.fn().mockResolvedValue({ success: true }),
 }))
 
-vi.mock('../services/userSettingsService.js', () => ({
+vi.mock('@kawakawa/services/user-settings', () => ({
   userSettingsService: {
     getFioCredentials: vi.fn().mockResolvedValue({ fioUsername: 'fiouser', fioApiKey: 'key123' }),
   },

@@ -11,6 +11,7 @@ import {
   Tags,
   Request,
   Query,
+  SuccessResponse,
 } from 'tsoa'
 import type { Role } from '@kawakawa/types'
 import {
@@ -31,9 +32,9 @@ import { NotFound, BadRequest, Conflict } from '../utils/errors.js'
 import { invalidateCachedRoles } from '../utils/roleCache.js'
 import { invalidatePermissionCache } from '../utils/permissionService.js'
 import crypto from 'crypto'
-import { syncUserInventory } from '../services/fio/sync-user-inventory.js'
-import { notificationService } from '../services/notificationService.js'
-import * as userSettingsService from '../services/userSettingsService.js'
+import { enqueueUserFullSync } from '@kawakawa/services/sync-queue'
+import { notificationService } from '@kawakawa/services/notifications'
+import * as userSettingsService from '@kawakawa/services/user-settings'
 
 interface FioSyncInfo {
   fioUsername: string | null
@@ -723,16 +724,15 @@ export class AdminController extends Controller {
   }
 
   /**
-   * Trigger FIO inventory sync for a user (admin action for testing)
+   * Enqueue a full FIO sync (inventory + planets) for a user. Returns 202
+   * with job IDs — actual work runs in the sync-worker.
    */
   @Post('users/{userId}/sync-fio')
+  @SuccessResponse('202', 'Sync enqueued')
   public async syncUserFio(@Path() userId: number): Promise<{
-    success: boolean
-    inserted: number
-    errors: string[]
+    jobIds: { inventory: number; planets: number }
     username: string
   }> {
-    // Get user and their FIO credentials
     const [user] = await db
       .select({
         id: users.id,
@@ -746,7 +746,6 @@ export class AdminController extends Controller {
       throw NotFound('User not found')
     }
 
-    // Get FIO credentials from settings service
     const { fioUsername, fioApiKey } = await userSettingsService.getFioCredentials(userId)
 
     if (!fioUsername || !fioApiKey) {
@@ -754,13 +753,14 @@ export class AdminController extends Controller {
       throw BadRequest('User does not have FIO credentials configured')
     }
 
-    // Perform sync
-    const result = await syncUserInventory(userId, fioApiKey, fioUsername)
+    const { inventoryJobId, planetsJobId } = await enqueueUserFullSync(userId, {
+      source: 'user',
+      notify: true,
+    })
 
+    this.setStatus(202)
     return {
-      success: result.success,
-      inserted: result.inserted,
-      errors: result.errors,
+      jobIds: { inventory: inventoryJobId, planets: planetsJobId },
       username: user.username,
     }
   }

@@ -20,6 +20,7 @@ export const SETTING_CATEGORIES = {
   NOTIFICATIONS: 'notifications',
   FIO: 'fio',
   DISCORD: 'discord',
+  BURN_REPAIR: 'burnRepair',
 } as const
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[keyof typeof SETTING_CATEGORIES]
@@ -52,6 +53,10 @@ export const SETTING_CATEGORY_INFO: Record<
   [SETTING_CATEGORIES.DISCORD]: {
     label: 'Discord',
     description: 'Discord bot preferences',
+  },
+  [SETTING_CATEGORIES.BURN_REPAIR]: {
+    label: 'Burn & Repair',
+    description: 'Workforce burn, production inputs, and building repair settings',
   },
 }
 
@@ -259,6 +264,93 @@ export const SETTING_DEFINITIONS = {
     category: SETTING_CATEGORIES.FIO,
     label: 'Excluded Locations',
     description: 'Locations to exclude from FIO inventory sync (by ID or name)',
+  } satisfies SettingDef<string[], 'string[]'>,
+
+  // ==================== BURN & REPAIR SETTINGS ====================
+  'burnRepair.repairDays': {
+    key: 'burnRepair.repairDays',
+    type: 'number',
+    defaultValue: 0,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Repair Days',
+    description: 'Plan repairs N days ahead (0 = repair now)',
+  } satisfies SettingDef<number, 'number'>,
+
+  'burnRepair.burnDays': {
+    key: 'burnRepair.burnDays',
+    type: 'number',
+    defaultValue: 7,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Burn Days',
+    description: 'Stock consumables for N days',
+  } satisfies SettingDef<number, 'number'>,
+
+  'burnRepair.conditionMode': {
+    key: 'burnRepair.conditionMode',
+    type: 'enum',
+    defaultValue: 'max',
+    enumOptions: ['actual', 'max'] as const,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Condition',
+    description: 'Use actual building conditions or assume max (100%) for production calculations',
+  } satisfies SettingDef<string, 'enum'>,
+
+  'burnRepair.stockMode': {
+    key: 'burnRepair.stockMode',
+    type: 'enum',
+    defaultValue: 'included',
+    enumOptions: ['included', 'ignored'] as const,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Stock',
+    description:
+      'Include current stock when computing balances and shopping lists, or ignore it for raw projection runs',
+  } satisfies SettingDef<string, 'enum'>,
+
+  'logistics.excludedPlanets': {
+    key: 'logistics.excludedPlanets',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Excluded Planets (Logistics)',
+    description:
+      'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and burnRepair.excludedPlanets (supply page).',
+  } satisfies SettingDef<string[], 'string[]'>,
+
+  'burnRepair.includeProduction': {
+    key: 'burnRepair.includeProduction',
+    type: 'boolean',
+    defaultValue: false,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Include Production Inputs',
+    description: 'Include production input materials in supply calculations',
+  } satisfies SettingDef<boolean, 'boolean'>,
+
+  'burnRepair.excludedPlanets': {
+    key: 'burnRepair.excludedPlanets',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Excluded Planets',
+    description: 'Planets to exclude from burn/repair calculations and sync (by NaturalId or name)',
+  } satisfies SettingDef<string[], 'string[]'>,
+
+  'burnRepair.planetOverrides': {
+    key: 'burnRepair.planetOverrides',
+    type: 'string',
+    defaultValue: '{}',
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Planet Overrides',
+    description:
+      'Per-planet setting overrides as JSON: { "planetId": { "repairDays": N, "burnDays": N, "includeProduction": bool } }',
+  } satisfies SettingDef<string, 'string'>,
+
+  'burnRepair.includedRoles': {
+    key: 'burnRepair.includedRoles',
+    type: 'string[]',
+    defaultValue: [] as string[],
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Included Roles (Corp Burn/Repair)',
+    description: 'Roles whose burn/repair data is included in corp-wide aggregation',
   } satisfies SettingDef<string[], 'string[]'>,
 
   // ==================== DISCORD SETTINGS ====================

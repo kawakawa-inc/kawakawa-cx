@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { FioInventoryController } from './FioInventoryController.js'
 import { db } from '../db/index.js'
-import * as syncUserInventoryModule from '../services/fio/sync-user-inventory.js'
-import * as userSettingsService from '../services/userSettingsService.js'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -36,15 +34,6 @@ vi.mock('../db/index.js', () => ({
     name: 'name',
     type: 'type',
   },
-}))
-
-vi.mock('../services/fio/sync-user-inventory.js', () => ({
-  syncUserInventory: vi.fn(),
-}))
-
-vi.mock('../services/userSettingsService.js', () => ({
-  getSetting: vi.fn(),
-  getFioCredentials: vi.fn(),
 }))
 
 describe('FioInventoryController', () => {
@@ -127,121 +116,6 @@ describe('FioInventoryController', () => {
       const result = await controller.getInventory(mockRequest)
 
       expect(result).toEqual([])
-    })
-  })
-
-  describe('syncInventory', () => {
-    it('should sync inventory when FIO credentials are configured', async () => {
-      // Mock FIO credentials from userSettingsService
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValueOnce({
-        fioUsername: 'fiouser',
-        fioApiKey: 'fio-api-key-123',
-      })
-
-      // Mock excluded locations from userSettingsService
-      vi.mocked(userSettingsService.getSetting).mockResolvedValueOnce(['UV-351a'])
-
-      vi.mocked(syncUserInventoryModule.syncUserInventory).mockResolvedValueOnce({
-        success: true,
-        inserted: 50,
-        updated: 0,
-        errors: [],
-        storageLocations: 3,
-        skippedUnknownLocations: 2,
-        skippedUnknownCommodities: 1,
-        skippedExcludedLocations: 5,
-        fioLastSync: '2024-01-01T12:00:00.000Z',
-      })
-
-      const result = await controller.syncInventory(mockRequest)
-
-      expect(result).toEqual({
-        success: true,
-        inserted: 50,
-        storageLocations: 3,
-        errors: [],
-        skippedUnknownLocations: 2,
-        skippedUnknownCommodities: 1,
-        skippedExcludedLocations: 5,
-        fioLastSync: '2024-01-01T12:00:00.000Z',
-      })
-      expect(syncUserInventoryModule.syncUserInventory).toHaveBeenCalledWith(
-        1,
-        'fio-api-key-123',
-        'fiouser',
-        { excludedLocations: ['UV-351a'] }
-      )
-    })
-
-    it('should throw error when FIO username is not configured', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValueOnce({
-        fioUsername: null,
-        fioApiKey: 'some-key',
-      })
-
-      const setStatusSpy = vi.spyOn(controller, 'setStatus')
-
-      await expect(controller.syncInventory(mockRequest)).rejects.toThrow(
-        'FIO credentials not configured'
-      )
-      expect(setStatusSpy).toHaveBeenCalledWith(400)
-      expect(syncUserInventoryModule.syncUserInventory).not.toHaveBeenCalled()
-    })
-
-    it('should throw error when FIO API key is not configured', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValueOnce({
-        fioUsername: 'fiouser',
-        fioApiKey: null,
-      })
-
-      const setStatusSpy = vi.spyOn(controller, 'setStatus')
-
-      await expect(controller.syncInventory(mockRequest)).rejects.toThrow(
-        'FIO credentials not configured'
-      )
-      expect(setStatusSpy).toHaveBeenCalledWith(400)
-    })
-
-    it('should throw error when no FIO credentials exist for user', async () => {
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValueOnce({
-        fioUsername: null,
-        fioApiKey: null,
-      })
-
-      const setStatusSpy = vi.spyOn(controller, 'setStatus')
-
-      await expect(controller.syncInventory(mockRequest)).rejects.toThrow(
-        'FIO credentials not configured'
-      )
-      expect(setStatusSpy).toHaveBeenCalledWith(400)
-    })
-
-    it('should return sync errors when some items fail', async () => {
-      // Mock FIO credentials from userSettingsService
-      vi.mocked(userSettingsService.getFioCredentials).mockResolvedValueOnce({
-        fioUsername: 'fiouser',
-        fioApiKey: 'fio-api-key',
-      })
-
-      // Mock excluded locations from userSettingsService (empty array)
-      vi.mocked(userSettingsService.getSetting).mockResolvedValueOnce([])
-
-      vi.mocked(syncUserInventoryModule.syncUserInventory).mockResolvedValueOnce({
-        success: false,
-        inserted: 45,
-        updated: 0,
-        errors: ['Failed to sync item X', 'Failed to sync item Y'],
-        storageLocations: 2,
-        skippedUnknownLocations: 0,
-        skippedUnknownCommodities: 0,
-        skippedExcludedLocations: 0,
-        fioLastSync: null,
-      })
-
-      const result = await controller.syncInventory(mockRequest)
-
-      expect(result.success).toBe(false)
-      expect(result.errors).toHaveLength(2)
     })
   })
 

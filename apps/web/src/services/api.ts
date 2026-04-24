@@ -43,6 +43,28 @@ import type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
+  CorpOverviewView,
+  CreateCorpOverviewViewRequest,
+  UpdateCorpOverviewViewRequest,
+  SnapshotQueryRequest,
+  SnapshotSeriesResponse,
+  LogisticsGraph,
+  LogisticsFlow,
+  CreateLogisticsFlowRequest,
+  UpdateLogisticsFlowRequest,
+  BulkCreateLogisticsFlowsRequest,
+  BulkCreateLogisticsFlowsResponse,
+  BulkMultiCreateLogisticsFlowsRequest,
+  BulkMultiCreateLogisticsFlowsResponse,
+  LocationDemandClaim,
+  CreateLocationDemandClaimRequest,
+  UpdateLocationDemandClaimRequest,
+  BurnRepairMyBasesResponse,
+  BurnRepairCorpResponse,
+  BurnRepairCorpBuildingsResponse,
+  BurnRepairCorpWorkforceResponse,
+  BurnRepairShoppingListRequest,
+  BurnRepairShoppingListResponse,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -174,10 +196,11 @@ interface UsernameAvailabilityResponse {
   message?: string
 }
 
-interface FioSyncResponse {
-  success: boolean
-  inserted: number
-  errors: string[]
+interface FioSyncEnqueueResponse {
+  jobIds: { inventory: number; planets: number }
+}
+
+interface AdminFioSyncEnqueueResponse extends FioSyncEnqueueResponse {
   username: string
 }
 
@@ -194,16 +217,6 @@ interface FioInventoryItem {
   locationType: string | null
   storageType: string
   fioUploadedAt: string | null
-}
-
-interface FioInventorySyncResult {
-  success: boolean
-  inserted: number
-  storageLocations: number
-  errors: string[]
-  skippedUnknownLocations: number
-  skippedUnknownCommodities: number
-  fioLastSync: string | null
 }
 
 interface FioLastSyncResponse {
@@ -836,6 +849,17 @@ const handleRefreshedToken = (response: Response): void => {
   }
 }
 
+/**
+ * Build the `?excludedUserIds=...` suffix shared by every corp endpoint that
+ * supports the planning-exclusion feature. Returns an empty string when the
+ * list is empty/missing so endpoints look the same as before for the default
+ * "no exclusions" case.
+ */
+function corpQueryString(excludedUserIds?: number[]): string {
+  if (!excludedUserIds || excludedUserIds.length === 0) return ''
+  return `?excludedUserIds=${encodeURIComponent(excludedUserIds.join(','))}`
+}
+
 // Real API calls (to be used when backend is ready)
 const realApi = {
   login: async (request: LoginRequest): Promise<Response> => {
@@ -1067,7 +1091,7 @@ const realApi = {
     return response.json()
   },
 
-  syncUserFio: async (userId: number): Promise<FioSyncResponse> => {
+  syncUserFio: async (userId: number): Promise<AdminFioSyncEnqueueResponse> => {
     const response = await fetchWithLogging(`/api/admin/users/${userId}/sync-fio`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -1091,7 +1115,32 @@ const realApi = {
       if (response.status === 400) {
         throw new Error('User does not have FIO credentials configured')
       }
-      throw new Error(`Failed to sync FIO: ${response.statusText}`)
+      throw new Error(`Failed to enqueue FIO sync: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  startFioSyncAll: async (): Promise<FioSyncEnqueueResponse> => {
+    const response = await fetchWithLogging('/api/fio/sync-all', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+
+    handleRefreshedToken(response)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('jwt')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+        throw new Error('Unauthorized')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'FIO credentials not configured')
+      }
+      throw new Error(`Failed to enqueue FIO sync: ${response.statusText}`)
     }
 
     return response.json()
@@ -1466,31 +1515,6 @@ const realApi = {
         throw new Error('Unauthorized')
       }
       throw new Error(`Failed to get FIO inventory: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  syncFioInventory: async (): Promise<FioInventorySyncResult> => {
-    const response = await fetchWithLogging('/api/fio/inventory/sync', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'FIO credentials not configured')
-      }
-      throw new Error(`Failed to sync FIO inventory: ${response.statusText}`)
     }
 
     return response.json()
@@ -3008,7 +3032,7 @@ const realApi = {
     exchange: string,
     locationId: string,
     currency: Currency,
-    options?: { commodity?: string; fallback?: boolean }
+    options?: { commodity?: string; fallback?: boolean; version?: number }
   ): Promise<EffectivePrice[]> => {
     const params = new URLSearchParams({ currency })
     if (options?.commodity) {
@@ -3017,6 +3041,9 @@ const realApi = {
     // Fallback defaults to true on backend, only send if explicitly false
     if (options?.fallback === false) {
       params.set('fallback', 'false')
+    }
+    if (options?.version !== undefined) {
+      params.set('version', String(options.version))
     }
     const response = await fetchWithLogging(
       `/api/prices/effective/${exchange}/${locationId}?${params}`,
@@ -4623,6 +4650,398 @@ const realApi = {
 
     return response.json()
   },
+
+  // ==================== CORP OVERVIEW VIEWS ====================
+
+  listCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
+    const response = await fetchWithLogging('/api/corp-overview-views', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list views: ${response.statusText}`)
+    return response.json()
+  },
+
+  getPinnedCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
+    const response = await fetchWithLogging('/api/corp-overview-views/pinned', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get pinned views: ${response.statusText}`)
+    return response.json()
+  },
+
+  browseCorpOverviewViews: async (
+    search?: string,
+    page?: number
+  ): Promise<CorpOverviewView[]> => {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (page) params.set('page', String(page))
+    const query = params.toString() ? `?${params.toString()}` : ''
+    const response = await fetchWithLogging(`/api/corp-overview-views/browse${query}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to browse views: ${response.statusText}`)
+    return response.json()
+  },
+
+  getCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to get view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  createCorpOverviewView: async (
+    request: CreateCorpOverviewViewRequest
+  ): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging('/api/corp-overview-views', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      throw new Error(`Failed to create view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  updateCorpOverviewView: async (
+    id: number,
+    request: UpdateCorpOverviewViewRequest
+  ): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to update this view')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to update view: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  deleteCorpOverviewView: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('You do not have permission to delete this view')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to delete view: ${response.statusText}`)
+    }
+  },
+
+  togglePinCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/pin`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Only public views can be pinned')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to pin views')
+      }
+      if (response.status === 404) throw new Error('View not found')
+      throw new Error(`Failed to toggle pin: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  // ==================== CORP SNAPSHOTS (histogram query) ====================
+
+  queryCorpSnapshots: async (req: SnapshotQueryRequest): Promise<SnapshotSeriesResponse> => {
+    const params = new URLSearchParams()
+    params.set('yMetric', req.yMetric)
+    params.set('seriesBy', req.seriesBy)
+    if (req.preset) params.set('preset', req.preset)
+    if (req.from) params.set('from', req.from)
+    if (req.to) params.set('to', req.to)
+    if (req.bucket) params.set('bucket', req.bucket)
+    if (req.tickers && req.tickers.length > 0) params.set('tickers', req.tickers.join(','))
+    if (req.seriesLimit !== undefined) params.set('seriesLimit', String(req.seriesLimit))
+    if (req.excludedUserIds && req.excludedUserIds.length > 0) {
+      params.set('excludedUserIds', req.excludedUserIds.join(','))
+    }
+    if (req.includeOther) params.set('includeOther', 'true')
+
+    const response = await fetchWithLogging(`/api/corp-snapshots?${params.toString()}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid snapshot query')
+      }
+      throw new Error(`Failed to query corp snapshots: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  // ==================== LOGISTICS ====================
+
+  getLogisticsGraph: async (): Promise<LogisticsGraph> => {
+    const response = await fetchWithLogging('/api/logistics/graph', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get logistics graph: ${response.statusText}`)
+    return response.json()
+  },
+
+  listLogisticsFlows: async (): Promise<LogisticsFlow[]> => {
+    const response = await fetchWithLogging('/api/logistics/flows', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list logistics flows: ${response.statusText}`)
+    return response.json()
+  },
+
+  createLogisticsFlow: async (body: CreateLogisticsFlowRequest): Promise<LogisticsFlow> => {
+    const response = await fetchWithLogging('/api/logistics/flows', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create logistics flow')
+    }
+    return response.json()
+  },
+
+  bulkCreateLogisticsFlows: async (
+    body: BulkCreateLogisticsFlowsRequest
+  ): Promise<BulkCreateLogisticsFlowsResponse> => {
+    const response = await fetchWithLogging('/api/logistics/flows/bulk', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to bulk create logistics flows')
+    }
+    return response.json()
+  },
+
+  bulkMultiCreateLogisticsFlows: async (
+    body: BulkMultiCreateLogisticsFlowsRequest
+  ): Promise<BulkMultiCreateLogisticsFlowsResponse> => {
+    const response = await fetchWithLogging('/api/logistics/flows/bulk-multi', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to bulk-multi create logistics flows')
+    }
+    return response.json()
+  },
+
+  updateLogisticsFlow: async (
+    id: number,
+    body: UpdateLogisticsFlowRequest
+  ): Promise<LogisticsFlow> => {
+    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update logistics flow')
+    }
+    return response.json()
+  },
+
+  deleteLogisticsFlow: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete logistics flow: ${response.statusText}`)
+    return response.json()
+  },
+
+  listLogisticsClaims: async (): Promise<LocationDemandClaim[]> => {
+    const response = await fetchWithLogging('/api/logistics/claims', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list logistics claims: ${response.statusText}`)
+    return response.json()
+  },
+
+  createLogisticsClaim: async (
+    body: CreateLocationDemandClaimRequest
+  ): Promise<LocationDemandClaim> => {
+    const response = await fetchWithLogging('/api/logistics/claims', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create claim')
+    }
+    return response.json()
+  },
+
+  updateLogisticsClaim: async (
+    id: number,
+    body: UpdateLocationDemandClaimRequest
+  ): Promise<LocationDemandClaim> => {
+    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update claim')
+    }
+    return response.json()
+  },
+
+  deleteLogisticsClaim: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete claim: ${response.statusText}`)
+    return response.json()
+  },
+
+  getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
+    const response = await fetchWithLogging('/api/supply-planning/planets', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get supply planets: ${response.statusText}`)
+    return response.json()
+  },
+
+  // ==================== BURN & REPAIR ====================
+
+  getBurnRepairMyBases: async (): Promise<BurnRepairMyBasesResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/my-bases', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get burn/repair data: ${response.statusText}`)
+    return response.json()
+  },
+
+  // CSV-encode the planning exclusion list — empty/missing => no param.
+  // Inlined here (rather than in a util) so the api.ts file stays self-
+  // contained for the corp endpoints.
+
+  getBurnRepairCorp: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp burn/repair: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorpBuildings: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpBuildingsResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp/buildings${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp buildings: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorpWorkforce: async (
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpWorkforceResponse> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp/workforce${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairShoppingList: async (
+    body: BurnRepairShoppingListRequest
+  ): Promise<BurnRepairShoppingListResponse> => {
+    const response = await fetchWithLogging('/api/burn-repair/shopping-list', {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get shopping list: ${response.statusText}`)
+    return response.json()
+  },
+}
+
+interface SupplyPlanetSummary {
+  id: number
+  planetNaturalId: string
+  planetName: string
+  lastSyncedAt: string
 }
 
 // Types for KAWA sheet preview and sync
@@ -4685,11 +5104,13 @@ export const api = {
   },
   fioInventory: {
     get: () => realApi.getFioInventory(),
-    sync: () => realApi.syncFioInventory(),
     getLastSync: () => realApi.getFioLastSync(),
     getStats: () => realApi.getFioStats(),
     getStorageLocations: () => realApi.getFioStorageLocations(),
     clear: () => realApi.clearFioInventory(),
+  },
+  fioSync: {
+    startAll: () => realApi.startFioSyncAll(),
   },
   sellOrders: {
     list: () => realApi.getSellOrders(),
@@ -4815,8 +5236,12 @@ export const api = {
     create: (request: CreatePriceRequest) => realApi.createPrice(request),
     update: (id: number, request: UpdatePriceRequest) => realApi.updatePrice(id, request),
     delete: (id: number) => realApi.deletePrice(id),
-    getEffective: (exchange: string, locationId: string, currency: Currency) =>
-      realApi.getEffectivePrices(exchange, locationId, currency),
+    getEffective: (
+      exchange: string,
+      locationId: string,
+      currency: Currency,
+      options?: { version?: number }
+    ) => realApi.getEffectivePrices(exchange, locationId, currency, options),
   },
   priceAdjustments: {
     list: (exchange?: string, location?: string, activeOnly?: boolean) =>
@@ -4905,6 +5330,49 @@ export const api = {
     delete: (id: number) => realApi.deleteSavedFilter(id),
     togglePin: (id: number) => realApi.togglePinSavedFilter(id),
   },
+  corpOverviewViews: {
+    list: () => realApi.listCorpOverviewViews(),
+    getPinned: () => realApi.getPinnedCorpOverviewViews(),
+    browse: (search?: string, page?: number) => realApi.browseCorpOverviewViews(search, page),
+    get: (id: number) => realApi.getCorpOverviewView(id),
+    create: (request: CreateCorpOverviewViewRequest) => realApi.createCorpOverviewView(request),
+    update: (id: number, request: UpdateCorpOverviewViewRequest) =>
+      realApi.updateCorpOverviewView(id, request),
+    delete: (id: number) => realApi.deleteCorpOverviewView(id),
+    togglePin: (id: number) => realApi.togglePinCorpOverviewView(id),
+  },
+  corpSnapshots: {
+    query: (req: SnapshotQueryRequest) => realApi.queryCorpSnapshots(req),
+  },
+  supplyPlanning: {
+    getPlanets: () => realApi.getSupplyPlanets(),
+  },
+  burnRepair: {
+    myBases: () => realApi.getBurnRepairMyBases(),
+    corp: (excludedUserIds?: number[]) => realApi.getBurnRepairCorp(excludedUserIds),
+    corpBuildings: (excludedUserIds?: number[]) =>
+      realApi.getBurnRepairCorpBuildings(excludedUserIds),
+    corpWorkforce: (excludedUserIds?: number[]) =>
+      realApi.getBurnRepairCorpWorkforce(excludedUserIds),
+    shoppingList: (body: BurnRepairShoppingListRequest) => realApi.getBurnRepairShoppingList(body),
+  },
+  logistics: {
+    graph: () => realApi.getLogisticsGraph(),
+    listFlows: () => realApi.listLogisticsFlows(),
+    createFlow: (body: CreateLogisticsFlowRequest) => realApi.createLogisticsFlow(body),
+    bulkCreateFlows: (body: BulkCreateLogisticsFlowsRequest) =>
+      realApi.bulkCreateLogisticsFlows(body),
+    bulkMultiCreateFlows: (body: BulkMultiCreateLogisticsFlowsRequest) =>
+      realApi.bulkMultiCreateLogisticsFlows(body),
+    updateFlow: (id: number, body: UpdateLogisticsFlowRequest) =>
+      realApi.updateLogisticsFlow(id, body),
+    deleteFlow: (id: number) => realApi.deleteLogisticsFlow(id),
+    listClaims: () => realApi.listLogisticsClaims(),
+    createClaim: (body: CreateLocationDemandClaimRequest) => realApi.createLogisticsClaim(body),
+    updateClaim: (id: number, body: UpdateLocationDemandClaimRequest) =>
+      realApi.updateLogisticsClaim(id, body),
+    deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
+  },
 }
 
 // Export types for use in components
@@ -4988,4 +5456,12 @@ export type {
   SavedMarketFilter,
   CreateSavedFilterRequest,
   UpdateSavedFilterRequest,
+  // Corp Overview Views
+  CorpOverviewView,
+  CreateCorpOverviewViewRequest,
+  UpdateCorpOverviewViewRequest,
+  // Corp Snapshots
+  SnapshotQueryRequest,
+  SnapshotSeriesResponse,
+  SupplyPlanetSummary,
 }

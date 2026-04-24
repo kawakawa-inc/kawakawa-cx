@@ -1,7 +1,7 @@
 import { Controller, Get, Route, Security, Tags, Request } from 'tsoa'
 import type { SyncState } from '@kawakawa/types'
 import type { JwtPayload } from '../utils/jwt.js'
-import { syncService } from '../services/syncService.js'
+import { syncService } from '@kawakawa/services/sync-state'
 
 @Route('sync')
 @Tags('Sync')

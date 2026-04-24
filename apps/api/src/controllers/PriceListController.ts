@@ -7,11 +7,13 @@ import {
   Post,
   Put,
   Query,
+  Request,
   Route,
   Security,
   SuccessResponse,
   Tags,
 } from 'tsoa'
+import type { Request as ExpressRequest } from 'express'
 import type { Currency } from '@kawakawa/types'
 import { db, prices, priceLists, fioCommodities, fioLocations } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
@@ -261,10 +263,11 @@ export class PriceListController extends Controller {
    */
   @Get('export/{exchange}')
   public async exportBasePrices(
+    @Request() req: ExpressRequest,
     @Path() exchange: string,
     @Query() location?: string,
     @Query() version?: number
-  ): Promise<string> {
+  ): Promise<void> {
     const resolvedVersion = await resolveVersion(exchange, version)
     const conditions = [
       eq(prices.priceListCode, exchange.toUpperCase()),
@@ -319,13 +322,15 @@ export class PriceListController extends Controller {
       '\n'
     )
 
-    this.setHeader('Content-Type', 'text/csv')
-    this.setHeader(
+    // Write raw CSV through Express directly — tsoa would otherwise JSON-encode
+    // the returned string, escaping newlines to "\n" literals in the file.
+    const res = req.res!
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader(
       'Content-Disposition',
       `attachment; filename="${exchange.toUpperCase()}-base-prices.csv"`
     )
-
-    return csv
+    res.status(200).send(csv)
   }
 
   /**
@@ -335,10 +340,11 @@ export class PriceListController extends Controller {
    */
   @Get('export/{exchange}/{locationId}/effective')
   public async exportEffectivePrices(
+    @Request() req: ExpressRequest,
     @Path() exchange: string,
     @Path() locationId: string,
     @Query() version?: number
-  ): Promise<string> {
+  ): Promise<void> {
     // Get currency and current version from price list
     const priceList = await db
       .select({ currency: priceLists.currency, currentVersion: priceLists.currentVersion })
@@ -386,13 +392,13 @@ export class PriceListController extends Controller {
       '\n'
     )
 
-    this.setHeader('Content-Type', 'text/csv')
-    this.setHeader(
+    const res = req.res!
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader(
       'Content-Disposition',
       `attachment; filename="${exchange.toUpperCase()}-${locationId}-effective-prices.csv"`
     )
-
-    return csv
+    res.status(200).send(csv)
   }
 
   // ============================================================

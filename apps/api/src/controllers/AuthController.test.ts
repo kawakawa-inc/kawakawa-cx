@@ -73,7 +73,7 @@ vi.mock('../utils/permissionService.js', () => ({
   hasPermission: vi.fn().mockResolvedValue(false),
 }))
 
-vi.mock('../services/notificationService.js', () => ({
+vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: { create: vi.fn() },
 }))
 

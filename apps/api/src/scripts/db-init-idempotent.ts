@@ -15,9 +15,7 @@ import {
 } from '../db/index.js'
 import { sql } from 'drizzle-orm'
 import { createLogger } from '../utils/logger.js'
-import { syncCommodities } from '../services/fio/sync-commodities.js'
-import { syncLocations } from '../services/fio/sync-locations.js'
-import { syncStations } from '../services/fio/sync-stations.js'
+import { syncCommodities, syncLocations, syncStations } from '@kawakawa/services/fio'
 
 const log = createLogger({ script: 'db-init-idempotent' })
 

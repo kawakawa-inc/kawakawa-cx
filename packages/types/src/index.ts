@@ -1,4 +1,5 @@
 // Shared types for Kawakawa CX
+export * from './supply.js'
 
 export type Currency = 'ICA' | 'CIS' | 'AIC' | 'NCC'
 
@@ -438,6 +439,9 @@ export type NotificationType =
   | 'user_auto_approved'
   | 'user_approved'
   | 'user_rejected'
+  | 'sync_queued'
+  | 'sync_completed'
+  | 'sync_failed'
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'reservation_placed',
@@ -453,6 +457,9 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'user_auto_approved',
   'user_approved',
   'user_rejected',
+  'sync_queued',
+  'sync_completed',
+  'sync_failed',
 ]
 
 export interface Notification {
@@ -727,6 +734,12 @@ export * from './xit.js'
 // ==================== SHOPPING LISTS ====================
 
 export * from './shopping-list.js'
+
+// ==================== CORP OVERVIEW VIEWS ====================
+
+export * from './corp-metrics.js'
+export * from './corp-snapshots.js'
+export * from './corp-overview-view.js'
 
 // ==================== SAVED MARKET FILTERS ====================
 

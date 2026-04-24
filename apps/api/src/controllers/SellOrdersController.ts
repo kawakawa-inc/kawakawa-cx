@@ -12,7 +12,14 @@ import {
   Request,
   SuccessResponse,
 } from 'tsoa'
-import type { Currency, OrderType, PricingMode, SellOrderLimitMode } from '@kawakawa/types'
+import type {
+  Currency,
+  OrderType,
+  PricingMode,
+  SellOrderLimitMode,
+  BuyOrderSourceMode,
+  DemandSource,
+} from '@kawakawa/types'
 import { db, sellOrders, fioCommodities, fioLocations } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
@@ -31,22 +38,24 @@ interface SellOrderResponse {
   locationId: string
   price: number
   currency: Currency
-  priceListCode: string | null // null = custom/fixed price, set = dynamic pricing from price list
+  priceListCode: string | null
   orderType: OrderType
   limitMode: SellOrderLimitMode
   limitQuantity: number | null
+  reserveSource: BuyOrderSourceMode
+  reserveDemandSource: DemandSource | null
+  reserveTargetDays: number | null
   fioQuantity: number
   availableQuantity: number
-  activeReservationCount: number // count of pending/confirmed reservations
-  reservedQuantity: number // sum of quantities in active reservations
-  fulfilledQuantity: number // sum of quantities in fulfilled reservations
-  remainingQuantity: number // availableQuantity - reservedQuantity - fulfilledQuantity
-  fioUploadedAt: string | null // When seller's FIO inventory was last synced from game
-  // Dynamic pricing fields
+  activeReservationCount: number
+  reservedQuantity: number
+  fulfilledQuantity: number
+  remainingQuantity: number
+  fioUploadedAt: string | null
   pricingMode: PricingMode
-  effectivePrice: number | null // Calculated price from price list (null if not available)
-  isFallback: boolean // True if price came from price list's default location
-  priceLocationId: string | null // The location the price was fetched from (when isFallback)
+  effectivePrice: number | null
+  isFallback: boolean
+  priceLocationId: string | null
 }
 
 interface CreateSellOrderRequest {
@@ -54,19 +63,23 @@ interface CreateSellOrderRequest {
   locationId: string
   price: number
   currency: Currency
-  priceListCode?: string | null // null or undefined = custom/fixed price, set = dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
+  reserveSource?: BuyOrderSourceMode
+  reserveDemandSource?: DemandSource
+  reserveTargetDays?: number
 }
 
 interface UpdateSellOrderRequest {
   price?: number
   currency?: Currency
-  priceListCode?: string | null // null = switch to custom pricing, string = switch to dynamic pricing
+  priceListCode?: string | null
   orderType?: OrderType
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
+  reserveTargetDays?: number
 }
 
 /**
@@ -162,6 +175,9 @@ export class SellOrdersController extends Controller {
         orderType: order.orderType,
         limitMode: order.limitMode,
         limitQuantity: order.limitQuantity,
+        reserveSource: order.reserveSource,
+        reserveDemandSource: order.reserveDemandSource,
+        reserveTargetDays: order.reserveTargetDays,
         fioQuantity: quantityInfo.fioQuantity,
         availableQuantity: quantityInfo.availableQuantity,
         activeReservationCount: quantityInfo.activeReservationCount,
@@ -249,6 +265,9 @@ export class SellOrdersController extends Controller {
       orderType: order.orderType,
       limitMode: order.limitMode,
       limitQuantity: order.limitQuantity,
+      reserveSource: order.reserveSource,
+      reserveDemandSource: order.reserveDemandSource,
+      reserveTargetDays: order.reserveTargetDays,
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -284,6 +303,19 @@ export class SellOrdersController extends Controller {
       throw Forbidden(
         `You do not have permission to create ${getOrderTypeDisplay(orderType)} orders`
       )
+    }
+
+    const reserveSource = body.reserveSource ?? 'manual'
+
+    // Validate demand reserve requirements
+    if (reserveSource === 'demand') {
+      if (
+        body.reserveDemandSource === 'burn' &&
+        (!body.reserveTargetDays || body.reserveTargetDays <= 0)
+      ) {
+        this.setStatus(400)
+        throw BadRequest('reserveTargetDays must be > 0 for burn demand reserves')
+      }
     }
 
     // Validate commodity exists
@@ -356,8 +388,12 @@ export class SellOrdersController extends Controller {
         currency: body.currency,
         priceListCode,
         orderType,
-        limitMode: body.limitMode ?? 'none',
+        limitMode: reserveSource === 'demand' ? 'reserve' : (body.limitMode ?? 'none'),
         limitQuantity: body.limitQuantity ?? null,
+        reserveSource,
+        reserveDemandSource:
+          reserveSource === 'demand' ? (body.reserveDemandSource ?? 'burn') : null,
+        reserveTargetDays: reserveSource === 'demand' ? (body.reserveTargetDays ?? null) : null,
       })
       .returning()
 
@@ -415,6 +451,9 @@ export class SellOrdersController extends Controller {
       orderType: newOrder.orderType,
       limitMode: newOrder.limitMode,
       limitQuantity: newOrder.limitQuantity,
+      reserveSource: newOrder.reserveSource,
+      reserveDemandSource: newOrder.reserveDemandSource,
+      reserveTargetDays: newOrder.reserveTargetDays,
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,
@@ -494,7 +533,12 @@ export class SellOrdersController extends Controller {
     if (body.priceListCode !== undefined) updateData.priceListCode = body.priceListCode
     if (body.orderType !== undefined) updateData.orderType = body.orderType
     if (body.limitMode !== undefined) updateData.limitMode = body.limitMode
-    if (body.limitQuantity !== undefined) updateData.limitQuantity = body.limitQuantity
+    if (body.limitQuantity !== undefined && existing.reserveSource === 'manual') {
+      updateData.limitQuantity = body.limitQuantity
+    }
+    if (body.reserveTargetDays !== undefined && existing.reserveSource === 'demand') {
+      updateData.reserveTargetDays = body.reserveTargetDays
+    }
 
     // Update
     const [updated] = await db
@@ -555,6 +599,9 @@ export class SellOrdersController extends Controller {
       orderType: updated.orderType,
       limitMode: updated.limitMode,
       limitQuantity: updated.limitQuantity,
+      reserveSource: updated.reserveSource,
+      reserveDemandSource: updated.reserveDemandSource,
+      reserveTargetDays: updated.reserveTargetDays,
       fioQuantity: quantityInfo.fioQuantity,
       availableQuantity: quantityInfo.availableQuantity,
       activeReservationCount: quantityInfo.activeReservationCount,

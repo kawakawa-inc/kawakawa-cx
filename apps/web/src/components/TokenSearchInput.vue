@@ -62,6 +62,23 @@
           <span v-if="suggestion.hint" class="suggestion-hint">{{ suggestion.hint }}</span>
         </div>
       </div>
+      <div v-else-if="showHelp" class="suggestions-dropdown help-dropdown" :style="dropdownStyle">
+        <div class="help-title">Start typing to search. You can add:</div>
+        <div v-for="(tok, i) in helpTokens" :key="i" class="help-row">
+          <v-chip
+            :color="tok.color ?? 'grey'"
+            :prepend-icon="tok.icon"
+            size="x-small"
+            class="help-chip"
+          >
+            {{ tok.label }}
+          </v-chip>
+          <div class="help-body">
+            <code class="help-example">{{ tok.example }}</code>
+            <span class="help-desc">{{ tok.description }}</span>
+          </div>
+        </div>
+      </div>
     </Teleport>
   </div>
 </template>
@@ -73,9 +90,20 @@ import { commodityService } from '../services/commodityService'
 import { locationService } from '../services/locationService'
 import { useShoppingListStore } from '../stores/shoppingList'
 
+export type SearchChipType =
+  | 'commodity'
+  | 'location'
+  | 'source'
+  | 'destination'
+  | 'user'
+  | 'itemType'
+  | 'shoppingList'
+  | 'category'
+  | 'storage'
+
 export interface SearchChip {
-  type: 'commodity' | 'location' | 'user' | 'itemType' | 'shoppingList'
-  value: string // Actual value (ticker, location ID, username, 'sell'/'buy')
+  type: SearchChipType
+  value: string // Actual value (ticker, location ID, username, 'sell'/'buy', category key, storage type)
   display: string // Display text
   color?: string // Chip color — derived from type if not provided
   shoppingListData?: {
@@ -83,6 +111,26 @@ export interface SearchChip {
     name?: string
     origin?: string // Location ID from XIT origin
   }
+}
+
+export interface ExtraSuggestionType {
+  type: SearchChipType
+  typeLabel: string
+  color: string
+  options: { value: string; display: string }[]
+}
+
+/**
+ * One row shown in the empty-state cheat sheet. Pages describe the tokens
+ * they understand so the help dropdown stays true to what each search
+ * actually accepts.
+ */
+export interface HelpToken {
+  label: string
+  color?: string
+  example: string
+  description: string
+  icon?: string
 }
 
 // Initialize shopping list store
@@ -95,17 +143,28 @@ const chipColor = (type: SearchChip['type'], value?: string): string => {
       return 'primary'
     case 'location':
       return 'secondary'
+    case 'source':
+      return 'blue'
+    case 'destination':
+      return 'green'
     case 'user':
       return 'info'
     case 'itemType':
       return value === 'buy' ? 'warning' : 'success'
     case 'shoppingList':
       return 'purple'
+    case 'category':
+      return 'teal'
+    case 'storage':
+      return 'orange'
+    default:
+      // Check extra suggestion types for color
+      return props.extraSuggestionTypes?.find(e => e.type === type)?.color ?? 'grey'
   }
 }
 
 interface Suggestion {
-  type: 'commodity' | 'location' | 'user' | 'itemType'
+  type: SearchChipType
   typeLabel: string
   value: string
   display: string
@@ -122,6 +181,13 @@ interface Props {
   getLocationDisplay?: (locationId: string) => string
   /** Function to get localized commodity name (for search matching) */
   getCommodityName?: (ticker: string) => string
+  /** Additional suggestion types (e.g., category, storage) */
+  extraSuggestionTypes?: ExtraSuggestionType[]
+  /**
+   * Empty-state cheat sheet shown on focus when the input is blank. Pages
+   * declare what tokens they understand so the help stays accurate.
+   */
+  helpTokens?: HelpToken[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -130,7 +196,13 @@ const props = withDefaults(defineProps<Props>(), {
   getCommodityDisplay: (ticker: string) => ticker,
   getLocationDisplay: (locationId: string) => locationId,
   getCommodityName: (ticker: string) => ticker,
+  extraSuggestionTypes: () => [],
+  helpTokens: () => [],
 })
+
+const showHelp = computed(
+  () => isFocused.value && inputText.value.trim().length === 0 && props.helpTokens.length > 0
+)
 
 const emit = defineEmits<{
   (e: 'update:chips', chips: SearchChip[]): void
@@ -391,8 +463,37 @@ const suggestions = computed((): Suggestion[] => {
     if (results.length >= 15) break
   }
 
-  // Sort: by type (Commodity > Location > User > ItemType), then by match quality
-  const typeOrder: Record<string, number> = { commodity: 0, location: 1, user: 2, itemType: 3 }
+  // Extra suggestion types (category, storage, etc.)
+  for (const extra of props.extraSuggestionTypes) {
+    for (const opt of extra.options) {
+      if (
+        opt.value.toLowerCase().startsWith(lowerWord) ||
+        opt.display.toLowerCase().startsWith(lowerWord) ||
+        opt.display.toLowerCase().includes(lowerWord)
+      ) {
+        if (!results.find(r => r.type === extra.type && r.value === opt.value)) {
+          results.push({
+            type: extra.type,
+            typeLabel: extra.typeLabel,
+            value: opt.value,
+            display: opt.display,
+            color: extra.color,
+          })
+        }
+      }
+      if (results.length >= 15) break
+    }
+  }
+
+  // Sort: by type (Commodity > Location > User > ItemType > extras), then by match quality
+  const typeOrder: Record<string, number> = {
+    commodity: 0,
+    location: 1,
+    category: 2,
+    storage: 3,
+    user: 4,
+    itemType: 5,
+  }
   results.sort((a, b) => {
     // First sort by type
     const typeCompare = typeOrder[a.type] - typeOrder[b.type]
@@ -440,9 +541,9 @@ const getCurrentWord = (): string => {
 const selectSuggestion = (suggestion: Suggestion) => {
   const chip = createChipFromSuggestion(suggestion)
   if (chip) {
-    // Remove existing itemType chip if adding a new one
-    if (chip.type === 'itemType') {
-      chips.value = chips.value.filter(c => c.type !== 'itemType')
+    // Remove existing chip of same type for singular types (itemType, category)
+    if (chip.type === 'itemType' || chip.type === 'category') {
+      chips.value = chips.value.filter(c => c.type !== chip.type)
     }
 
     chips.value.push(chip)
@@ -489,6 +590,18 @@ const createChipFromSuggestion = (suggestion: Suggestion): SearchChip | null => 
         display: suggestion.value === 'buy' ? 'Buy' : 'Sell',
         color: chipColor('itemType', suggestion.value),
       }
+    default: {
+      // Extra suggestion types (category, storage, etc.)
+      const extra = props.extraSuggestionTypes.find(e => e.type === suggestion.type)
+      if (extra) {
+        return {
+          type: suggestion.type,
+          value: suggestion.value,
+          display: suggestion.display,
+          color: extra.color,
+        }
+      }
+    }
   }
   return null
 }
@@ -761,9 +874,9 @@ defineExpose({
   addChip: (chip: SearchChip) => {
     // Deduplicate: skip if same type+value already exists
     if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-    // Replace any existing itemType chip
-    if (chip.type === 'itemType') {
-      chips.value = chips.value.filter(c => c.type !== 'itemType')
+    // Replace existing chip for singular types (itemType, category)
+    if (chip.type === 'itemType' || chip.type === 'category') {
+      chips.value = chips.value.filter(c => c.type !== chip.type)
     }
     chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
     emitChanges()
@@ -894,5 +1007,49 @@ defineExpose({
   margin-left: auto;
   font-size: 12px;
   color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+.suggestions-dropdown.help-dropdown {
+  padding: 10px 12px;
+}
+
+.help-dropdown .help-title {
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  margin-bottom: 8px;
+}
+
+.help-dropdown .help-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.help-dropdown .help-chip {
+  flex-shrink: 0;
+  margin-top: 2px;
+  min-width: 80px;
+  justify-content: center;
+}
+
+.help-dropdown .help-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.help-dropdown .help-example {
+  font-family: ui-monospace, monospace;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  padding: 1px 6px;
+  border-radius: 3px;
+  align-self: flex-start;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.help-dropdown .help-desc {
+  color: rgba(var(--v-theme-on-surface), 0.7);
 }
 </style>

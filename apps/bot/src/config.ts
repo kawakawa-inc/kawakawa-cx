@@ -53,12 +53,3 @@ export async function getWebUrl(): Promise<string> {
 
   return cachedWebUrl
 }
-
-/**
- * Invalidate cached configuration.
- * Call this when settings are updated.
- */
-export function invalidateConfig(): void {
-  cachedConfig = null
-  cachedWebUrl = null
-}

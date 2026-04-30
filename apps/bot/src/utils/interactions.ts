@@ -8,7 +8,6 @@ import {
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
   type ModalSubmitInteraction,
-  type StringSelectMenuInteraction,
   type ButtonInteraction,
   type Message,
   type ModalBuilder,
@@ -71,28 +70,6 @@ export async function awaitComponent(
       time: timeout,
     })
     .catch(() => null)
-}
-
-/**
- * Await a select menu interaction.
- *
- * @param message - The message containing the select menu
- * @param customId - The custom ID of the select menu
- * @param userId - The user ID to filter for
- * @param timeout - Timeout in milliseconds (default: 1 minute)
- * @returns The select menu interaction, or null if timed out
- */
-export async function awaitSelectMenu(
-  message: Message,
-  customId: string,
-  userId: string,
-  timeout: number = COMPONENT_TIMEOUT
-): Promise<StringSelectMenuInteraction | null> {
-  const interaction = await awaitComponent(message, customId, userId, timeout)
-  if (interaction?.isStringSelectMenu()) {
-    return interaction
-  }
-  return null
 }
 
 /**

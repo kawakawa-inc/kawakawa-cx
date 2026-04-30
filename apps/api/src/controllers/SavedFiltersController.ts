@@ -196,9 +196,9 @@ export class SavedFiltersController extends Controller {
       throw BadRequest('Filter data is required')
     }
 
-    const validPrivacyValues = ['private', 'link', 'public']
+    const validPrivacyValues = ['private', 'unlisted', 'public']
     if (!validPrivacyValues.includes(body.privacy)) {
-      throw BadRequest('Privacy must be one of: private, link, public')
+      throw BadRequest('Privacy must be one of: private, unlisted, public')
     }
 
     const [inserted] = await db
@@ -273,9 +273,9 @@ export class SavedFiltersController extends Controller {
     }
 
     if (body.privacy !== undefined) {
-      const validPrivacyValues = ['private', 'link', 'public']
+      const validPrivacyValues = ['private', 'unlisted', 'public']
       if (!validPrivacyValues.includes(body.privacy)) {
-        throw BadRequest('Privacy must be one of: private, link, public')
+        throw BadRequest('Privacy must be one of: private, unlisted, public')
       }
       updates.privacy = body.privacy
     }

@@ -156,5 +156,3 @@ export const permissionService = {
   invalidatePermissionCache,
   clearPermissionCache,
 }
-
-export default permissionService

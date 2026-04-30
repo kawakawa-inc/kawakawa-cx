@@ -1,3 +1,2 @@
-export { createLogger, logger, redactObject, stripEmoji, type Logger } from './logger.js'
-import loggerDefault from './logger.js'
-export default loggerDefault
+export { createLogger, redactObject, stripEmoji, type Logger } from './logger.js'
+export { default } from './logger.js'

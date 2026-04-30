@@ -15,7 +15,7 @@ export {
   clearRepairableTickersCache,
   toPlanetInput,
 } from './planet-data-helpers.js'
-export { computeCorpStock, captureCorpStockSnapshot } from './corp-stock.js'
+export { computeCorpStock, computeCorpListedStock, captureCorpStockSnapshot } from './corp-stock.js'
 export {
   resolveActiveMembers,
   resolveDisplayUsernames,

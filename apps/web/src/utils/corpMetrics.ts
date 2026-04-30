@@ -2,7 +2,7 @@
  * Corp Overview metric computation + formatting.
  *
  * Pure functions so the dashboard and the card editor's live preview can share
- * them. All derived values (gap, netDaily, daysRemaining, daysOfCover, etc.)
+ * them. All derived values (gap, netDaily, daysRemaining, daysListed, etc.)
  * flow from two inputs only: the `/burn-repair/corp` response and the
  * user-configured `repairDays`. No global refs, no Pinia.
  */
@@ -12,7 +12,6 @@ import type {
   BurnRepairCorpPerUserRow,
   BurnRepairCorpResponse,
   CorpMetricFormat,
-  CorpMetricGroupBy,
   MetricKey,
   ViewCardFilter,
   ViewCardSort,
@@ -31,11 +30,18 @@ export interface TickerRow {
   netDaily: number
   gap: number
   inputGap: number
+  /** Corp-wide on-hand inventory across every active member's storages. */
   stock: number
+  /** Sum of remaining sell-order quantities (FIO-aware). */
+  listedStock: number
   /** null when there is no deficit (production covers consumption). */
   daysRemaining: number | null
-  /** null when consumption is zero. "Days stock would last if production stopped." */
-  daysOfCover: number | null
+  /**
+   * `listedStock / consumptionDaily` — how many days of consumption the corp
+   * currently has listed for sale. Null when consumption is zero (the metric
+   * has no meaning without a denominator).
+   */
+  daysListed: number | null
 }
 
 /** One row per (user, ticker). */
@@ -66,6 +72,7 @@ function repairPerDayFrom(repairTotal: number, repairDays: number): number {
 function buildTickerRow(
   m: BurnRepairCorpMaterial,
   stock: number,
+  listedStock: number,
   repairDays: number
 ): TickerRow {
   const repairPerDay = repairPerDayFrom(m.repairTotal, repairDays)
@@ -74,9 +81,11 @@ function buildTickerRow(
   const netDaily = netDailyNoRepair - repairPerDay
   const gap = consumptionDaily - m.productionDaily
   const daysRemaining = gap > 0 ? (stock > 0 ? stock / gap : 0) : null
-  // daysOfCover: worst-case runway assuming production stops. Always defined
-  // when consumption exists, regardless of surplus/deficit.
-  const daysOfCover = consumptionDaily > 0 ? stock / consumptionDaily : null
+  // daysListed: how long the corp's currently-listed stock would cover
+  // consumption. Uses listedStock (sell-order remaining qty), not on-hand —
+  // pairs with `daysRemaining` so users can see "how long until we run out"
+  // alongside "how much of that demand is already on the market."
+  const daysListed = consumptionDaily > 0 ? listedStock / consumptionDaily : null
 
   return {
     commodityTicker: m.commodityTicker,
@@ -91,8 +100,9 @@ function buildTickerRow(
     gap,
     inputGap: gap,
     stock,
+    listedStock,
     daysRemaining,
-    daysOfCover,
+    daysListed,
   }
 }
 
@@ -132,10 +142,13 @@ export function computeTickerRows(
   repairDays: number
 ): TickerRow[] {
   const surplus = corp.availableSurplus ?? {}
+  const listed = corp.listedStock ?? {}
   const rows: TickerRow[] = []
   for (const m of corp.materials) {
     if (tickerSet && !tickerSet.has(m.commodityTicker)) continue
-    rows.push(buildTickerRow(m, surplus[m.commodityTicker] ?? 0, repairDays))
+    rows.push(
+      buildTickerRow(m, surplus[m.commodityTicker] ?? 0, listed[m.commodityTicker] ?? 0, repairDays)
+    )
   }
   return rows
 }
@@ -160,7 +173,7 @@ export function computeUserTickerRows(
  * Read a metric value from a row.
  *
  * Returns a number for numeric metrics, a string for `username`, and
- * null for `daysRemaining` / `daysOfCover` when undefined. The caller decides
+ * null for `daysRemaining` / `daysListed` when undefined. The caller decides
  * how each shape renders — see `formatMetric`.
  */
 export function getMetricValue(row: MetricRow, key: MetricKey): number | string | null {
@@ -169,10 +182,12 @@ export function getMetricValue(row: MetricRow, key: MetricKey): number | string 
       return 'username' in row ? row.username : ''
     case 'daysRemaining':
       return 'daysRemaining' in row ? row.daysRemaining : null
-    case 'daysOfCover':
-      return 'daysOfCover' in row ? row.daysOfCover : null
+    case 'daysListed':
+      return 'daysListed' in row ? row.daysListed : null
     case 'stock':
       return 'stock' in row ? row.stock : 0
+    case 'listedStock':
+      return 'listedStock' in row ? row.listedStock : 0
     case 'burnDaily':
       return row.burnDaily
     case 'inputsDaily':
@@ -276,16 +291,18 @@ function compareBy(a: MetricRow, b: MetricRow, sort: ViewCardSort): number {
 }
 
 /**
- * Apply a card's filters (all AND'd), multi-column sort, and row cap.
+ * Apply a card's filters (all AND'd) and multi-column sort, returning the
+ * full sorted-and-filtered list. Pagination / row-capping is the caller's
+ * responsibility — table cards now slice by page size in their footer rather
+ * than dropping rows here.
  *
  * When `sortBy` is empty, rows are ordered by ticker ascending so output is
  * stable and obvious. When `filters` is empty, every row in scope qualifies.
  */
-export function filterSortAndLimit<T extends MetricRow>(
+export function filterAndSort<T extends MetricRow>(
   rows: T[],
   filters: ViewCardFilter[],
-  sortBy: ViewCardSort[],
-  limit: number
+  sortBy: ViewCardSort[]
 ): T[] {
   const kept =
     filters.length === 0
@@ -305,20 +322,5 @@ export function filterSortAndLimit<T extends MetricRow>(
     })
   }
 
-  return kept.slice(0, Math.max(1, limit))
-}
-
-/**
- * Helper: derive the row type for a given groupBy. Exported so dashboard code
- * can type its array correctly without juggling unions.
- */
-export function computeRowsFor(
-  groupBy: CorpMetricGroupBy,
-  corp: BurnRepairCorpResponse,
-  tickerSet: Set<string> | null,
-  repairDays: number
-): MetricRow[] {
-  return groupBy === 'ticker'
-    ? computeTickerRows(corp, tickerSet, repairDays)
-    : computeUserTickerRows(corp, tickerSet, repairDays)
+  return kept
 }

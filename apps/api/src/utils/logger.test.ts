@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { logger, createLogger, stripEmoji, redactObject } from './logger.js'
+import logger, { createLogger, stripEmoji, redactObject } from './logger.js'
 
 describe('logger', () => {
   describe('logger instance', () => {

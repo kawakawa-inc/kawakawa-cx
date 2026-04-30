@@ -495,8 +495,16 @@
           :corp-buildings="corpBuildings"
           :corp-workforce="corpWorkforce"
           :repair-days="repairDays"
-          :excluded-user-ids="state.corpOverviewExcludedUserIds"
-          @update:excluded-user-ids="v => (state.corpOverviewExcludedUserIds = v)"
+          :local-by-view="state.corpOverviewLocalByView"
+          @update:excluded-user-ids="onUpdateExcludedUserIds"
+          @update:materials-table-tickers="onUpdateMaterialsTableTickers"
+          @update:card-state="onCardStateChange"
+          @update:cards="onUpdateCards"
+          @update:view-name="onUpdateViewName"
+          @update:view-privacy="onUpdateViewPrivacy"
+          @update:view-tickers="onUpdateViewTickers"
+          @update:materials-table-columns="onUpdateMaterialsTableColumns"
+          @update:local="onUpdateLocal"
           @copy-csv="onCorpCopyCsv"
           @snackbar="onCorpSnackbar"
         />
@@ -629,10 +637,15 @@ import type {
   BurnRepairCorpResponse,
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
-  BurnRepairCorpMaterial,
   BurnRepairShoppingListResponse,
   Currency,
+  FilterPrivacy,
+  MetricKey,
+  ViewCard,
 } from '@kawakawa/types'
+import { CORP_METRIC_DEFS } from '@kawakawa/types'
+import { getMetricValue, type TickerRow } from '../utils/corpMetrics'
+import type { CardLocalState, LocalViewState } from '../utils/corpOverviewLocal'
 
 interface PriceListLite {
   code: string
@@ -663,8 +676,20 @@ const { state } = usePageState('burn-repair', {
   /** Per-planet override for the price lookup location; empty/missing = use price list default */
   myBasesPricesFromByPlanet: {} as Record<string, string>,
   corpOverviewViewId: -1 as number, // -1 = built-in "All" view
-  /** User IDs the user has manually excluded from corp aggregation for planning. */
-  corpOverviewExcludedUserIds: [] as number[],
+  /**
+   * Per-view Local working copy of the Corp Overview View. Replaces the
+   * previous trio of `corpOverviewExcludedUserIds`, `MaterialsTickerFilter`,
+   * and `CardState` keys — all three folded into one structured per-view
+   * blob so view-switching keeps each view's state cleanly isolated and the
+   * dirty-vs-Saved diff has a single source of truth.
+   *
+   * Initialized lazily by the panel from the Saved view on first open;
+   * subsequent edits to exclusions, the materials-table filter, or per-card
+   * pagination/filters mutate this Local entry. PR 5 hooks up the global
+   * Save / Save As / Discard buttons to flush the savable subset back to
+   * Saved.
+   */
+  corpOverviewLocalByView: {} as Record<number, LocalViewState>,
   shoppingListOrigin: '',
   shoppingListBase: '',
   shoppingListDays: 7,
@@ -802,10 +827,6 @@ const myBasesHeaders = computed(() => [
   },
 ])
 
-function corpAvailableFor(ticker: string): number {
-  return corpData.value?.availableSurplus?.[ticker] ?? 0
-}
-
 const shoppingListHeaders = [
   { title: 'Material', key: 'commodityTicker', sortable: false },
   { title: 'Demand', key: 'demand', sortable: false },
@@ -922,8 +943,10 @@ function priceFor(planetId: string, ticker: string): number {
 
 async function loadCorpData() {
   // Pass the (possibly empty) planning-exclusion list. Server treats empty as
-  // "include everyone" — same shape as before the feature.
-  const excluded = state.corpOverviewExcludedUserIds
+  // "include everyone" — same shape as before the feature. The list comes
+  // from the active view's Local working copy, so a panel-side toggle of
+  // exclusions immediately reshapes the burn/repair aggregate.
+  const excluded = state.corpOverviewLocalByView[state.corpOverviewViewId]?.excludedUserIds ?? []
   try {
     const [corp, buildings, workforce] = await Promise.all([
       api.burnRepair.corp(excluded),
@@ -938,16 +961,101 @@ async function loadCorpData() {
   }
 }
 
-// Refetch corp data whenever the planning exclusion changes so all three
-// endpoints (materials, buildings, workforce) stay in sync. usePageState
-// persists the list across reloads, so a saved set survives navigation.
+// Refetch corp data whenever the active view's exclusion list changes so all
+// three endpoints (materials, buildings, workforce) stay in sync. Watching
+// the Local map by viewId picks up both view-switches and in-place edits.
 watch(
-  () => state.corpOverviewExcludedUserIds,
+  () => [
+    state.corpOverviewViewId,
+    state.corpOverviewLocalByView[state.corpOverviewViewId]?.excludedUserIds,
+  ],
   () => {
     void loadCorpData()
   },
   { deep: true }
 )
+
+function ensureLocalEntry(viewId: number): LocalViewState {
+  let local = state.corpOverviewLocalByView[viewId]
+  if (!local) {
+    // Empty defaults — the panel will replace this with a properly seeded
+    // copy via `update:local` once the Saved view is loaded. A bare entry is
+    // a safe placeholder for emits that arrive before init (rare but possible
+    // if the user edits state before the views list resolves).
+    local = {
+      name: '',
+      privacy: 'private',
+      tickers: [],
+      excludedUserIds: [],
+      materialsTableColumns: [],
+      materialsTableTickers: [],
+      cards: [],
+      cardState: {},
+      baseUpdatedAt: '',
+    }
+    state.corpOverviewLocalByView[viewId] = local
+  }
+  return local
+}
+
+function onUpdateExcludedUserIds(value: number[]): void {
+  ensureLocalEntry(state.corpOverviewViewId).excludedUserIds = value
+}
+
+function onUpdateMaterialsTableTickers(value: string[]): void {
+  ensureLocalEntry(state.corpOverviewViewId).materialsTableTickers = value
+}
+
+/**
+ * Patch handler for per-card ephemerals (currently just `page`). After the
+ * card-fold, `tickers` and `pageSize` graduated to savable card fields;
+ * everything in `CardLocalState` is purely Local now.
+ */
+function onCardStateChange(payload: { clientId: string; next: CardLocalState }): void {
+  ensureLocalEntry(state.corpOverviewViewId).cardState[payload.clientId] = payload.next
+}
+
+/**
+ * Replace Local's `cards` array. Emitted by the dashboard on any card-level
+ * edit (rename, scope, columns, limit, etc.). The savable-diff in
+ * `isLocalDirty` picks up the change automatically and surfaces the Save
+ * button.
+ */
+function onUpdateCards(cards: ViewCard[]): void {
+  ensureLocalEntry(state.corpOverviewViewId).cards = cards
+}
+
+function onUpdateViewName(value: string): void {
+  ensureLocalEntry(state.corpOverviewViewId).name = value
+}
+
+function onUpdateViewPrivacy(value: FilterPrivacy): void {
+  ensureLocalEntry(state.corpOverviewViewId).privacy = value
+}
+
+function onUpdateViewTickers(value: string[]): void {
+  ensureLocalEntry(state.corpOverviewViewId).tickers = value
+}
+
+function onUpdateMaterialsTableColumns(value: MetricKey[]): void {
+  ensureLocalEntry(state.corpOverviewViewId).materialsTableColumns = value
+}
+
+/**
+ * Replace or remove the LocalViewState for a viewId. Used by the panel for
+ * first-time initialization (seed Local from Saved), stale-snap (silent
+ * resync after Saved moved), unsaved-draft creation (seed empty Local under
+ * `UNSAVED_VIEW_ID`), and the post-save promotion path (drop the unsaved
+ * entry once it's been written to a real view). Passing `null` deletes the
+ * entry; the page-state writer keeps the keyed map clean for both forms.
+ */
+function onUpdateLocal(payload: { viewId: number; local: LocalViewState | null }): void {
+  if (payload.local === null) {
+    delete state.corpOverviewLocalByView[payload.viewId]
+  } else {
+    state.corpOverviewLocalByView[payload.viewId] = payload.local
+  }
+}
 
 async function loadLocations() {
   try {
@@ -1200,33 +1308,18 @@ function copyMyBasesCsv(planet: BurnRepairPlanetSummary): void {
 
 function onCorpCopyCsv(payload: {
   viewName: string
-  materials: BurnRepairCorpMaterial[]
+  rows: TickerRow[]
+  columns: MetricKey[]
 }): void {
-  const headers = [
-    'Material',
-    'Burn/Day',
-    'Inputs/Day',
-    'Repair',
-    'Production/Day',
-    'Net/Day',
-    'Available',
-    'Days Remaining',
-  ]
-  const rows = payload.materials.map(m => {
-    const deficit = m.burnDaily + m.inputsDaily - m.productionDaily
-    const avail = corpAvailableFor(m.commodityTicker)
-    const days = deficit <= 0 ? '' : avail <= 0 ? 0 : avail / deficit
-    return [
-      m.commodityTicker,
-      m.burnDaily,
-      m.inputsDaily,
-      m.repairTotal,
-      m.productionDaily,
-      m.productionDaily - m.burnDaily - m.inputsDaily,
-      avail,
-      days,
-    ]
-  })
+  // Headers + values both flow from the view's saved column order so the CSV
+  // mirrors what's on screen — including the local ticker filter (already
+  // applied to `rows`) and any column-picker tweaks. Material is always the
+  // anchor first column, matching the table itself.
+  const headers = ['Material', ...payload.columns.map(k => CORP_METRIC_DEFS[k]?.label ?? k)]
+  const rows = payload.rows.map(r => [
+    r.commodityTicker,
+    ...payload.columns.map(k => getMetricValue(r, k)),
+  ])
   void copyCsv(headers, rows, `Corp materials (${payload.viewName})`)
 }
 

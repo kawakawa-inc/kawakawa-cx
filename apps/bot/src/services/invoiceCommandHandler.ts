@@ -954,16 +954,6 @@ async function findMatchingOrders(options: FindMatchingOptions): Promise<FindMat
   return { matchedItems, notFoundItems, lineItems }
 }
 
-// ==================== VALIDATION HELPERS ====================
-
-/**
- * Check if input looks like invoice mode (has a user reference)
- */
-export async function looksLikeInvoiceMode(input: string): Promise<boolean> {
-  const parsed = await parseTokens(input, botResolvers)
-  return parsed.user !== null
-}
-
 // ==================== QUANTITY PROMPT ====================
 
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js'

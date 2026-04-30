@@ -234,9 +234,3 @@ export function parseList(input: string): ListParseResult {
 export function isList(input: string): boolean {
   return detectFormat(input.trim()) !== 'unknown'
 }
-
-// Backwards compatibility aliases
-/** @deprecated Use parseList instead */
-export const parseShoppingList = parseList
-/** @deprecated Use isList instead */
-export const isShoppingList = isList

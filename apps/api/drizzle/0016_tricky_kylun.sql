@@ -1,0 +1,1 @@
+ALTER TABLE "corp_overview_views" ADD COLUMN "materials_table_columns" jsonb DEFAULT '[]'::jsonb NOT NULL;

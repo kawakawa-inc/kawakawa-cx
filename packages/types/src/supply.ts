@@ -208,11 +208,22 @@ export interface BurnRepairCorpResponse {
   /** Users with matching roles whose data is older than 30 days (excluded from aggregation) */
   staleUserCount: number
   /**
-   * Corp-wide quantity available for purchase right now — sum of remaining sell-order
-   * quantities across all included users, keyed by ticker. Informational only;
-   * not part of the burn rate math.
+   * Corp-wide on-hand inventory keyed by ticker — sum of FIO-reported quantity
+   * across every storage owned by an included user. Powers `stock` /
+   * `daysRemaining`: those metrics answer "how long does the corp last on
+   * what it already has?", which is an on-hand question, not a "what's listed
+   * for sale?" one. The for-sale flavor lives in `listedStock` /
+   * `daysListed`.
    */
   availableSurplus: Record<string, number>
+  /**
+   * Corp-wide *listed* stock keyed by ticker — sum of remaining sell-order
+   * quantities (FIO-aware enrichment caps each listing at what the seller can
+   * actually fulfill). Companion to `availableSurplus`: answers "what could a
+   * buyer purchase from the corp's exchange right now?" Not part of the
+   * runway math; surfaced so the UI can render it as a separate column.
+   */
+  listedStock: Record<string, number>
   /** Per-user-per-ticker rollups for dashboard Top Producers/Consumers */
   perUser: BurnRepairCorpPerUserRow[]
   /**
@@ -235,6 +246,50 @@ export interface BurnRepairWorkforceEntry {
   type: string
   totalPopulation: number
   totalRequired: number
+}
+
+/**
+ * Per-planet contribution for a single user toward one ticker's totals.
+ * Mirrors the per-(user, planet, ticker) row in `burn_repair_cache` so the
+ * breakdown modal can drill from user → planet without an extra round-trip.
+ */
+export interface BurnRepairCorpMaterialPlanetContribution {
+  planetNaturalId: string
+  planetName: string
+  productionDaily: number
+  burnDaily: number
+  inputsDaily: number
+}
+
+/** One user's contribution to a ticker's corp totals, with per-planet drill-down. */
+export interface BurnRepairCorpMaterialUserContribution {
+  userId: number
+  username: string
+  productionDaily: number
+  burnDaily: number
+  inputsDaily: number
+  /** Sorted by `planetName` for stable rendering. */
+  perPlanet: BurnRepairCorpMaterialPlanetContribution[]
+}
+
+/**
+ * Response for GET /burn-repair/corp/material/:ticker.
+ *
+ * "Where do these numbers come from?" diagnostic for a single ticker. Aggregate
+ * fields match what the corp endpoint reports for the same ticker; `perUser`
+ * exposes the user × planet rows that fold into those aggregates so the modal
+ * can lay them out as a hierarchy. Repair and stock are intentionally excluded
+ * for now — they don't drill down cleanly through `burn_repair_cache`.
+ */
+export interface BurnRepairCorpMaterialBreakdown {
+  commodityTicker: string
+  productionDaily: number
+  burnDaily: number
+  inputsDaily: number
+  /** Convenience: burnDaily + inputsDaily, the "consumption" axis in the modal. */
+  consumptionDaily: number
+  /** Sorted descending by `productionDaily + consumptionDaily`. */
+  perUser: BurnRepairCorpMaterialUserContribution[]
 }
 
 /** Response for GET /burn-repair/corp/workforce */

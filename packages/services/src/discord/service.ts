@@ -520,5 +520,3 @@ export const discordService = {
   getUserAvatarUrl,
   SETTINGS_KEYS: DISCORD_SETTINGS_KEYS,
 }
-
-export default discordService

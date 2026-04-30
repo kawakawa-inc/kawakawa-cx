@@ -15,7 +15,12 @@ vi.mock('../db/index.js', () => {
     burnRepairCache: {
       userId: 'user_id',
       planetNaturalId: 'planet_natural_id',
+      planetName: 'planet_name',
       commodityTicker: 'commodity_ticker',
+      burnDaily: 'burn_daily',
+      inputsDaily: 'inputs_daily',
+      productionDaily: 'production_daily',
+      repairTotal: 'repair_total',
     },
     userRoles: { userId: 'user_id', roleId: 'role_id' },
     users: { id: 'id', username: 'username' },
@@ -59,6 +64,7 @@ vi.mock('@kawakawa/services/supply', () => ({
   resolveActiveMembers: vi.fn(),
   resolveDisplayUsernames: vi.fn(async () => new Map()),
   computeCorpStock: vi.fn(),
+  computeCorpListedStock: vi.fn(),
 }))
 
 vi.mock('@kawakawa/services/market', () => ({
@@ -67,6 +73,7 @@ vi.mock('@kawakawa/services/market', () => ({
 
 import { db } from '../db/index.js'
 import {
+  computeCorpListedStock,
   computeCorpStock,
   getRepairableTickers,
   resolveActiveMembers,
@@ -205,6 +212,7 @@ describe('BurnRepairController', () => {
         fioAgeMap: new Map(),
       })
       vi.mocked(computeCorpStock).mockResolvedValue({})
+      vi.mocked(computeCorpListedStock).mockResolvedValue({})
 
       // Query 1: aggregate query (corp-wide totals)
       const aggregateChain = {
@@ -267,6 +275,7 @@ describe('BurnRepairController', () => {
         ]),
       })
       vi.mocked(computeCorpStock).mockResolvedValue({})
+      vi.mocked(computeCorpListedStock).mockResolvedValue({})
       vi.mocked(resolveDisplayUsernames).mockResolvedValue(
         new Map([
           [1, 'AliceFIO'],
@@ -323,6 +332,154 @@ describe('BurnRepairController', () => {
       expect(bob.username).toBe('bob-login')
       expect(bob.burnDaily).toBe(3)
       expect(bob.fioDataAge).toBe('2026-04-15T00:00:00.000Z')
+    })
+  })
+
+  describe('getCorpMaterialBreakdown', () => {
+    it('returns zero totals and empty perUser when no active members', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [],
+        staleUserCount: 0,
+        staleUserIds: [],
+        fioAgeMap: new Map(),
+      })
+
+      const result = await controller.getCorpMaterialBreakdown('rat', mockRequest)
+
+      // Ticker normalization (lowercase → uppercase) is part of the contract.
+      expect(result.commodityTicker).toBe('RAT')
+      expect(result.productionDaily).toBe(0)
+      expect(result.consumptionDaily).toBe(0)
+      expect(result.perUser).toEqual([])
+    })
+
+    it('rejects an empty ticker', async () => {
+      await expect(controller.getCorpMaterialBreakdown('   ', mockRequest)).rejects.toThrow(
+        /ticker/
+      )
+    })
+
+    it('groups cache rows by user × planet, sums totals, and orders by footprint', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [1, 2, 3],
+        staleUserCount: 0,
+        staleUserIds: [],
+        fioAgeMap: new Map(),
+      })
+      vi.mocked(resolveDisplayUsernames).mockResolvedValue(
+        new Map([
+          [1, 'alice'],
+          [2, 'bob'],
+          [3, 'carol'],
+        ])
+      )
+
+      const breakdownChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            // alice contributes from two planets, both producing.
+            {
+              userId: 1,
+              planetNaturalId: 'AB-001a',
+              planetName: 'Bravo',
+              burnDaily: '0.0000',
+              inputsDaily: '0.0000',
+              productionDaily: '5.0000',
+            },
+            {
+              userId: 1,
+              planetNaturalId: 'AA-002a',
+              planetName: 'Alpha',
+              burnDaily: '0.0000',
+              inputsDaily: '0.0000',
+              productionDaily: '3.0000',
+            },
+            // bob has a single big consumption planet.
+            {
+              userId: 2,
+              planetNaturalId: 'CC-003c',
+              planetName: 'Charlie',
+              burnDaily: '4.0000',
+              inputsDaily: '6.0000',
+              productionDaily: '0.0000',
+            },
+            // carol's row is all-zero — should be filtered out so she
+            // doesn't show up in perUser at all.
+            {
+              userId: 3,
+              planetNaturalId: 'DD-004d',
+              planetName: 'Delta',
+              burnDaily: '0.0000',
+              inputsDaily: '0.0000',
+              productionDaily: '0.0000',
+            },
+          ]),
+        }),
+      }
+
+      vi.mocked(db.select).mockReturnValueOnce(
+        breakdownChain as unknown as ReturnType<typeof db.select>
+      )
+
+      const result = await controller.getCorpMaterialBreakdown('RAT', mockRequest)
+
+      expect(result.commodityTicker).toBe('RAT')
+      expect(result.productionDaily).toBe(8)
+      expect(result.burnDaily).toBe(4)
+      expect(result.inputsDaily).toBe(6)
+      expect(result.consumptionDaily).toBe(10)
+
+      // Carol should be filtered out (all-zero rows contribute nothing).
+      expect(result.perUser.map(u => u.username)).toEqual(['bob', 'alice'])
+
+      const bob = result.perUser[0]
+      expect(bob.userId).toBe(2)
+      expect(bob.burnDaily).toBe(4)
+      expect(bob.inputsDaily).toBe(6)
+      expect(bob.perPlanet).toHaveLength(1)
+      expect(bob.perPlanet[0].planetName).toBe('Charlie')
+
+      const alice = result.perUser[1]
+      expect(alice.productionDaily).toBe(8)
+      // Planets within a user are ordered alphabetically by planet name.
+      expect(alice.perPlanet.map(p => p.planetName)).toEqual(['Alpha', 'Bravo'])
+      expect(alice.perPlanet[0].productionDaily).toBe(3)
+      expect(alice.perPlanet[1].productionDaily).toBe(5)
+    })
+
+    it('honors the excludedUserIds filter', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [1, 2],
+        staleUserCount: 0,
+        staleUserIds: [],
+        fioAgeMap: new Map(),
+      })
+      vi.mocked(resolveDisplayUsernames).mockResolvedValue(new Map([[1, 'alice']]))
+
+      const whereSpy = vi.fn().mockResolvedValue([
+        {
+          userId: 1,
+          planetNaturalId: 'AA-002a',
+          planetName: 'Alpha',
+          burnDaily: '0.0000',
+          inputsDaily: '0.0000',
+          productionDaily: '5.0000',
+        },
+      ])
+      const breakdownChain = {
+        from: vi.fn().mockReturnValue({ where: whereSpy }),
+      }
+      vi.mocked(db.select).mockReturnValueOnce(
+        breakdownChain as unknown as ReturnType<typeof db.select>
+      )
+
+      const result = await controller.getCorpMaterialBreakdown('RAT', mockRequest, '2')
+
+      // Only alice (1) made it through, and the controller passed her ID alone
+      // to resolveDisplayUsernames.
+      expect(vi.mocked(resolveDisplayUsernames).mock.calls[0][0]).toEqual([1])
+      expect(result.perUser).toHaveLength(1)
+      expect(result.perUser[0].userId).toBe(1)
     })
   })
 

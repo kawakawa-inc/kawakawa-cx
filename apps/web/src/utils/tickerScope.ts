@@ -47,10 +47,7 @@ export function makeCategoryEntry(category: string): string {
  * filter until we can actually resolve the categories. Once the catalog
  * arrives, the computed re-evaluates and the filter applies.
  */
-export function resolveTickerScope(
-  scope: string[],
-  commodities: Commodity[]
-): Set<string> | null {
+export function resolveTickerScope(scope: string[], commodities: Commodity[]): Set<string> | null {
   if (!scope || scope.length === 0) return null
 
   const hasCategoryRef = scope.some(e => e.startsWith(CATEGORY_PREFIX))

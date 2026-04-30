@@ -43,20 +43,12 @@ export { toMaterialsMap } from './types.js'
 
 // List types (re-exported for convenience)
 export type { ListFormat, ListItem, ListParseResult } from './types.js'
-// Backwards compatibility
-export type { ShoppingListFormat, ShoppingListItem, ShoppingListParseResult } from './types.js'
 
 // XIT parser functions
 export { parseXitJson, isXitJson, aggregateMaterials } from './xit/parser.js'
 
 // List parser functions
-export {
-  parseList,
-  isList,
-  detectFormat,
-  parseShoppingList,
-  isShoppingList,
-} from './list/parser.js'
+export { parseList, isList, detectFormat } from './list/parser.js'
 
 // Tokenizer
 export { tokenize, type TokenizeResult } from './tokenizer.js'

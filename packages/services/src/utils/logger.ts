@@ -109,7 +109,7 @@ const baseConfig: pino.LoggerOptions = {
   timestamp: pino.stdTimeFunctions.isoTime,
 }
 
-export const logger = isDevelopment
+const logger = isDevelopment
   ? pino(
       baseConfig,
       pino.transport({

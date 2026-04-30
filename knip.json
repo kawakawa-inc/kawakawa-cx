@@ -9,7 +9,7 @@
       "entry": ["src/index.ts", "src/scripts/*.ts", "src/controllers/*.ts"],
       "project": ["src/**/*.ts", "!src/**/*.test.ts"],
       "ignore": ["src/generated/**"],
-      "ignoreDependencies": ["@tsoa/runtime", "multer"]
+      "ignoreDependencies": ["@tsoa/runtime", "multer", "@types/multer"]
     },
     "apps/bot": {
       "entry": ["src/index.ts", "src/deploy-commands.ts"],
@@ -31,11 +31,11 @@
     },
     "packages/services": {
       "entry": ["src/index.ts"],
-      "project": ["src/**/*.ts"]
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["pino-pretty"]
     },
     "packages/client": {
-      "entry": ["src/index.ts"],
-      "project": ["src/**/*.ts"]
+      "entry": ["src/index.ts"]
     }
   },
   "ignoreExportsUsedInFile": true,

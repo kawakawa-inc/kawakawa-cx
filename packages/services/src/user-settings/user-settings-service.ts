@@ -359,5 +359,3 @@ export const userSettingsService = {
   clearCache,
   invalidateAdminDefaultsCache,
 }
-
-export default userSettingsService

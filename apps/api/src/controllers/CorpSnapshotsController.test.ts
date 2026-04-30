@@ -85,24 +85,24 @@ describe('CorpSnapshotsController.query', () => {
   // ---------- Validation ----------
 
   it("rejects yMetric='repairPerDay' (not stored historically)", async () => {
-    await expect(
-      controller.query(mockRequest, 'repairPerDay', 'corp', '7d')
-    ).rejects.toThrow(/repairPerDay/)
+    await expect(controller.query(mockRequest, 'repairPerDay', 'corp', '7d')).rejects.toThrow(
+      /repairPerDay/
+    )
   })
 
   it("rejects yMetric='username' (display dimension)", async () => {
-    await expect(
-      controller.query(mockRequest, 'username', 'user', '7d')
-    ).rejects.toThrow(/username/)
+    await expect(controller.query(mockRequest, 'username', 'user', '7d')).rejects.toThrow(
+      /username/
+    )
   })
 
   it("rejects stock metrics when seriesBy='user'", async () => {
-    await expect(
-      controller.query(mockRequest, 'stock', 'user', '7d')
-    ).rejects.toThrow(/seriesBy='corp'/)
-    await expect(
-      controller.query(mockRequest, 'daysRemaining', 'user', '7d')
-    ).rejects.toThrow(/seriesBy='corp'/)
+    await expect(controller.query(mockRequest, 'stock', 'user', '7d')).rejects.toThrow(
+      /seriesBy='corp'/
+    )
+    await expect(controller.query(mockRequest, 'daysRemaining', 'user', '7d')).rejects.toThrow(
+      /seriesBy='corp'/
+    )
   })
 
   // ---------- Bucket auto-selection ----------
@@ -257,7 +257,9 @@ describe('CorpSnapshotsController.query', () => {
       undefined,
       undefined,
       'RAT',
-      5
+      5,
+      undefined,
+      true // includeOther — the rollup is opt-in
     )
 
     expect(r.series).toHaveLength(6) // 5 top + 1 Other
@@ -282,11 +284,13 @@ describe('CorpSnapshotsController.query', () => {
         mockChain([{ t: new Date('2026-04-20'), commodityTicker: 'RAT', stock: '30' }])
       )
 
-    const r = await controller.query(mockRequest, 'daysOfCover', 'corp', '7d')
+    // `daysRemaining` exercises the same stock-merge path that `daysOfCover`
+    // used to: stock-dependent metric, ticker-grouping. Math: corp consumption
+    // = (2+3)+(1+0) = 6; corp production = 1; gap = 5; daysRemaining = 30/5.
+    const r = await controller.query(mockRequest, 'daysRemaining', 'corp', '7d')
 
     expect(r.series).toHaveLength(1)
     expect(r.series[0].label).toBe('RAT')
-    // consumption (corp-wide) = (2+3)+(1+0) = 6; daysOfCover = 30 / 6 = 5
-    expect(r.series[0].points[0].v).toBe(5)
+    expect(r.series[0].points[0].v).toBe(6)
   })
 })

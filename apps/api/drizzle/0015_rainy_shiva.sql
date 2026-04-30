@@ -1,0 +1,1 @@
+ALTER TABLE "corp_overview_views" ADD COLUMN "excluded_user_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

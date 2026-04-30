@@ -58,6 +58,8 @@ export default tseslint.config(
         DragEvent: 'readonly',
         MouseEvent: 'readonly',
         TouchEvent: 'readonly',
+        KeyboardEvent: 'readonly',
+        ClipboardEvent: 'readonly',
         FormData: 'readonly',
         ResizeObserver: 'readonly',
       },

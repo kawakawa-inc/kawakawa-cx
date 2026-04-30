@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Route, Security, Tags, Request, Body } from 'tsoa'
+import { Controller, Get, Path, Post, Query, Route, Security, Tags, Request, Body } from 'tsoa'
 import {
   db,
   burnRepairCache,
@@ -11,6 +11,7 @@ import {
 import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import {
+  computeCorpListedStock,
   computeCorpStock,
   getRepairableTickers,
   resolveActiveMembers,
@@ -31,6 +32,8 @@ import type {
   BurnRepairShoppingListResponse,
   BurnRepairShoppingListItem,
   BurnRepairCacheRow,
+  BurnRepairCorpMaterialBreakdown,
+  BurnRepairCorpMaterialUserContribution,
 } from '@kawakawa/types'
 import { BadRequest } from '../utils/errors.js'
 
@@ -149,11 +152,7 @@ export class BurnRepairController extends Controller {
     // Resolve display names for both groups: still-active members (for perUser
     // rows) and excluded members (for the chip tooltip). One batched lookup
     // keeps it to a single round trip even when the exclusion list is large.
-    const allDisplayNameIds = [
-      ...activeUserIds,
-      ...manuallyExcludedIds,
-      ...resolved.staleUserIds,
-    ]
+    const allDisplayNameIds = [...activeUserIds, ...manuallyExcludedIds, ...resolved.staleUserIds]
     const usernameMap = await resolveDisplayUsernames([...new Set(allDisplayNameIds)])
 
     const excludedMembers = buildExcludedMembers(
@@ -169,12 +168,13 @@ export class BurnRepairController extends Controller {
         includedUserCount: 0,
         staleUserCount,
         availableSurplus: {},
+        listedStock: {},
         perUser: [],
         excludedMembers,
       }
     }
 
-    const [rows, perUserRows, availableSurplus] = await Promise.all([
+    const [rows, perUserRows, availableSurplus, listedStock] = await Promise.all([
       db
         .select({
           commodityTicker: burnRepairCache.commodityTicker,
@@ -200,6 +200,7 @@ export class BurnRepairController extends Controller {
         .where(inArray(burnRepairCache.userId, activeUserIds))
         .groupBy(burnRepairCache.userId, burnRepairCache.commodityTicker),
       computeCorpStock(activeUserIds),
+      computeCorpListedStock(activeUserIds),
     ])
 
     const materials: BurnRepairCorpMaterial[] = rows.map(r => ({
@@ -226,6 +227,7 @@ export class BurnRepairController extends Controller {
       includedUserCount: activeUserIds.length,
       staleUserCount,
       availableSurplus,
+      listedStock,
       perUser,
       excludedMembers,
     }
@@ -302,6 +304,127 @@ export class BurnRepairController extends Controller {
     }))
 
     return { workforce }
+  }
+
+  /**
+   * Per-ticker breakdown for the "where do these numbers come from?" modal.
+   *
+   * Aggregates production, workforce burn, and production inputs for a single
+   * commodity, then exposes the user × planet rows that fold into them. Stock
+   * and repair are intentionally omitted — neither drills cleanly through
+   * `burn_repair_cache` and both are tracked separately for now.
+   */
+  @Get('corp/material/{ticker}')
+  public async getCorpMaterialBreakdown(
+    @Path() ticker: string,
+    @Request() request: { user: JwtPayload },
+    @Query() excludedUserIds?: string
+  ): Promise<BurnRepairCorpMaterialBreakdown> {
+    const tickerKey = ticker.trim().toUpperCase()
+    if (tickerKey.length === 0) {
+      throw BadRequest('ticker is required')
+    }
+
+    const resolved = await resolveActiveMembers(request.user.userId)
+    const activeUserIds = applyExclusion(resolved.activeUserIds, excludedUserIds)
+
+    if (activeUserIds.length === 0) {
+      return {
+        commodityTicker: tickerKey,
+        productionDaily: 0,
+        burnDaily: 0,
+        inputsDaily: 0,
+        consumptionDaily: 0,
+        perUser: [],
+      }
+    }
+
+    const [rows, usernameMap] = await Promise.all([
+      db
+        .select({
+          userId: burnRepairCache.userId,
+          planetNaturalId: burnRepairCache.planetNaturalId,
+          planetName: burnRepairCache.planetName,
+          burnDaily: burnRepairCache.burnDaily,
+          inputsDaily: burnRepairCache.inputsDaily,
+          productionDaily: burnRepairCache.productionDaily,
+        })
+        .from(burnRepairCache)
+        .where(
+          and(
+            inArray(burnRepairCache.userId, activeUserIds),
+            eq(burnRepairCache.commodityTicker, tickerKey)
+          )
+        ),
+      resolveDisplayUsernames(activeUserIds),
+    ])
+
+    type UserAccumulator = BurnRepairCorpMaterialUserContribution
+
+    const usersById = new Map<number, UserAccumulator>()
+    let totalProduction = 0
+    let totalBurn = 0
+    let totalInputs = 0
+
+    for (const r of rows) {
+      const burnDaily = Number(r.burnDaily)
+      const inputsDaily = Number(r.inputsDaily)
+      const productionDaily = Number(r.productionDaily)
+
+      // A row that's all zero contributes nothing — drop it so the modal isn't
+      // padded with empty planets for users who happen to have a base that
+      // doesn't touch this ticker.
+      if (burnDaily === 0 && inputsDaily === 0 && productionDaily === 0) continue
+
+      totalBurn += burnDaily
+      totalInputs += inputsDaily
+      totalProduction += productionDaily
+
+      let user = usersById.get(r.userId)
+      if (!user) {
+        user = {
+          userId: r.userId,
+          username: usernameMap.get(r.userId) ?? `user:${r.userId}`,
+          productionDaily: 0,
+          burnDaily: 0,
+          inputsDaily: 0,
+          perPlanet: [],
+        }
+        usersById.set(r.userId, user)
+      }
+      user.productionDaily += productionDaily
+      user.burnDaily += burnDaily
+      user.inputsDaily += inputsDaily
+      user.perPlanet.push({
+        planetNaturalId: r.planetNaturalId,
+        planetName: r.planetName,
+        productionDaily,
+        burnDaily,
+        inputsDaily,
+      })
+    }
+
+    const perUser: BurnRepairCorpMaterialUserContribution[] = [...usersById.values()]
+    for (const u of perUser) {
+      u.perPlanet.sort((a, b) => a.planetName.localeCompare(b.planetName))
+    }
+    // Sort users by their footprint so the heaviest contributors land at the
+    // top of the modal. Tie-break alphabetically for stable ordering.
+    perUser.sort((a, b) => {
+      const aw = a.productionDaily + a.burnDaily + a.inputsDaily
+      const bw = b.productionDaily + b.burnDaily + b.inputsDaily
+      if (aw !== bw) return bw - aw
+      return a.username.localeCompare(b.username)
+    })
+
+    return {
+      commodityTicker: tickerKey,
+      productionDaily: totalProduction,
+      burnDaily: totalBurn,
+      inputsDaily: totalInputs,
+      consumptionDaily: totalBurn + totalInputs,
+      perUser,
+    }
   }
 
   /**

@@ -13,9 +13,7 @@
     </template>
 
     <div class="text-caption">
-      <p class="mb-2">
-        These members aren't contributing to the current corp aggregates.
-      </p>
+      <p class="mb-2">These members aren't contributing to the current corp aggregates.</p>
 
       <template v-if="manual.length > 0">
         <div class="text-overline mt-2">Manually excluded ({{ manual.length }})</div>

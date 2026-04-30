@@ -63,6 +63,7 @@ import type {
   BurnRepairCorpResponse,
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
+  BurnRepairCorpMaterialBreakdown,
   BurnRepairShoppingListRequest,
   BurnRepairShoppingListResponse,
 } from '@kawakawa/types'
@@ -4673,10 +4674,7 @@ const realApi = {
     return response.json()
   },
 
-  browseCorpOverviewViews: async (
-    search?: string,
-    page?: number
-  ): Promise<CorpOverviewView[]> => {
+  browseCorpOverviewViews: async (search?: string, page?: number): Promise<CorpOverviewView[]> => {
     const params = new URLSearchParams()
     if (search) params.set('search', search)
     if (page) params.set('page', String(page))
@@ -4778,6 +4776,82 @@ const realApi = {
       if (response.status === 404) throw new Error('View not found')
       throw new Error(`Failed to toggle pin: ${response.statusText}`)
     }
+    return response.json()
+  },
+
+  addCorpOverviewViewOwner: async (id: number, userId: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/owners`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ userId }),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 400 || response.status === 409) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Could not add owner')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to manage owners on this view')
+      }
+      if (response.status === 404) throw new Error('View or user not found')
+      throw new Error(`Failed to add owner: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  removeCorpOverviewViewOwner: async (id: number, userId: number): Promise<CorpOverviewView> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/owners/${userId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      // 409 covers the last-owner refusal — preserve the server's message so
+      // the UI can show "delete the view instead" verbatim.
+      if (response.status === 409) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Cannot remove the last owner')
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to manage owners on this view')
+      }
+      if (response.status === 404) throw new Error('View or user not found')
+      throw new Error(`Failed to remove owner: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  /**
+   * Record that the caller visited a view. Used after deep-link navigation
+   * to an unlisted view so the view shows up in the selector across devices.
+   * Idempotent server-side; safe to call repeatedly. Failures are logged but
+   * non-fatal — the user can still see the view they just navigated to.
+   */
+  recordCorpOverviewViewVisit: async (id: number): Promise<void> => {
+    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/visit`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok && response.status !== 404) {
+      // Don't throw on 404 — view became inaccessible between fetch and visit;
+      // not worth interrupting the user. Other errors propagate so callers can
+      // log them.
+      throw new Error(`Failed to record visit: ${response.statusText}`)
+    }
+  },
+
+  getVisitedCorpOverviewViews: async (page?: number): Promise<CorpOverviewView[]> => {
+    const params = new URLSearchParams()
+    if (page) params.set('page', String(page))
+    const query = params.toString() ? `?${params.toString()}` : ''
+    const response = await fetchWithLogging(`/api/corp-overview-views/visited${query}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list visited views: ${response.statusText}`)
     return response.json()
   },
 
@@ -4987,9 +5061,7 @@ const realApi = {
   // Inlined here (rather than in a util) so the api.ts file stays self-
   // contained for the corp endpoints.
 
-  getBurnRepairCorp: async (
-    excludedUserIds?: number[]
-  ): Promise<BurnRepairCorpResponse> => {
+  getBurnRepairCorp: async (excludedUserIds?: number[]): Promise<BurnRepairCorpResponse> => {
     const response = await fetchWithLogging(
       `/api/burn-repair/corp${corpQueryString(excludedUserIds)}`,
       { method: 'GET', headers: getAuthHeaders() }
@@ -5020,6 +5092,19 @@ const realApi = {
     )
     handleRefreshedToken(response)
     if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
+    return response.json()
+  },
+
+  getBurnRepairCorpMaterialBreakdown: async (
+    ticker: string,
+    excludedUserIds?: number[]
+  ): Promise<BurnRepairCorpMaterialBreakdown> => {
+    const response = await fetchWithLogging(
+      `/api/burn-repair/corp/material/${encodeURIComponent(ticker)}${corpQueryString(excludedUserIds)}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get material breakdown: ${response.statusText}`)
     return response.json()
   },
 
@@ -5334,12 +5419,16 @@ export const api = {
     list: () => realApi.listCorpOverviewViews(),
     getPinned: () => realApi.getPinnedCorpOverviewViews(),
     browse: (search?: string, page?: number) => realApi.browseCorpOverviewViews(search, page),
+    visited: (page?: number) => realApi.getVisitedCorpOverviewViews(page),
     get: (id: number) => realApi.getCorpOverviewView(id),
     create: (request: CreateCorpOverviewViewRequest) => realApi.createCorpOverviewView(request),
     update: (id: number, request: UpdateCorpOverviewViewRequest) =>
       realApi.updateCorpOverviewView(id, request),
     delete: (id: number) => realApi.deleteCorpOverviewView(id),
     togglePin: (id: number) => realApi.togglePinCorpOverviewView(id),
+    addOwner: (id: number, userId: number) => realApi.addCorpOverviewViewOwner(id, userId),
+    removeOwner: (id: number, userId: number) => realApi.removeCorpOverviewViewOwner(id, userId),
+    visit: (id: number) => realApi.recordCorpOverviewViewVisit(id),
   },
   corpSnapshots: {
     query: (req: SnapshotQueryRequest) => realApi.queryCorpSnapshots(req),
@@ -5354,6 +5443,8 @@ export const api = {
       realApi.getBurnRepairCorpBuildings(excludedUserIds),
     corpWorkforce: (excludedUserIds?: number[]) =>
       realApi.getBurnRepairCorpWorkforce(excludedUserIds),
+    corpMaterialBreakdown: (ticker: string, excludedUserIds?: number[]) =>
+      realApi.getBurnRepairCorpMaterialBreakdown(ticker, excludedUserIds),
     shoppingList: (body: BurnRepairShoppingListRequest) => realApi.getBurnRepairShoppingList(body),
   },
   logistics: {

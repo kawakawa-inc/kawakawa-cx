@@ -743,7 +743,7 @@ export * from './corp-overview-view.js'
 
 // ==================== SAVED MARKET FILTERS ====================
 
-export type FilterPrivacy = 'private' | 'link' | 'public'
+export type FilterPrivacy = 'private' | 'unlisted' | 'public'
 
 export interface SavedFilterData {
   itemType?: 'sell' | 'buy'

@@ -177,5 +177,3 @@ export const settingsService = {
   invalidateCache,
   exists,
 }
-
-export default settingsService

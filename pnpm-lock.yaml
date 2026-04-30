@@ -62,9 +62,6 @@ importers:
       multer:
         specifier: ^2.0.2
         version: 2.0.2
-      pino:
-        specifier: ^10.1.0
-        version: 10.1.0
       pino-http:
         specifier: ^11.0.0
         version: 11.0.0
@@ -203,6 +200,9 @@ importers:
       vue-chartjs:
         specifier: ^5
         version: 5.3.3(chart.js@4.5.1)(vue@3.5.25(typescript@5.3.3))
+      vue-draggable-plus:
+        specifier: ^0.6.1
+        version: 0.6.1(@types/sortablejs@1.15.9)
       vue-router:
         specifier: ^4.6.3
         version: 4.6.3(vue@3.5.25(typescript@5.3.3))
@@ -1426,6 +1426,9 @@ packages:
 
   '@types/serve-static@2.2.0':
     resolution: {integrity: sha512-8mam4H1NHLtu7nmtalF7eyBH14QyOASmcxHhSfEoRyr0nP/YdoesEtU+uSRvMe96TW/HPTtkoKqQLl53N7UXMQ==}
+
+  '@types/sortablejs@1.15.9':
+    resolution: {integrity: sha512-7HP+rZGE2p886PKV9c9OJzLBI6BBJu1O7lJGYnPyG3fS4/duUCcngkNCjsLwIMV+WMqANe3tt4irrXHSIe68OQ==}
 
   '@types/swagger-ui-express@4.1.8':
     resolution: {integrity: sha512-AhZV8/EIreHFmBV5wAs0gzJUNq9JbbSXgJLQubCC0jtIo6prnI9MIRRxnU4MZX9RB9yXxF1V4R7jtLl/Wcj31g==}
@@ -3486,6 +3489,15 @@ packages:
       chart.js: ^4.1.1
       vue: ^3.0.0-0 || ^2.7.0
 
+  vue-draggable-plus@0.6.1:
+    resolution: {integrity: sha512-FbtQ/fuoixiOfTZzG3yoPl4JAo9HJXRHmBQZFB9x2NYCh6pq0TomHf7g5MUmpaDYv+LU2n6BPq2YN9sBO+FbIg==}
+    peerDependencies:
+      '@types/sortablejs': ^1.15.0
+      '@vue/composition-api': '*'
+    peerDependenciesMeta:
+      '@vue/composition-api':
+        optional: true
+
   vue-eslint-parser@10.2.0:
     resolution: {integrity: sha512-CydUvFOQKD928UzZhTp4pr2vWz1L+H99t7Pkln2QSPdvmURT0MoC4wUccfCnuEaihNsu9aYYyk+bep8rlfkUXw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -4562,6 +4574,8 @@ snapshots:
     dependencies:
       '@types/http-errors': 2.0.5
       '@types/node': 22.19.1
+
+  '@types/sortablejs@1.15.9': {}
 
   '@types/swagger-ui-express@4.1.8':
     dependencies:
@@ -6713,6 +6727,10 @@ snapshots:
     dependencies:
       chart.js: 4.5.1
       vue: 3.5.25(typescript@5.3.3)
+
+  vue-draggable-plus@0.6.1(@types/sortablejs@1.15.9):
+    dependencies:
+      '@types/sortablejs': 1.15.9
 
   vue-eslint-parser@10.2.0(eslint@9.39.1(jiti@2.6.1)):
     dependencies:

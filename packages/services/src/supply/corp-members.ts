@@ -54,9 +54,7 @@ async function resolveIncludedRoles(forUserId?: number): Promise<string[]> {
  * honor any per-user role-list override; omit it in cron/system contexts to
  * use the corp-wide admin default.
  */
-export async function resolveActiveMembers(
-  forUserId?: number
-): Promise<ActiveMembersResult> {
+export async function resolveActiveMembers(forUserId?: number): Promise<ActiveMembersResult> {
   const includedRoles = await resolveIncludedRoles(forUserId)
 
   if (includedRoles.length === 0) {
@@ -109,9 +107,7 @@ export async function resolveActiveMembers(
  * `user_settings.value`) since PrUn usernames match it 1:1. Falls back to
  * `users.username` when the FIO setting is unset or malformed.
  */
-export async function resolveDisplayUsernames(
-  userIds: number[]
-): Promise<Map<number, string>> {
+export async function resolveDisplayUsernames(userIds: number[]): Promise<Map<number, string>> {
   const map = new Map<number, string>()
   if (userIds.length === 0) return map
 

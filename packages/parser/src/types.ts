@@ -274,14 +274,6 @@ export interface ListParseResult {
   error?: string
 }
 
-// Backwards compatibility aliases
-/** @deprecated Use ListFormat instead */
-export type ShoppingListFormat = ListFormat
-/** @deprecated Use ListItem instead */
-export type ShoppingListItem = ListItem
-/** @deprecated Use ListParseResult instead */
-export type ShoppingListParseResult = ListParseResult
-
 // =============================================================================
 // Validation Types
 // =============================================================================

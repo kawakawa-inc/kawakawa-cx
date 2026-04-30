@@ -145,7 +145,7 @@ function queueLog(level: LogLevel, message: string, context?: Record<string, unk
 /**
  * Logger interface
  */
-export const logger = {
+const logger = {
   debug: (message: string, context?: Record<string, unknown>) => {
     queueLog('debug', message, context)
   },
@@ -315,5 +315,3 @@ function sanitizeUrl(url: string): string {
     return url
   }
 }
-
-export default logger

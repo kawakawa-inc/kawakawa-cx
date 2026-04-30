@@ -43,7 +43,7 @@
           </template>
         </v-select>
 
-        <p v-if="form.privacy === 'link'" class="text-body-2 text-medium-emphasis mt-2">
+        <p v-if="form.privacy === 'unlisted'" class="text-body-2 text-medium-emphasis mt-2">
           Anyone with the link can view and save a copy of this filter.
         </p>
         <p v-if="form.privacy === 'public'" class="text-body-2 text-medium-emphasis mt-2">
@@ -99,19 +99,19 @@ const isEditing = computed(() => !!props.existingFilter)
 
 const privacyOptions = [
   { title: 'Private', value: 'private' as FilterPrivacy },
-  { title: 'Link (shareable)', value: 'link' as FilterPrivacy },
+  { title: 'Unlisted (link only)', value: 'unlisted' as FilterPrivacy },
   { title: 'Public', value: 'public' as FilterPrivacy },
 ]
 
 const getPrivacyIcon = (privacy: FilterPrivacy) => {
   if (privacy === 'private') return 'mdi-lock'
-  if (privacy === 'link') return 'mdi-link-variant'
+  if (privacy === 'unlisted') return 'mdi-link-variant'
   return 'mdi-earth'
 }
 
 const getPrivacyDescription = (privacy: FilterPrivacy) => {
   if (privacy === 'private') return 'Only you can see this filter'
-  if (privacy === 'link') return 'Anyone with the link can view it'
+  if (privacy === 'unlisted') return 'Anyone with the link can view it'
   return 'Visible to all users in the public browser'
 }
 

@@ -10,10 +10,7 @@ import type {
 import { corpSnapshotTickerStock, corpSnapshotUserTicker, db } from '../db/index.js'
 import { and, between, inArray, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
-import {
-  resolveActiveMembers,
-  resolveDisplayUsernames,
-} from '@kawakawa/services/supply'
+import { resolveActiveMembers, resolveDisplayUsernames } from '@kawakawa/services/supply'
 import { applyExclusion } from './BurnRepairController.js'
 import { BadRequest } from '../utils/errors.js'
 
@@ -73,9 +70,7 @@ export class CorpSnapshotsController extends Controller {
 
     // Corp-wide stock per (bucket, ticker) for stock-dependent metrics.
     const needsStock = metricNeedsStock(yMetric)
-    const stockRows = needsStock
-      ? await fetchStockBuckets(tickerList, range, resolvedBucket)
-      : []
+    const stockRows = needsStock ? await fetchStockBuckets(tickerList, range, resolvedBucket) : []
     const stockByBucketTicker = indexStock(stockRows)
 
     const usernameMap =
@@ -101,14 +96,19 @@ export class CorpSnapshotsController extends Controller {
 // ========================================================================
 
 /** Metrics that come from the ticker-stock snapshot, not the user-ticker one. */
-const STOCK_METRICS: ReadonlySet<MetricKey> = new Set(['stock', 'daysRemaining', 'daysOfCover'])
+const STOCK_METRICS: ReadonlySet<MetricKey> = new Set(['stock', 'daysRemaining'])
 
 /** Metrics we never graph historically. */
-const UNGRAPHABLE_METRICS: ReadonlySet<MetricKey> = new Set([
+const UNGRAPHABLE_METRICS: ReadonlySet<MetricKey> = new Set<MetricKey>([
   // repairDays isn't stored per snapshot, so per-day repair amortization is ambiguous.
   'repairPerDay',
   // username is a display dimension, not a numeric axis.
   'username',
+  // listedStock has no historical snapshot column yet — punt until we decide
+  // whether to backfill or just start logging it forward. Same goes for the
+  // metric derived from it.
+  'listedStock',
+  'daysListed',
 ])
 
 function metricNeedsStock(y: MetricKey): boolean {
@@ -347,10 +347,10 @@ function deriveMetricValue(
       return stock
     case 'daysRemaining':
       return gap > 0 ? (stock > 0 ? stock / gap : 0) : 0
-    case 'daysOfCover':
-      return consumption > 0 ? stock / consumption : 0
     case 'repairPerDay':
     case 'username':
+    case 'listedStock':
+    case 'daysListed':
       // Gated at validate time; unreachable here.
       return 0
   }
@@ -387,8 +387,7 @@ function buildSeries(input: BuildSeriesInput): SnapshotSeries[] {
   // When seriesBy === 'corp', sum base rates across users per (bucket, ticker)
   // before deriving the metric — "what is the corp total for this metric".
   // When seriesBy === 'user', keep per-user rows distinct.
-  const aggregated =
-    seriesBy === 'corp' ? sumAcrossUsers(userTickerRows) : userTickerRows
+  const aggregated = seriesBy === 'corp' ? sumAcrossUsers(userTickerRows) : userTickerRows
 
   for (const row of aggregated) {
     const stock = stockByBucketTicker.get(`${row.t.toISOString()}|${row.commodityTicker}`) ?? 0

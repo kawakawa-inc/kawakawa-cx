@@ -604,13 +604,13 @@ watch(browseSearch, () => {
 
 const getPrivacyIcon = (privacy: string) => {
   if (privacy === 'private') return 'mdi-lock'
-  if (privacy === 'link') return 'mdi-link-variant'
+  if (privacy === 'unlisted') return 'mdi-link-variant'
   return 'mdi-earth'
 }
 
 const getPrivacyColor = (privacy: string) => {
   if (privacy === 'private') return 'grey'
-  if (privacy === 'link') return 'blue'
+  if (privacy === 'unlisted') return 'blue'
   return 'green'
 }
 </script>

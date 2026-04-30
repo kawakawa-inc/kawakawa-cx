@@ -174,5 +174,3 @@ export const notificationService = {
   remove,
   getById,
 }
-
-export default notificationService

@@ -16,6 +16,7 @@ import {
   index,
   jsonb,
   foreignKey,
+  primaryKey,
 } from 'drizzle-orm/pg-core'
 import { relations } from 'drizzle-orm'
 
@@ -101,7 +102,7 @@ export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google
 
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
 
-export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'link', 'public'])
+export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'unlisted', 'public'])
 
 export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
 export const reserveSourceEnum = pgEnum('reserve_source', ['manual', 'demand'])
@@ -823,21 +824,89 @@ export const corpOverviewViews = pgTable(
   'corp_overview_views',
   {
     id: serial('id').primaryKey(),
-    userId: integer('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 100 }).notNull(),
     tickers: jsonb('tickers').notNull(), // string[]; empty array = all corp tickers
     cards: jsonb('cards').notNull(), // ViewCard[]
+    /**
+     * User IDs the view excludes from corp aggregation. Acts as the saved
+     * baseline — the page UI keeps a separate local working copy so non-owners
+     * (and the built-in view) can still filter without mutating the row.
+     */
+    excludedUserIds: jsonb('excluded_user_ids').notNull().default([]),
+    /**
+     * Ordered list of MetricKey values to render as columns in the panel-level
+     * Materials table. Empty array = use the client-side default column set.
+     * Per-card columns live inside the `cards` blob; this is for the standalone
+     * table that shows every in-scope ticker.
+     */
+    materialsTableColumns: jsonb('materials_table_columns').notNull().default([]),
+    /**
+     * Optional ticker scope for the panel-level Materials table, layered on top
+     * of the view's overall `tickers` scope. Same mixed-entry shape (bare
+     * tickers + `category:Foo` refs). Empty array = no extra constraint; the
+     * materials table follows the view's full scope.
+     */
+    materialsTableTickers: jsonb('materials_table_tickers').notNull().default([]),
     privacy: filterPrivacyEnum('privacy').notNull().default('private'),
     isPinned: boolean('is_pinned').notNull().default(false),
+    /**
+     * Soft-delete tombstone. Null = active row. All read paths filter
+     * `deleted_at IS NULL`; admin recovery can clear this in a future revision.
+     */
+    deletedAt: timestamp('deleted_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    userIdx: index('corp_overview_views_user_idx').on(table.userId),
     privacyIdx: index('corp_overview_views_privacy_idx').on(table.privacy),
     pinnedIdx: index('corp_overview_views_pinned_idx').on(table.isPinned),
+    deletedAtIdx: index('corp_overview_views_deleted_at_idx').on(table.deletedAt),
+  })
+)
+
+// ==================== VIEW OWNERS (JOIN) ====================
+// Many-to-many between views and users. A view's "owners" are the set of users
+// in this table for that view; any owner has full read/edit/delete/share rights
+// on the view. Min-1 owner is enforced at the application layer (deleting the
+// last owner is rejected; deleting a user cascades that user's owner rows away
+// and may leave the view ownerless — acceptable, see Phase 1 design notes).
+export const viewOwners = pgTable(
+  'view_owners',
+  {
+    viewId: integer('view_id')
+      .notNull()
+      .references(() => corpOverviewViews.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    addedAt: timestamp('added_at').defaultNow().notNull(),
+  },
+  table => ({
+    pk: primaryKey({ columns: [table.viewId, table.userId] }),
+    userIdx: index('view_owners_user_idx').on(table.userId),
+  })
+)
+
+// ==================== USER VISITED VIEWS ====================
+// Tracks which unlisted views a user has opened, so that view stays accessible
+// in their selector across browsers/devices without forcing them to keep the
+// link around. Public/private views don't need this — public is discoverable
+// via Browse, private is only visible to owners. The visit upsert is a no-op
+// for those tiers but harmless.
+export const userVisitedViews = pgTable(
+  'user_visited_views',
+  {
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    viewId: integer('view_id')
+      .notNull()
+      .references(() => corpOverviewViews.id, { onDelete: 'cascade' }),
+    lastVisitedAt: timestamp('last_visited_at').defaultNow().notNull(),
+  },
+  table => ({
+    pk: primaryKey({ columns: [table.userId, table.viewId] }),
+    userIdx: index('user_visited_views_user_idx').on(table.userId),
   })
 )
 
@@ -963,9 +1032,12 @@ export const priceListVersions = pgTable(
     version: integer('version').notNull(),
     label: varchar('label', { length: 100 }), // e.g., "Phase 1 - Electronics"
     description: text('description'),
-    defaultLocationId: varchar('default_location_id', { length: 20 })
-      .notNull()
-      .references(() => fioLocations.naturalId), // Required: prices belong to a base location
+    // Required: prices belong to a base location. Named FK below so the
+    // constraint name fits Postgres's 63-char identifier limit (the default
+    // drizzle-generated name `price_list_versions_default_location_id_fio_locations_natural_id_fk`
+    // is 64 chars and gets silently truncated, surfacing as a NOTICE on every
+    // migration apply).
+    defaultLocationId: varchar('default_location_id', { length: 20 }).notNull(),
     createdByUserId: integer('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -978,6 +1050,11 @@ export const priceListVersions = pgTable(
       table.version
     ),
     priceListIdx: index('price_list_versions_price_list_idx').on(table.priceListCode),
+    defaultLocationFk: foreignKey({
+      name: 'price_list_versions_default_location_fk',
+      columns: [table.defaultLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
   })
 )
 
@@ -1400,9 +1477,28 @@ export const savedMarketFiltersRelations = relations(savedMarketFilters, ({ one 
 
 // ==================== CORP OVERVIEW VIEW RELATIONS ====================
 
-export const corpOverviewViewsRelations = relations(corpOverviewViews, ({ one }) => ({
+export const corpOverviewViewsRelations = relations(corpOverviewViews, ({ many }) => ({
+  owners: many(viewOwners),
+}))
+
+export const viewOwnersRelations = relations(viewOwners, ({ one }) => ({
+  view: one(corpOverviewViews, {
+    fields: [viewOwners.viewId],
+    references: [corpOverviewViews.id],
+  }),
   user: one(users, {
-    fields: [corpOverviewViews.userId],
+    fields: [viewOwners.userId],
+    references: [users.id],
+  }),
+}))
+
+export const userVisitedViewsRelations = relations(userVisitedViews, ({ one }) => ({
+  view: one(corpOverviewViews, {
+    fields: [userVisitedViews.viewId],
+    references: [corpOverviewViews.id],
+  }),
+  user: one(users, {
+    fields: [userVisitedViews.userId],
     references: [users.id],
   }),
 }))

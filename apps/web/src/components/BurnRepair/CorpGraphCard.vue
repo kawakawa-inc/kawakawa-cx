@@ -1,16 +1,34 @@
 <template>
   <v-card class="mb-4" height="360">
-    <v-card-title class="text-subtitle-2 d-flex align-center">
-      {{ card.name }}
-      <v-chip size="x-small" class="ml-2" variant="tonal">
-        {{ metricLabel }}
-      </v-chip>
-      <v-chip size="x-small" class="ml-1" variant="tonal">
-        {{ rangeLabel }}
-      </v-chip>
+    <v-card-title class="text-subtitle-2 d-flex align-center pa-2 px-3 ga-2 card-drag-handle">
+      <span class="title-text text-truncate">{{ card.name }}</span>
+      <v-chip size="small" class="ml-1" variant="tonal">{{ metricLabel }}</v-chip>
+      <v-chip size="small" class="ml-1" variant="tonal">{{ rangeLabel }}</v-chip>
+
+      <!-- Single Filters popover for graphs — covers ticker / category scope
+           only (graph cards don't apply metric filters; that's a table-only
+           concept). -->
+      <CardFiltersPopover
+        :tickers="userTickers"
+        :filters="null"
+        @update:tickers="v => emit('update:userTickers', v)"
+      />
+
       <v-spacer />
-      <v-progress-circular v-if="loading" indeterminate size="14" width="2" />
+
+      <v-progress-circular v-if="loading" indeterminate size="18" width="2" class="me-1" />
+
+      <!-- Single ⋯ menu — Configure opens the dedicated graph dialog;
+           Rename / Duplicate / Delete are inline. -->
+      <CardActionsMenu
+        :card="card"
+        @configure="emit('configure')"
+        @rename="emit('rename')"
+        @duplicate="emit('duplicate')"
+        @delete="emit('delete')"
+      />
     </v-card-title>
+
     <v-card-text class="pa-2 position-relative" style="height: calc(100% - 48px)">
       <template v-if="error">
         <v-alert type="warning" density="compact" variant="tonal">{{ error }}</v-alert>
@@ -42,17 +60,14 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { useTheme } from 'vuetify'
-import type {
-  MetricKey,
-  SnapshotSeries,
-  SnapshotSeriesResponse,
-  ViewCard,
-} from '@kawakawa/types'
+import type { MetricKey, SnapshotSeries, SnapshotSeriesResponse, ViewCard } from '@kawakawa/types'
 import { CORP_METRIC_DEFS } from '@kawakawa/types'
 import { api } from '../../services/api'
 import { commodityService } from '../../services/commodityService'
 import type { Commodity } from '../../types'
 import { resolveTickerScope } from '../../utils/tickerScope'
+import CardFiltersPopover from './CardFiltersPopover.vue'
+import CardActionsMenu from './CardActionsMenu.vue'
 
 ChartJS.register(
   CategoryScale,
@@ -70,6 +85,16 @@ const props = defineProps<{
   tickerSet: Set<string> | null
   /** Planning-exclusion applied historically — hides these users' contribution. */
   excludedUserIds?: number[]
+  /** User's per-card filter (mixed `ticker` / `category:Foo` entries). */
+  userTickers: string[]
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:userTickers', value: string[]): void
+  (e: 'rename'): void
+  (e: 'configure'): void
+  (e: 'duplicate'): void
+  (e: 'delete'): void
 }>()
 
 const theme = useTheme()
@@ -222,20 +247,38 @@ function formatLabel(iso: string): string {
 }
 
 /**
- * Card-level tickers (graph-only) override the view's ticker scope when set.
- * Empty / undefined → fall back to whatever the view scope is.
+ * Effective ticker scope for the snapshot query: view scope ∩ card-level
+ * override (if any) ∩ user filter (if any). Each layer is "no constraint"
+ * when empty / null. The query endpoint expects the resolved ticker list, so
+ * categories get expanded here.
+ *
+ * Returning `undefined` means "no ticker constraint"; the API treats that as
+ * all tickers. Returning an empty array would over-constrain — we coerce
+ * empty intersections to `[]` so the user's "no rows match" message lights up
+ * instead of silently widening to everything.
  */
 function effectiveTickers(): string[] | undefined {
-  // Card-level scope wins when set; otherwise fall back to the view's already-
-  // resolved scope. Card-level scope may itself contain `category:Name` refs,
-  // so we run it through the resolver against the live commodity catalog.
+  const layers: (Set<string> | null)[] = []
+  if (props.tickerSet && props.tickerSet.size > 0) layers.push(props.tickerSet)
+
   const cardTickers = props.card.graph?.tickers
   if (cardTickers && cardTickers.length > 0) {
-    const resolved = resolveTickerScope(cardTickers, commodities.value)
-    return resolved && resolved.size > 0 ? [...resolved] : undefined
+    layers.push(resolveTickerScope(cardTickers, commodities.value))
   }
-  if (props.tickerSet && props.tickerSet.size > 0) return [...props.tickerSet]
-  return undefined
+  if (props.userTickers.length > 0) {
+    layers.push(resolveTickerScope(props.userTickers, commodities.value))
+  }
+
+  const constraining = layers.filter((s): s is Set<string> => s !== null && s.size >= 0)
+  if (constraining.length === 0) return undefined
+
+  let acc = new Set(constraining[0])
+  for (let i = 1; i < constraining.length; i++) {
+    const next = new Set<string>()
+    for (const t of acc) if (constraining[i].has(t)) next.add(t)
+    acc = next
+  }
+  return [...acc]
 }
 
 async function load(): Promise<void> {
@@ -287,13 +330,29 @@ onMounted(() => {
   void load()
 })
 
-// Re-query when the card's graph config or ticker scope changes — the panel
-// swaps ticker sets when views change; the editor mutates graph config live.
+// Re-query when any input that shapes the query changes — the panel swaps
+// ticker sets when views change; the editor mutates graph config live; the
+// user can narrow with the per-card filter.
 watch(
-  () => [props.card, props.tickerSet, props.excludedUserIds] as const,
+  () => [props.card, props.tickerSet, props.excludedUserIds, props.userTickers] as const,
   () => {
     void load()
   },
   { deep: true }
 )
 </script>
+
+<style scoped>
+.title-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-drag-handle {
+  cursor: grab;
+}
+.card-drag-handle:active {
+  cursor: grabbing;
+}
+</style>

@@ -125,7 +125,7 @@ const baseConfig: pino.LoggerOptions = {
  * Main application logger
  * Uses pino-pretty for readable output in development, JSON in production
  */
-export const logger = isDevelopment
+const logger = isDevelopment
   ? pino(
       baseConfig,
       pino.transport({
@@ -138,17 +138,5 @@ export const logger = isDevelopment
       })
     )
   : pino(baseConfig)
-
-/**
- * Create a child logger with additional context
- */
-export function createLogger(context: Record<string, unknown>) {
-  return logger.child(redactObject(context) as Record<string, unknown>)
-}
-
-/**
- * Logger type for use in function signatures
- */
-export type Logger = pino.Logger
 
 export default logger

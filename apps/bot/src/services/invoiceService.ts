@@ -543,44 +543,6 @@ export async function updateLineItemQuantity(
 }
 
 /**
- * Format invoice summary for Discord embed
- */
-export async function formatInvoiceForEmbed(
-  invoice: InvoiceWithDetails,
-  _locationDisplayMode: LocationDisplayMode
-): Promise<{ name: string; value: string }> {
-  const statusEmoji =
-    invoice.status === 'draft'
-      ? '📝'
-      : invoice.status === 'pending'
-        ? '📤'
-        : invoice.status === 'confirmed'
-          ? '🤝'
-          : invoice.status === 'fulfilled'
-            ? '✅'
-            : invoice.status === 'partially_fulfilled'
-              ? '⏳'
-              : '❌' // cancelled
-
-  const lines: string[] = []
-  lines.push(`Partner: **${invoice.counterpartyName}**`)
-  lines.push(`Status: ${statusEmoji} ${invoice.status}`)
-  lines.push(`Items: ${invoice.itemCount}`)
-
-  if (invoice.totalsByCurrency.length > 0) {
-    const totals = invoice.totalsByCurrency
-      .map(t => `${t.total.toFixed(2)} ${t.currency}`)
-      .join(', ')
-    lines.push(`Total: ${totals}`)
-  }
-
-  return {
-    name: `Invoice #${invoice.id}`,
-    value: lines.join('\n'),
-  }
-}
-
-/**
  * Format line items for Discord embed
  */
 export async function formatLineItemsForEmbed(

@@ -191,8 +191,8 @@ describe('SavedFiltersController', () => {
       expect(result.id).toBe(1)
     })
 
-    it('returns link filter to another user', async () => {
-      mockRows = [makeFilter({ userId: 20, privacy: 'link' })]
+    it('returns unlisted filter to another user', async () => {
+      mockRows = [makeFilter({ userId: 20, privacy: 'unlisted' })]
       const result = await controller.getById(1, mockRequest(10))
       expect(result.userId).toBe(20)
     })
@@ -375,9 +375,9 @@ describe('SavedFiltersController', () => {
       })
     })
 
-    it('throws 400 when trying to pin a link filter', async () => {
+    it('throws 400 when trying to pin an unlisted filter', async () => {
       vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
-      mockRows = [makeFilter({ privacy: 'link' })]
+      mockRows = [makeFilter({ privacy: 'unlisted' })]
       await expect(
         controller.togglePin(1, mockRequest(10, ['administrator']))
       ).rejects.toMatchObject({

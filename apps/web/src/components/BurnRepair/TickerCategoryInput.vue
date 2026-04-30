@@ -144,9 +144,7 @@ const categoriesIndex = computed<Map<string, number>>(() => {
   return m
 })
 
-const knownCategories = computed<string[]>(() =>
-  [...categoriesIndex.value.keys()].sort()
-)
+const knownCategories = computed<string[]>(() => [...categoriesIndex.value.keys()].sort())
 
 // -------- chip rendering --------
 interface ParsedChipDisplay {
@@ -197,9 +195,7 @@ const helpTokens = [
   },
 ]
 
-const showHelp = computed(
-  () => isFocused.value && inputText.value.trim().length === 0
-)
+const showHelp = computed(() => isFocused.value && inputText.value.trim().length === 0)
 
 const suggestions = computed<Suggestion[]>(() => {
   const q = inputText.value.trim().toLowerCase()

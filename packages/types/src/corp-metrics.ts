@@ -21,8 +21,9 @@ export type MetricKey =
   | 'gap'
   | 'inputGap'
   | 'stock'
+  | 'listedStock'
   | 'daysRemaining'
-  | 'daysOfCover'
+  | 'daysListed'
   | 'username'
 
 export type CorpMetricFormat = 'int' | 'decimal' | 'days' | 'text'
@@ -104,8 +105,23 @@ export const CORP_METRIC_DEFS: Record<MetricKey, MetricDef> = {
     groupings: ['ticker', 'user-ticker'],
   },
   stock: {
+    // Stock here is *on-hand* corp inventory (sum of FIO inventory across
+    // every active member's storages), not "for-sale remaining quantity."
+    // `daysRemaining` divides its deficit against this — answering "days
+    // until the corp runs out at current burn," including everything sitting
+    // on bases, not just listed-for-sale stock.
     key: 'stock',
-    label: 'Stock',
+    label: 'On-Hand Stock',
+    format: 'int',
+    groupings: ['ticker'],
+  },
+  listedStock: {
+    // Sum of remaining sell-order quantities (FIO-aware enrichment caps a
+    // listing at what the seller can actually fulfill). Pairs with `stock`
+    // (on-hand) — a buyer's "what could I purchase from the corp right now"
+    // number, not part of the runway math.
+    key: 'listedStock',
+    label: 'Listed Stock',
     format: 'int',
     groupings: ['ticker'],
   },
@@ -115,9 +131,13 @@ export const CORP_METRIC_DEFS: Record<MetricKey, MetricDef> = {
     format: 'days',
     groupings: ['ticker'],
   },
-  daysOfCover: {
-    key: 'daysOfCover',
-    label: 'Days of Cover',
+  daysListed: {
+    // listedStock / consumptionDaily — "how many days of consumption are
+    // currently listed for sale on the corp exchange?". Replaced the old
+    // `daysOfCover` (on-hand / consumption) since the on-hand version
+    // collapsed into `daysRemaining` once we made stock mean on-hand.
+    key: 'daysListed',
+    label: 'Days Listed',
     format: 'days',
     groupings: ['ticker'],
   },

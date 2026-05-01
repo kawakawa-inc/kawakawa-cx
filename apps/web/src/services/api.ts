@@ -67,6 +67,10 @@ import type {
   BurnRepairShoppingListRequest,
   BurnRepairShoppingListResponse,
   UserShip,
+  Shipment,
+  ShipmentStatus,
+  CreateShipmentRequest,
+  UpdateShipmentRequest,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -5046,6 +5050,79 @@ const realApi = {
     return response.json()
   },
 
+  // ==================== SHIPMENTS ====================
+  listShipments: async (): Promise<Shipment[]> => {
+    const response = await fetchWithLogging('/api/logistics/shipments', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list shipments: ${response.statusText}`)
+    return response.json()
+  },
+
+  getShipment: async (id: number): Promise<Shipment> => {
+    const response = await fetchWithLogging(`/api/logistics/shipments/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get shipment: ${response.statusText}`)
+    return response.json()
+  },
+
+  createShipment: async (body: CreateShipmentRequest): Promise<Shipment> => {
+    const response = await fetchWithLogging('/api/logistics/shipments', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create shipment')
+    }
+    return response.json()
+  },
+
+  updateShipment: async (id: number, body: UpdateShipmentRequest): Promise<Shipment> => {
+    const response = await fetchWithLogging(`/api/logistics/shipments/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update shipment')
+    }
+    return response.json()
+  },
+
+  setShipmentStatus: async (id: number, status: ShipmentStatus): Promise<Shipment> => {
+    const response = await fetchWithLogging(`/api/logistics/shipments/${id}/status`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ status }),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update shipment status')
+    }
+    return response.json()
+  },
+
+  deleteShipment: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/shipments/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete shipment: ${response.statusText}`)
+    return response.json()
+  },
+
   getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
     const response = await fetchWithLogging('/api/supply-planning/planets', {
       method: 'GET',
@@ -5475,6 +5552,13 @@ export const api = {
       realApi.updateLogisticsClaim(id, body),
     deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
     listShips: () => realApi.listShips(),
+    listShipments: () => realApi.listShipments(),
+    getShipment: (id: number) => realApi.getShipment(id),
+    createShipment: (body: CreateShipmentRequest) => realApi.createShipment(body),
+    updateShipment: (id: number, body: UpdateShipmentRequest) => realApi.updateShipment(id, body),
+    setShipmentStatus: (id: number, status: ShipmentStatus) =>
+      realApi.setShipmentStatus(id, status),
+    deleteShipment: (id: number) => realApi.deleteShipment(id),
   },
 }
 

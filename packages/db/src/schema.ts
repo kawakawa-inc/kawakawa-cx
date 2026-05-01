@@ -116,6 +116,12 @@ export const logisticsClaimCategoryEnum = pgEnum('logistics_claim_category', [
   'other',
 ])
 export const logisticsClaimSourceEnum = pgEnum('logistics_claim_source', ['manual', 'auto'])
+export const logisticsShipmentStatusEnum = pgEnum('logistics_shipment_status', [
+  'planned',
+  'dispatched',
+  'delivered',
+  'cancelled',
+])
 
 export const demandRateEnum = pgEnum('demand_rate', ['total', 'daily'])
 
@@ -756,6 +762,82 @@ export const locationDemandClaims = pgTable(
       name: 'ldc_location_fk',
       columns: [table.locationId],
       foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// ==================== SHIPMENTS (planned units of work) ====================
+// A shipment is a planned ship trip from one location to another, carrying
+// one-or-more lines. Lines reference a logistics_flow when the user is filling
+// the flow's per-cadence quota; ad-hoc lines (flowId = null) are one-off
+// material deliveries that don't have a recurring flow.
+export const shipments = pgTable(
+  'shipments',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fromLocationId: varchar('from_location_id', { length: 20 }).notNull(),
+    toLocationId: varchar('to_location_id', { length: 20 }).notNull(),
+    // Optional ship assignment. Stage C will auto-assign; for now the user
+    // picks from their fleet or leaves blank.
+    shipDbId: integer('ship_db_id'),
+    plannedLoadAt: timestamp('planned_load_at').notNull(),
+    plannedArrivalAt: timestamp('planned_arrival_at').notNull(),
+    status: logisticsShipmentStatusEnum('status').notNull().default('planned'),
+    actualDispatchAt: timestamp('actual_dispatch_at'),
+    actualArrivalAt: timestamp('actual_arrival_at'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('shipments_user_idx').on(table.userId),
+    activeIdx: index('shipments_active_idx').on(table.userId, table.status, table.plannedArrivalAt),
+    fromLocationFk: foreignKey({
+      name: 'shipments_from_location_fk',
+      columns: [table.fromLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    toLocationFk: foreignKey({
+      name: 'shipments_to_location_fk',
+      columns: [table.toLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    shipFk: foreignKey({
+      name: 'shipments_ship_fk',
+      columns: [table.shipDbId],
+      foreignColumns: [fioUserShips.id],
+    }),
+  })
+)
+
+export const shipmentLines = pgTable(
+  'shipment_lines',
+  {
+    id: serial('id').primaryKey(),
+    shipmentId: integer('shipment_id')
+      .notNull()
+      .references(() => shipments.id, { onDelete: 'cascade' }),
+    // Null for ad-hoc lines (one-off materials not tied to a recurring flow).
+    flowId: integer('flow_id'),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    amount: integer('amount').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    shipmentIdx: index('shipment_lines_shipment_idx').on(table.shipmentId),
+    flowIdx: index('shipment_lines_flow_idx').on(table.flowId),
+    commodityFk: foreignKey({
+      name: 'shipment_lines_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    flowFk: foreignKey({
+      name: 'shipment_lines_flow_fk',
+      columns: [table.flowId],
+      foreignColumns: [logisticsFlows.id],
     }),
   })
 )

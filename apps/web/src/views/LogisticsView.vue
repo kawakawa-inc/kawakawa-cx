@@ -95,6 +95,10 @@
               <v-icon start>mdi-clipboard-list</v-icon>
               Inspector
             </v-tab>
+            <v-tab value="shipments">
+              <v-icon start>mdi-package-variant-closed</v-icon>
+              Shipments
+            </v-tab>
             <v-tab value="graph">
               <v-icon start>mdi-graph-outline</v-icon>
               Graph
@@ -511,6 +515,17 @@
               </v-card-text>
             </v-tabs-window-item>
 
+            <!-- ==================== Shipments tab ==================== -->
+            <v-tabs-window-item value="shipments">
+              <ShipmentList
+                ref="shipmentListRef"
+                :ships="ships"
+                @new="openCreateShipment"
+                @edit="openEditShipment"
+                @changed="loadGraph"
+              />
+            </v-tabs-window-item>
+
             <!-- ==================== Graph tab ==================== -->
             <v-tabs-window-item value="graph">
               <LogisticsGraphMap
@@ -553,6 +568,15 @@
       :initial-location-id="claimDialog.initialLocationId"
       @saved="handleClaimSaved"
     />
+
+    <ShipmentEditDialog
+      v-model="shipmentDialog.open"
+      :shipment="shipmentDialog.shipment"
+      :location-items="locationItems"
+      :graph="graph"
+      :ships="ships"
+      @saved="handleShipmentSaved"
+    />
   </v-container>
 </template>
 
@@ -571,6 +595,8 @@ import FlowEditDialog from '../components/logistics/FlowEditDialog.vue'
 import BulkFlowDialog from '../components/logistics/BulkFlowDialog.vue'
 import ClaimEditDialog from '../components/logistics/ClaimEditDialog.vue'
 import ShipRosterPanel from '../components/logistics/ShipRosterPanel.vue'
+import ShipmentList from '../components/logistics/ShipmentList.vue'
+import ShipmentEditDialog from '../components/logistics/ShipmentEditDialog.vue'
 
 // Dynamically imported: the graph map pulls in cytoscape + dagre (~550 kB
 // minified). Users who only use the Inspector tab never pay that cost —
@@ -609,6 +635,8 @@ import type {
   LogisticsFlow,
   LocationDemandClaim,
   ClaimCategory,
+  Shipment,
+  UserShip,
 } from '@kawakawa/types'
 import type { KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 
@@ -639,7 +667,7 @@ const loading = ref(false)
 const selectedLocationId = ref<string>('')
 const snackbar = ref({ show: false, color: 'info', message: '' })
 const expandedTickers = ref<string[]>([])
-const mainTab = ref<'inspector' | 'graph'>('inspector')
+const mainTab = ref<'inspector' | 'shipments' | 'graph'>('inspector')
 
 // Flow CRUD state
 const flows = ref<LogisticsFlow[]>([])
@@ -687,6 +715,24 @@ const claimDialog = reactive<{
   claim: null,
   initialLocationId: '',
 })
+const shipmentDialog = reactive<{
+  open: boolean
+  shipment: Shipment | null
+}>({
+  open: false,
+  shipment: null,
+})
+const shipmentListRef = ref<InstanceType<typeof ShipmentList> | null>(null)
+const ships = ref<UserShip[]>([])
+
+async function loadShipsForDialog() {
+  try {
+    ships.value = await api.logistics.listShips()
+  } catch (e) {
+    console.error('Failed to load ships for shipment dialog', e)
+    ships.value = []
+  }
+}
 
 function openCreateFlow() {
   flowDialog.flow = null
@@ -750,6 +796,24 @@ async function loadClaims() {
   } catch (e) {
     console.error('Failed to load claims', e)
   }
+}
+
+function openCreateShipment() {
+  shipmentDialog.shipment = null
+  shipmentDialog.open = true
+  // Refresh ships in case the roster changed since the last load.
+  void loadShipsForDialog()
+}
+
+function openEditShipment(shipment: Shipment) {
+  shipmentDialog.shipment = shipment
+  shipmentDialog.open = true
+  void loadShipsForDialog()
+}
+
+async function handleShipmentSaved() {
+  // Reload the shipment list and the graph (B.3 will make graph reflect plans).
+  await Promise.all([shipmentListRef.value?.reload(), loadGraph()])
 }
 
 async function loadCommodityItems() {

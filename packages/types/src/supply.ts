@@ -471,6 +471,73 @@ export interface UpdateLocationDemandClaimRequest {
   note?: string | null
 }
 
+/** Lifecycle status of a planned shipment. */
+export type ShipmentStatus = 'planned' | 'dispatched' | 'delivered' | 'cancelled'
+
+/** One material line in a shipment's manifest. */
+export interface ShipmentLine {
+  id: number
+  /** Set when this line fulfills a recurring flow's per-cadence quota. Null for ad-hoc lines. */
+  flowId: number | null
+  commodityTicker: string
+  amount: number
+}
+
+/**
+ * A planned ship trip from one location to another, carrying one-or-more
+ * material lines. Created manually in Stage B; auto-generated in Stage C;
+ * matched to FIO flights in Stage D.
+ */
+export interface Shipment {
+  id: number
+  fromLocationId: string
+  toLocationId: string
+  /** Optional ship assignment (DB id of a fio_user_ships row). */
+  shipDbId: number | null
+  /** When the ship loads at the source. ISO string. */
+  plannedLoadAt: string
+  /** When the shipment is expected to arrive at the destination. ISO string. */
+  plannedArrivalAt: string
+  status: ShipmentStatus
+  /** Stamped by the server when status → 'dispatched'. */
+  actualDispatchAt: string | null
+  /** Stamped by the server when status → 'delivered'. */
+  actualArrivalAt: string | null
+  notes: string | null
+  lines: ShipmentLine[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ShipmentLineInput {
+  flowId?: number | null
+  commodityTicker: string
+  amount: number
+}
+
+export interface CreateShipmentRequest {
+  fromLocationId: string
+  toLocationId: string
+  shipDbId?: number | null
+  plannedLoadAt: string
+  plannedArrivalAt: string
+  notes?: string
+  lines: ShipmentLineInput[]
+}
+
+export interface UpdateShipmentRequest {
+  shipDbId?: number | null
+  plannedLoadAt?: string
+  plannedArrivalAt?: string
+  notes?: string | null
+  /** When supplied, replaces the entire manifest. */
+  lines?: ShipmentLineInput[]
+}
+
+export interface UpdateShipmentStatusRequest {
+  status: ShipmentStatus
+}
+
 /** Per-ticker breakdown of why a node consumes what it consumes */
 export interface NativeConsumptionBreakdown {
   workforceBurn: number

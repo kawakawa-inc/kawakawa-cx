@@ -17,6 +17,8 @@ import {
   fioUserStorage,
   fioInventory,
   fioLocations,
+  shipments,
+  shipmentLines,
 } from '@kawakawa/db'
 import { eq, and, inArray } from 'drizzle-orm'
 import type {
@@ -510,11 +512,35 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     getJumpDistance: makeJumpDistance(),
   })
 
+  // ---- Load active shipments to anchor per-flow nextArrivalAt ----
+  // A shipment is "active" while it's planned or dispatched; once delivered
+  // or cancelled it falls out of the projection. Joining lines with their
+  // parent shipment lets us project the soonest planned arrival per flow.
+  const shipmentRows = await db
+    .select({
+      flowId: shipmentLines.flowId,
+      plannedArrivalAt: shipments.plannedArrivalAt,
+    })
+    .from(shipmentLines)
+    .innerJoin(shipments, eq(shipmentLines.shipmentId, shipments.id))
+    .where(and(eq(shipments.userId, userId), inArray(shipments.status, ['planned', 'dispatched'])))
+
+  const soonestArrivalByFlowId = new Map<number, number>()
+  const nowMsLocal = now.getTime()
+  for (const row of shipmentRows) {
+    if (row.flowId == null) continue
+    const arrivalMs = row.plannedArrivalAt.getTime()
+    if (arrivalMs <= nowMsLocal) continue // ignore arrivals that should have already happened
+    const existing = soonestArrivalByFlowId.get(row.flowId)
+    if (existing === undefined || arrivalMs < existing) {
+      soonestArrivalByFlowId.set(row.flowId, arrivalMs)
+    }
+  }
+
   // ---- Augment with timing fields ----
   // Per (loc, ticker): days-of-stock and run-out date based on net daily
-  // consumption. Per demand edge: latest dispatch date based on transitDays.
-  // Per (loc, ticker) anywhere it has consumption: latest contract-by date
-  // based on the user's contractLeadDays setting.
+  // consumption. Per demand edge: cadence-based next-arrival/load/contract
+  // dates, anchored to a planned shipment when one exists for that flow.
   graph.settings.contractLeadDays = contractLeadDays
   applyTimingFields(
     graph,
@@ -522,7 +548,8 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     dailyProductionByLoc,
     contractLeadDays,
     now,
-    burnDays
+    burnDays,
+    soonestArrivalByFlowId
   )
 
   // Suppress unused-import lint noise from the CATEGORIES constant if not referenced elsewhere
@@ -557,7 +584,15 @@ export function applyTimingFields(
   dailyProductionByLoc: Map<string, Record<string, number>>,
   contractLeadDays: number,
   now: Date,
-  burnDays: number
+  burnDays: number,
+  /**
+   * Optional `flowId → soonestPlannedArrivalAt(ms)` from active (planned or
+   * dispatched) shipments. When present for a flow, its `nextArrivalAt`
+   * anchors to the planned arrival instead of the cadence projection. When
+   * absent (no active shipment for the flow), the cadence projection is
+   * used as the fallback (Stage A behavior).
+   */
+  soonestArrivalByFlowId: Map<number, number> = new Map()
 ): void {
   const nowMs = now.getTime()
   const runOutMsByLoc = new Map<string, Map<string, number>>()
@@ -632,11 +667,13 @@ export function applyTimingFields(
   }
 
   // Per-edge cadence pass: compute the next-arrival → load → ship-by → contract-by
-  // timeline plus per-shipment amount. Stage A projects forward from `now`;
-  // Stage B will swap in shipment-anchored arrival dates.
+  // timeline plus per-shipment amount. When an active shipment exists for the
+  // flow, anchor the dates to its plannedArrivalAt; otherwise fall back to a
+  // forward cadence projection from `now`.
   for (const edge of graph.edges) {
     if (edge.kind !== 'demand' && edge.kind !== 'fixed') {
-      // Surplus edges don't get per-shipment timing in Stage A.
+      // Surplus edges don't get per-shipment timing — producer-push shipments
+      // are a Stage C concern.
       edge.perShipmentAmount = 0
       edge.nextArrivalAt = null
       edge.loadAt = null
@@ -647,7 +684,8 @@ export function applyTimingFields(
     const dailyAtDest =
       (dailyConsumptionByLoc.get(edge.toLocationId) ?? {})[edge.commodityTicker] ?? 0
     edge.perShipmentAmount = dailyAtDest * edge.cadenceDays
-    const arrivalMs = nowMs + edge.cadenceDays * MS_PER_DAY
+    const planned = soonestArrivalByFlowId.get(edge.id)
+    const arrivalMs = planned ?? nowMs + edge.cadenceDays * MS_PER_DAY
     edge.nextArrivalAt = new Date(arrivalMs).toISOString()
     const loadMs = arrivalMs - edge.transitDays * MS_PER_DAY
     edge.loadAt = new Date(loadMs).toISOString()

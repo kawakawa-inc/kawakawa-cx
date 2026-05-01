@@ -169,6 +169,13 @@
       "when": 1777593573672,
       "tag": "0023_supreme_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777606538108,
+      "tag": "0024_wooden_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

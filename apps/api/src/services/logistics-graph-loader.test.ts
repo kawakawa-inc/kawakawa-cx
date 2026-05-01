@@ -229,6 +229,69 @@ describe('applyTimingFields', () => {
     expect(e.contractBy).toBeNull()
   })
 
+  // ---- Stage B.3: shipment-anchored arrival ----
+
+  it('shipment-anchor: planned arrival overrides cadence projection', () => {
+    // cadence 14 → cadence projection would put arrival at day 14. But there's
+    // a planned shipment at day 5. Date math must anchor on day 5.
+    const graph = makeGraph(
+      [makeNode('BEN'), makeNode('Pyrgos', { CAF: 100 })],
+      [makeEdge(1, 'BEN', 'Pyrgos', 'CAF', 5, { cadenceDays: 14 })]
+    )
+    const dailyC = new Map([['Pyrgos', { CAF: 10 }]])
+    const dailyP = new Map<string, Record<string, number>>([['Pyrgos', {}]])
+    const plannedArrivalMs = NOW.getTime() + 5 * MS_PER_DAY
+    const anchors = new Map<number, number>([[1, plannedArrivalMs]])
+    applyTimingFields(graph, dailyC, dailyP, 3, NOW, 7, anchors)
+
+    const e = graph.edges[0]
+    expect(e.nextArrivalAt).toBe(new Date(plannedArrivalMs).toISOString())
+    expect(e.loadAt).toBe(new Date(plannedArrivalMs - 5 * MS_PER_DAY).toISOString())
+    expect(e.contractBy).toBe(new Date(plannedArrivalMs - (5 + 3) * MS_PER_DAY).toISOString())
+  })
+
+  it('shipment-anchor: only one flow has a shipment; others use cadence', () => {
+    const graph = makeGraph(
+      [makeNode('BEN'), makeNode('A'), makeNode('B')],
+      [
+        makeEdge(1, 'BEN', 'A', 'CAF', 0, { cadenceDays: 7 }),
+        makeEdge(2, 'BEN', 'B', 'CAF', 0, { cadenceDays: 7 }),
+      ]
+    )
+    const dailyC = new Map<string, Record<string, number>>([
+      ['A', { CAF: 5 }],
+      ['B', { CAF: 5 }],
+    ])
+    const dailyP = new Map<string, Record<string, number>>([
+      ['A', {}],
+      ['B', {}],
+    ])
+    // Only flow 2 has a planned shipment, at day 3.
+    const anchors = new Map<number, number>([[2, NOW.getTime() + 3 * MS_PER_DAY]])
+    applyTimingFields(graph, dailyC, dailyP, 3, NOW, 7, anchors)
+
+    expect(graph.edges[0].nextArrivalAt).toBe(
+      new Date(NOW.getTime() + 7 * MS_PER_DAY).toISOString()
+    ) // cadence
+    expect(graph.edges[1].nextArrivalAt).toBe(
+      new Date(NOW.getTime() + 3 * MS_PER_DAY).toISOString()
+    ) // anchored
+  })
+
+  it('shipment-anchor: no anchor + empty map → cadence projection (Stage A behavior)', () => {
+    const graph = makeGraph(
+      [makeNode('BEN'), makeNode('Pyrgos', { CAF: 100 })],
+      [makeEdge(1, 'BEN', 'Pyrgos', 'CAF', 5, { cadenceDays: 7 })]
+    )
+    const dailyC = new Map([['Pyrgos', { CAF: 10 }]])
+    const dailyP = new Map<string, Record<string, number>>([['Pyrgos', {}]])
+    applyTimingFields(graph, dailyC, dailyP, 3, NOW, 7, new Map())
+
+    expect(graph.edges[0].nextArrivalAt).toBe(
+      new Date(NOW.getTime() + 7 * MS_PER_DAY).toISOString()
+    )
+  })
+
   it('handles multiple tickers per node independently', () => {
     const graph = makeGraph([makeNode('Pyrgos', { CAF: 50, RAT: 100 })])
     const dailyC = new Map([['Pyrgos', { CAF: 5, RAT: 25 }]])

@@ -205,3 +205,140 @@ export interface FioGroupHubResponse {
   PlayerStationaryShips: unknown[]
   Failures: unknown[]
 }
+
+// ==================== Ship API Types ====================
+
+// One entry in /ship/ships/{user}
+export interface FioShipRepairMaterial {
+  ShipRepairMaterialId: string
+  MaterialName: string
+  MaterialId: string
+  MaterialTicker: string
+  Amount: number
+}
+
+export interface FioShipAddressLine {
+  LineId: string
+  LineType: string // SYSTEM | STATION | PLANET (and possibly others)
+  NaturalId: string
+  Name: string
+}
+
+export interface FioShip {
+  RepairMaterials: FioShipRepairMaterial[]
+  AddressLines: FioShipAddressLine[]
+  ShipId: string
+  StoreId: string
+  StlFuelStoreId: string
+  FtlFuelStoreId: string
+  Registration: string
+  Name: string | null
+  CommissioningTimeEpochMs: number | null
+  BlueprintNaturalId: string | null
+  FlightId: string | null
+  Acceleration: number | null
+  Thrust: number | null
+  Mass: number | null
+  OperatingEmptyMass: number | null
+  ReactorPower: number | null
+  EmitterPower: number | null
+  Volume: number | null
+  Condition: number | null
+  LastRepairEpochMs: number | null
+  Location: string | null
+  StlFuelFlowRate: number | null
+  UserNameSubmitted: string
+  Timestamp: string
+}
+
+// One entry in /ship/ships/fuel/{user}
+export interface FioShipFuelStorageItem {
+  MaterialId: string
+  MaterialName: string
+  MaterialTicker: string
+  MaterialAmount: number
+  MaterialWeight?: number
+  MaterialVolume?: number
+  TotalWeight?: number
+  TotalVolume?: number
+}
+
+export interface FioShipFuelStore {
+  StorageItems: FioShipFuelStorageItem[]
+  StorageId: string
+  AddressableId: string // ShipId
+  Name: string
+  WeightLoad: number
+  WeightCapacity: number
+  VolumeLoad: number
+  VolumeCapacity: number
+  FixedStore: boolean
+  Type: 'STL_FUEL_STORE' | 'FTL_FUEL_STORE'
+  UserNameSubmitted: string
+  Timestamp: string
+}
+
+// One entry in /storage/{user} — covers every storage on the user's account:
+// base STORE, station WAREHOUSE_STORE, ship cargo bays (SHIP_STORE), and ship
+// fuel tanks (STL_FUEL_STORE / FTL_FUEL_STORE).
+//
+// Match a ship's cargo bay via `StorageId === ship.StoreId`; fuel tanks via
+// the ship's `StlFuelStoreId` / `FtlFuelStoreId`. The same shape covers all
+// types — what differs is which `Type` you filter to and what `AddressableId`
+// points at (a planet/station for base/warehouse, a ship for ship-related).
+export interface FioStorage {
+  StorageItems: FioShipFuelStorageItem[]
+  StorageId: string
+  AddressableId: string
+  Name: string | null
+  WeightLoad: number
+  WeightCapacity: number
+  VolumeLoad: number
+  VolumeCapacity: number
+  FixedStore: boolean
+  Type: string // STORE | WAREHOUSE_STORE | SHIP_STORE | STL_FUEL_STORE | FTL_FUEL_STORE | ...
+  UserNameSubmitted: string
+  Timestamp: string
+}
+
+// One entry in /ship/flights/{user}
+export interface FioShipFlightSegmentLine {
+  OriginLineIndex?: number
+  DestinationLineIndex?: number
+  Type: string // 'system' | 'planet' | etc.
+  LineId: string
+  LineNaturalId: string
+  LineName: string
+}
+
+export interface FioShipFlightSegment {
+  OriginLines: FioShipFlightSegmentLine[]
+  DestinationLines: FioShipFlightSegmentLine[]
+  SegmentIndex: number
+  Type: string // TAKE_OFF | DEPARTURE | JUMP | CHARGE | APPROACH | LANDING
+  DepartureTimeEpochMs: number
+  ArrivalTimeEpochMs: number
+  StlDistance: number | null
+  StlFuelConsumption: number | null
+  FtlDistance: number | null
+  FtlFuelConsumption: number | null
+  Damage: number
+  Origin: string
+  Destination: string
+}
+
+export interface FioShipFlight {
+  Segments: FioShipFlightSegment[]
+  FlightId: string
+  ShipId: string
+  Origin: string
+  Destination: string
+  DepartureTimeEpochMs: number
+  ArrivalTimeEpochMs: number
+  CurrentSegmentIndex: number
+  StlDistance: number | null
+  FtlDistance: number | null
+  IsAborted: boolean
+  UserNameSubmitted: string
+  Timestamp: string
+}

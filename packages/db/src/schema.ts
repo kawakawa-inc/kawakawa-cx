@@ -47,6 +47,7 @@ export const syncJobTypeEnum = pgEnum('sync_job_type', [
   'commodities',
   'locations',
   'stations',
+  'user-ships',
 ])
 export const syncJobStatusEnum = pgEnum('sync_job_status', ['pending', 'running', 'done', 'failed'])
 export const syncJobSourceEnum = pgEnum('sync_job_source', ['user', 'system'])
@@ -456,6 +457,148 @@ export const fioPlanetProduction = pgTable(
   })
 )
 
+// ==================== FIO USER SHIPS (Ship roster from /ship/ships/{user}) ====================
+// Cargo Volume + fuel state are flattened from the per-store fuel endpoint for query simplicity.
+// Active flight (if any) joins via flightId → fioUserShipFlights.fioFlightId.
+export const fioUserShips = pgTable(
+  'fio_user_ships',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fioShipId: varchar('fio_ship_id', { length: 64 }).notNull(),
+    registration: varchar('registration', { length: 20 }).notNull(),
+    // FIO returns null for unnamed starter ships; UI should fall back to registration.
+    name: varchar('name', { length: 64 }),
+    blueprintNaturalId: varchar('blueprint_natural_id', { length: 32 }),
+    commissioningAt: timestamp('commissioning_at'),
+    flightId: varchar('flight_id', { length: 64 }), // null = parked
+    volumeM3: decimal('volume_m3', { precision: 14, scale: 4 }).notNull().default('0'),
+    mass: decimal('mass', { precision: 14, scale: 4 }).notNull().default('0'),
+    operatingEmptyMass: decimal('operating_empty_mass', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    acceleration: decimal('acceleration', { precision: 14, scale: 4 }),
+    thrust: decimal('thrust', { precision: 14, scale: 4 }),
+    reactorPower: decimal('reactor_power', { precision: 14, scale: 4 }),
+    emitterPower: decimal('emitter_power', { precision: 14, scale: 4 }),
+    stlFuelFlowRate: decimal('stl_fuel_flow_rate', { precision: 14, scale: 6 }),
+    condition: decimal('condition', { precision: 6, scale: 5 }),
+    lastRepairAt: timestamp('last_repair_at'),
+    locationNaturalId: varchar('location_natural_id', { length: 20 }), // null when in flight
+    locationSystemNaturalId: varchar('location_system_natural_id', { length: 20 }),
+    // FIO's own timestamp on the ship record — i.e. "when FIO last received
+    // an update for this ship from PRUN," not when we last hit FIO. Useful as
+    // a freshness indicator in the UI ("Data from 2h ago").
+    fioReportedAt: timestamp('fio_reported_at'),
+    storeId: varchar('store_id', { length: 64 }),
+    stlFuelStoreId: varchar('stl_fuel_store_id', { length: 64 }),
+    ftlFuelStoreId: varchar('ftl_fuel_store_id', { length: 64 }),
+    // ---- Cargo bay (matched against /storage/{user} via storeId) ----
+    cargoWeightLoad: decimal('cargo_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoWeightCapacity: decimal('cargo_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoVolumeLoad: decimal('cargo_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoVolumeCapacity: decimal('cargo_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    // ---- STL fuel tank ----
+    stlFuelAmount: decimal('stl_fuel_amount', { precision: 14, scale: 4 }).notNull().default('0'),
+    stlFuelMaxUnits: decimal('stl_fuel_max_units', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelWeightLoad: decimal('stl_fuel_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelWeightCapacity: decimal('stl_fuel_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelVolumeLoad: decimal('stl_fuel_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelVolumeCapacity: decimal('stl_fuel_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    // ---- FTL fuel tank ----
+    ftlFuelAmount: decimal('ftl_fuel_amount', { precision: 14, scale: 4 }).notNull().default('0'),
+    ftlFuelMaxUnits: decimal('ftl_fuel_max_units', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelWeightLoad: decimal('ftl_fuel_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelWeightCapacity: decimal('ftl_fuel_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelVolumeLoad: decimal('ftl_fuel_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelVolumeCapacity: decimal('ftl_fuel_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('fio_user_ships_user_idx').on(table.userId),
+    uniqueUserShip: uniqueIndex('fio_user_ships_user_ship_idx').on(table.userId, table.fioShipId),
+  })
+)
+
+// ==================== FIO USER SHIP REPAIR MATERIALS ====================
+// Replaced wholesale per ship per sync (delete + insert).
+export const fioUserShipRepairMaterials = pgTable(
+  'fio_user_ship_repair_materials',
+  {
+    id: serial('id').primaryKey(),
+    shipId: integer('ship_id')
+      .notNull()
+      .references(() => fioUserShips.id, { onDelete: 'cascade' }),
+    materialTicker: varchar('material_ticker', { length: 10 }).notNull(),
+    amount: integer('amount').notNull(),
+  },
+  table => ({
+    shipIdx: index('fio_user_ship_repair_materials_ship_idx').on(table.shipId),
+  })
+)
+
+// ==================== FIO USER SHIP FLIGHTS (Active and recent flights) ====================
+export const fioUserShipFlights = pgTable(
+  'fio_user_ship_flights',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fioFlightId: varchar('fio_flight_id', { length: 64 }).notNull(),
+    fioShipId: varchar('fio_ship_id', { length: 64 }).notNull(),
+    originDisplay: text('origin_display'),
+    destinationDisplay: text('destination_display'),
+    originNaturalId: varchar('origin_natural_id', { length: 20 }),
+    destinationNaturalId: varchar('destination_natural_id', { length: 20 }),
+    departureAt: timestamp('departure_at'),
+    arrivalAt: timestamp('arrival_at'),
+    currentSegmentIndex: integer('current_segment_index'),
+    stlDistance: decimal('stl_distance', { precision: 18, scale: 4 }),
+    ftlDistance: decimal('ftl_distance', { precision: 18, scale: 4 }),
+    isAborted: boolean('is_aborted').notNull().default(false),
+    segments: jsonb('segments').notNull().default([]),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('fio_user_ship_flights_user_idx').on(table.userId),
+    uniqueUserFlight: uniqueIndex('fio_user_ship_flights_user_flight_idx').on(
+      table.userId,
+      table.fioFlightId
+    ),
+  })
+)
+
 // ==================== SELL ORDERS ====================
 export const sellOrders = pgTable(
   'sell_orders',
@@ -545,6 +688,14 @@ export const logisticsFlows = pgTable(
     amountOverride: integer('amount_override'), // required when kind='fixed'
     rate: demandRateEnum('rate').notNull().default('daily'),
     priority: integer('priority'), // null = fall through to jump-distance ordering
+    // Days for one ship trip from source to destination. Used to compute
+    // "ship by" deadlines per (base, commodity) shortfall. 0 = unset/instant.
+    transitDays: integer('transit_days').notNull().default(0),
+    // Days between consecutive shipments on this flow. The shipment unit of
+    // work — drives per-shipment quantity (dailyConsumption × cadenceDays)
+    // and the next-arrival / load / contract-by timeline. Defaults to 7,
+    // user-set per flow.
+    cadenceDays: integer('cadence_days').notNull().default(7),
     note: text('note'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

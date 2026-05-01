@@ -176,6 +176,32 @@
             />
           </v-col>
 
+          <!-- Transit days -->
+          <v-col cols="6" class="mt-3">
+            <v-text-field
+              v-model.number="form.transitDays"
+              type="number"
+              min="0"
+              label="Transit time (days)"
+              hint="One ship trip from source to destination. 0 = unset."
+              persistent-hint
+              density="compact"
+            />
+          </v-col>
+
+          <!-- Cadence days -->
+          <v-col cols="6" class="mt-3">
+            <v-text-field
+              v-model.number="form.cadenceDays"
+              type="number"
+              min="1"
+              label="Cadence (days)"
+              hint="How often a shipment is planned. Smaller = more frequent / smaller cargo per trip."
+              persistent-hint
+              density="compact"
+            />
+          </v-col>
+
           <!-- Note -->
           <v-col cols="12" class="mt-2">
             <v-text-field
@@ -261,6 +287,8 @@ interface FormShape {
   amountOverride: number | null
   rate: DemandRate
   priority: number | null
+  transitDays: number
+  cadenceDays: number
   note: string
 }
 
@@ -285,6 +313,8 @@ function emptyForm(): FormShape {
     amountOverride: null,
     rate: 'daily',
     priority: null,
+    transitDays: 0,
+    cadenceDays: 7,
     note: '',
   }
 }
@@ -332,6 +362,8 @@ watch(
         amountOverride: flow.amountOverride,
         rate: flow.rate,
         priority: flow.priority,
+        transitDays: flow.transitDays ?? 0,
+        cadenceDays: flow.cadenceDays ?? 7,
         note: flow.note ?? '',
       }
     } else {
@@ -394,6 +426,8 @@ async function handleSave() {
   saving.value = true
   error.value = ''
   try {
+    const transitDays = Math.max(0, Math.floor(Number(form.value.transitDays) || 0))
+    const cadenceDays = Math.max(1, Math.floor(Number(form.value.cadenceDays) || 7))
     if (editing.value && props.flow) {
       const body: UpdateLogisticsFlowRequest = {
         fromStorageTypes: form.value.fromStorageTypes,
@@ -402,6 +436,8 @@ async function handleSave() {
         amountOverride: form.value.kind === 'fixed' ? form.value.amountOverride : null,
         rate: form.value.rate,
         priority: form.value.priority,
+        transitDays,
+        cadenceDays,
         note: form.value.note.trim() || null,
       }
       await api.logistics.updateFlow(props.flow.id, body)
@@ -414,6 +450,8 @@ async function handleSave() {
         toStorageTypes: form.value.toStorageTypes,
         kind: form.value.kind,
         rate: form.value.rate,
+        transitDays,
+        cadenceDays,
       }
       if (form.value.kind === 'fixed' && form.value.amountOverride !== null) {
         body.amountOverride = form.value.amountOverride

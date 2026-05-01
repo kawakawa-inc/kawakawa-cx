@@ -316,6 +316,16 @@ export const SETTING_DEFINITIONS = {
       'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and burnRepair.excludedPlanets (supply page).',
   } satisfies SettingDef<string[], 'string[]'>,
 
+  'logistics.contractLeadDays': {
+    key: 'logistics.contractLeadDays',
+    type: 'number',
+    defaultValue: 3,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Contract Lead Days',
+    description:
+      'Lead time (days) you give a KAWA partner when placing a contract. Used to compute "contract by" deadlines per base in the logistics view. PRUN default is 3.',
+  } satisfies SettingDef<number, 'number'>,
+
   'burnRepair.includeProduction': {
     key: 'burnRepair.includeProduction',
     type: 'boolean',

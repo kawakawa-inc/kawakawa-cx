@@ -346,6 +346,14 @@ export interface LogisticsFlow {
   amountOverride: number | null
   rate: DemandRate
   priority: number | null
+  /** Days for one ship trip from source to destination. 0 = unset/instant. */
+  transitDays: number
+  /**
+   * Days between consecutive shipments on this flow. Drives the shipment
+   * unit of work — per-shipment quantity and the next-arrival / load /
+   * contract-by timeline. Defaults to 7. User-set per flow.
+   */
+  cadenceDays: number
   note: string | null
   createdAt: string
   updatedAt: string
@@ -361,6 +369,8 @@ export interface CreateLogisticsFlowRequest {
   amountOverride?: number
   rate?: DemandRate
   priority?: number
+  transitDays?: number
+  cadenceDays?: number
   note?: string
 }
 
@@ -371,6 +381,8 @@ export interface UpdateLogisticsFlowRequest {
   amountOverride?: number | null
   rate?: DemandRate
   priority?: number | null
+  transitDays?: number
+  cadenceDays?: number
   note?: string | null
 }
 
@@ -482,6 +494,41 @@ export interface EdgeState {
   /** True when kind='fixed' (user-pinned) */
   isOverride: boolean
   priority: number | null
+  /** Days for one ship trip on this edge (mirrored from the flow row). */
+  transitDays: number
+  /** Days between shipments on this flow (mirrored from the flow row). */
+  cadenceDays: number
+  /**
+   * Quantity carried in one shipment on this flow:
+   * `dailyConsumption(at destination) × cadenceDays`. 0 when the destination
+   * has no consumption for the ticker. Surplus edges report 0 in Stage A —
+   * surplus shipments are tracked separately in Stage B.
+   */
+  perShipmentAmount: number
+  /**
+   * The next planned arrival date for this flow at the destination. In Stage
+   * A this is a forward projection from `now`: `now + cadenceDays`. Stage B
+   * (shipment entity) anchors it to the latest active shipment instead. ISO
+   * string. Null on surplus edges.
+   */
+  nextArrivalAt: string | null
+  /**
+   * When the ship must load at the source to arrive on `nextArrivalAt`:
+   * `nextArrivalAt − transitDays`. ISO string. Null on surplus edges.
+   */
+  loadAt: string | null
+  /**
+   * Latest date the ship must depart the source — same as `loadAt` today.
+   * Kept distinct so we can later add ship-prep time without renaming.
+   */
+  shipBy: string | null
+  /**
+   * Latest date to place an inbound contract so goods arrive at the source
+   * by `loadAt`: `loadAt − contract_lead_days`. Per-flow because each flow
+   * has its own cadence and therefore its own load schedule. ISO string.
+   * Null on surplus edges.
+   */
+  contractBy: string | null
   note: string | null
 }
 
@@ -511,6 +558,57 @@ export interface NodeState {
   balance: Record<string, number>
   /** Shopping list = max(0, -balance). Shorthand for the UI. */
   shoppingList: Record<string, number>
+  /**
+   * Per-ticker daily consumption rate (workforce burn + production inputs +
+   * daily-rate claims). Production is NOT subtracted here — it's reported
+   * separately in `dailyProduction` so callers can compute net daily.
+   */
+  dailyConsumption: Record<string, number>
+  /** Per-ticker daily production rate. */
+  dailyProduction: Record<string, number>
+  /**
+   * Per-ticker days of stock remaining at current net daily consumption.
+   * `Infinity` (encoded as `null` over the wire) if net consumption is 0.
+   * Stock-mode='ignored' nodes report `null`.
+   */
+  daysOfStock: Record<string, number | null>
+  /**
+   * Per-ticker run-out date as an ISO string. Null when daysOfStock is
+   * Infinity or stock is being ignored.
+   */
+  runOutAt: Record<string, string | null>
+  /**
+   * Per-ticker latest date to place an external KAWA contract so a partner's
+   * delivery arrives before run-out. `runOutAt - settings.contractLeadDays`.
+   * Null when runOutAt is null. Computed for every ticker the node consumes
+   * (contracts don't require a pre-existing demand edge).
+   */
+  latestContractAt: Record<string, string | null>
+  /**
+   * Per-ticker daily outflow rate committed to downstream demand/fixed edges
+   * (`derivedOutflow / burnDays`). Drives the effective-drain calculation so
+   * a hub with stock-out-the-door surfaces a real run-out instead of "never."
+   */
+  dailyOutflow: Record<string, number>
+  /**
+   * Per-ticker IMMEDIATE upstream sources for this ticker's inflow — the
+   * locationIds whose committed flows feed this node. The UI surfaces these
+   * as click-through chips so the user can navigate one hop at a time:
+   *
+   * - `[]` — this node is its own source: it produces the ticker, has no
+   *   committed inflow, or otherwise owns the action here. Contract-by/CX
+   *   decisions belong to this row.
+   * - `[X]` — single upstream feed (most leaves). The leaf is informational;
+   *   click X to see X's own sources / action.
+   * - `[X, Y, ...]` — aggregating hub fed by multiple committed surplus or
+   *   demand edges (e.g. BEN gets DW from two producer planets). Surfaced as
+   *   a chip-with-dropdown.
+   *
+   * Surplus inbound edges take priority when both kinds are present at a node
+   * — surplus is the "supply push" channel, so those are the producers we want
+   * to surface. Edges with `amount === 0` (solver didn't allocate) are ignored.
+   */
+  chainSource: Record<string, string[]>
   warnings: string[]
 }
 
@@ -521,8 +619,110 @@ export interface LogisticsGraph {
     repairDays: number
     conditionMode: 'actual' | 'max'
     stockMode: 'included' | 'ignored'
+    /**
+     * Lead time (days) the user expects to give a KAWA partner when placing
+     * a contract. Used to compute `latestContractAt` per node/ticker.
+     * Default 3 (PRUN default). Stored as a user setting.
+     */
+    contractLeadDays: number
   }
   nodes: NodeState[]
   edges: EdgeState[]
   warnings: string[]
+}
+
+/** Repair material need on a ship (synced from FIO `RepairMaterials`) */
+export interface ShipRepairMaterial {
+  ticker: string
+  amount: number
+}
+
+/** Active or recently-finished flight for one of the user's ships */
+export interface ShipFlight {
+  fioFlightId: string
+  fioShipId: string
+  originDisplay: string | null
+  destinationDisplay: string | null
+  originNaturalId: string | null
+  destinationNaturalId: string | null
+  departureAt: string | null
+  arrivalAt: string | null
+  currentSegmentIndex: number | null
+  stlDistance: number | null
+  ftlDistance: number | null
+  isAborted: boolean
+}
+
+/** One of the user's ships, joined with current fuel state and active flight */
+export interface UserShip {
+  id: number
+  fioShipId: string
+  registration: string
+  /** FIO returns null for unnamed starter ships — UI should fall back to registration. */
+  name: string | null
+  blueprintNaturalId: string | null
+  commissioningAt: string | null
+  /** True when the ship has an active flight assigned */
+  inFlight: boolean
+  /** Total mass (tons) of the ship as reported by FIO — includes cargo + fuel */
+  mass: number
+  operatingEmptyMass: number
+  acceleration: number | null
+  thrust: number | null
+  reactorPower: number | null
+  emitterPower: number | null
+  stlFuelFlowRate: number | null
+  /** Hull condition 0..1 */
+  condition: number | null
+  lastRepairAt: string | null
+  /** Resolved location naturalId (most-specific: planet > station > system); null when in flight */
+  locationNaturalId: string | null
+  /** Display name resolved from `fio_locations` */
+  locationName: string | null
+  locationSystemNaturalId: string | null
+  /**
+   * Cargo bay state, sourced from `/storage/{user}` and matched by `StoreId`.
+   * `weightCapacity` is the real mass cap in tons (e.g. 5000 t for an HCB).
+   * `weightLoad` / `volumeLoad` are the live currently-loaded amounts.
+   */
+  cargo: {
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  /**
+   * STL/FTL fuel state. `amount` is in fuel units; `maxUnits` is the tank's
+   * capacity in those same units (derived from VolumeCapacity / unit-volume).
+   * `weightLoad`/`weightCapacity` and `volumeLoad`/`volumeCapacity` are the
+   * tank's mass and volume figures (t / m³) — useful for displaying fill bars.
+   */
+  stlFuel: {
+    amount: number
+    maxUnits: number
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  ftlFuel: {
+    amount: number
+    maxUnits: number
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  repairMaterials: ShipRepairMaterial[]
+  /** Active flight if `inFlight`, else null */
+  flight: ShipFlight | null
+  /** When our DB last upserted this row from FIO. */
+  lastSyncedAt: string
+  /**
+   * The Timestamp field FIO returned with the ship record — i.e. when FIO
+   * itself last got an update from the player. The useful "data freshness"
+   * value to show in the UI ("data from 2h ago"). May be null if FIO didn't
+   * include a timestamp (rare).
+   */
+  fioReportedAt: string | null
 }

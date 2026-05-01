@@ -49,6 +49,14 @@
         </v-tooltip>
         <v-tooltip location="bottom">
           <template #activator="{ props }">
+            <v-btn v-bind="props" to="/logistics" icon size="small" class="mx-1">
+              <v-icon>mdi-rocket-launch</v-icon>
+            </v-btn>
+          </template>
+          Logistics
+        </v-tooltip>
+        <v-tooltip location="bottom">
+          <template #activator="{ props }">
             <v-btn v-bind="props" to="/burn-repair" icon size="small" class="mx-1">
               <v-icon>mdi-fire</v-icon>
             </v-btn>

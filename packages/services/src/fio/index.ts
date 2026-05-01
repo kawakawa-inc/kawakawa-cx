@@ -8,6 +8,8 @@ export { syncLocations } from './sync-locations.js'
 export { syncStations } from './sync-stations.js'
 export { syncUserInventory } from './sync-user-inventory.js'
 export type { UserInventorySyncResult } from './sync-user-inventory.js'
+export { syncUserShips } from './sync-user-ships.js'
+export type { UserShipsSyncResult } from './sync-user-ships.js'
 export {
   syncUserPlanets,
   syncUserPlanetsList,

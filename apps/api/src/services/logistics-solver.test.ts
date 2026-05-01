@@ -44,7 +44,12 @@ function makeEdge(
   to: string,
   ticker: string,
   kind: 'demand' | 'surplus' | 'fixed',
-  opts: { amountOverride?: number; priority?: number } = {}
+  opts: {
+    amountOverride?: number
+    priority?: number
+    transitDays?: number
+    cadenceDays?: number
+  } = {}
 ): SolverEdge {
   return {
     id,
@@ -54,6 +59,8 @@ function makeEdge(
     kind,
     amountOverride: opts.amountOverride ?? null,
     priority: opts.priority ?? null,
+    transitDays: opts.transitDays ?? 0,
+    cadenceDays: opts.cadenceDays ?? 7,
     note: null,
   }
 }

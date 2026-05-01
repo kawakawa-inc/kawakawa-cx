@@ -66,6 +66,7 @@ import type {
   BurnRepairCorpMaterialBreakdown,
   BurnRepairShoppingListRequest,
   BurnRepairShoppingListResponse,
+  UserShip,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -5035,6 +5036,16 @@ const realApi = {
     return response.json()
   },
 
+  listShips: async (): Promise<UserShip[]> => {
+    const response = await fetchWithLogging('/api/ships', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list ships: ${response.statusText}`)
+    return response.json()
+  },
+
   getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
     const response = await fetchWithLogging('/api/supply-planning/planets', {
       method: 'GET',
@@ -5463,6 +5474,7 @@ export const api = {
     updateClaim: (id: number, body: UpdateLocationDemandClaimRequest) =>
       realApi.updateLogisticsClaim(id, body),
     deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
+    listShips: () => realApi.listShips(),
   },
 }
 

@@ -191,6 +191,8 @@ function describeJob(job: typeof syncJobs.$inferSelect): string {
       return 'Locations sync'
     case 'stations':
       return 'Stations sync'
+    case 'user-ships':
+      return 'Ships sync'
   }
 }
 

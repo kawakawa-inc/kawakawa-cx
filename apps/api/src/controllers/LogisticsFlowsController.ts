@@ -49,10 +49,28 @@ function toFlowResponse(row: typeof logisticsFlows.$inferSelect): LogisticsFlow 
     amountOverride: row.amountOverride,
     rate: row.rate as DemandRate,
     priority: row.priority,
+    transitDays: row.transitDays,
+    cadenceDays: row.cadenceDays,
     note: row.note,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
+}
+
+function normalizeTransitDays(input: number | undefined | null): number {
+  if (input == null) return 0
+  if (!Number.isFinite(input) || input < 0) {
+    throw BadRequest('transitDays must be a non-negative number')
+  }
+  return Math.floor(input)
+}
+
+function normalizeCadenceDays(input: number | undefined | null): number {
+  if (input == null) return 7
+  if (!Number.isFinite(input) || input < 1) {
+    throw BadRequest('cadenceDays must be an integer >= 1')
+  }
+  return Math.floor(input)
 }
 
 /** Per-ticker adjacency map of `from → [to...]` used for cycle detection. */
@@ -296,6 +314,8 @@ export class LogisticsFlowsController extends Controller {
         amountOverride: body.amountOverride ?? null,
         rate: body.rate ?? 'daily',
         priority: body.priority ?? null,
+        transitDays: normalizeTransitDays(body.transitDays),
+        cadenceDays: normalizeCadenceDays(body.cadenceDays),
         note: body.note ?? null,
       })
       .returning()
@@ -337,6 +357,14 @@ export class LogisticsFlowsController extends Controller {
         amountOverride: nextAmountOverride,
         rate: body.rate ?? existing.rate,
         priority: body.priority !== undefined ? body.priority : existing.priority,
+        transitDays:
+          body.transitDays !== undefined
+            ? normalizeTransitDays(body.transitDays)
+            : existing.transitDays,
+        cadenceDays:
+          body.cadenceDays !== undefined
+            ? normalizeCadenceDays(body.cadenceDays)
+            : existing.cadenceDays,
         note: body.note !== undefined ? body.note : existing.note,
         updatedAt: new Date(),
       })

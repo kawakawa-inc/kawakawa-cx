@@ -246,6 +246,11 @@ export const useSettingsStore = () => {
     set: (value: string[]) => updateSetting('logistics.excludedPlanets', value),
   })
 
+  const logisticsContractLeadDays = computed({
+    get: () => (settingsValues.value['logistics.contractLeadDays'] as number) ?? 3,
+    set: (value: number) => updateSetting('logistics.contractLeadDays', value),
+  })
+
   // Discord settings
   const discordMessageVisibility = computed({
     get: () => settingsValues.value['discord.messageVisibility'] as MessageVisibility,
@@ -327,6 +332,7 @@ export const useSettingsStore = () => {
 
     // Typed computed properties - Logistics
     logisticsExcludedPlanets,
+    logisticsContractLeadDays,
 
     // Typed computed properties - Discord
     discordMessageVisibility,

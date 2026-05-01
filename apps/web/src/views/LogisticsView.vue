@@ -5,11 +5,22 @@
     </v-snackbar>
 
     <v-card class="mb-4">
-      <v-card-title class="d-flex align-center">
+      <v-card-title class="d-flex align-center flex-wrap ga-3">
         <v-icon start>mdi-graph-outline</v-icon>
         Logistics
-        <v-chip size="small" class="ml-3" color="warning" variant="tonal">Experimental</v-chip>
+        <v-chip size="small" color="warning" variant="tonal">Experimental</v-chip>
         <v-spacer />
+        <v-text-field
+          v-model.number="contractLeadDaysInput"
+          type="number"
+          min="0"
+          label="Contract lead time (days)"
+          density="compact"
+          variant="outlined"
+          hide-details
+          style="max-width: 220px"
+          @update:model-value="onContractLeadDaysChanged"
+        />
         <v-btn
           variant="text"
           size="small"
@@ -21,10 +32,11 @@
         </v-btn>
       </v-card-title>
       <v-card-text>
-        <div class="text-caption text-medium-emphasis mb-2">
-          Directed flow graph. Each node's balance is
-          <code>nativeProduction + stock + inflow − nativeConsumption − outflow</code>. Shortfalls
-          surface here as a shopping list.
+        <div class="text-caption text-medium-emphasis">
+          Directed flow graph. Each flow has its own <strong>cadence</strong> — how often a shipment
+          for that material runs. Per-shipment quantity is <code>dailyConsumption × cadence</code>.
+          The Flows table tells you when each shipment loads, ships, and (if needed) when to place
+          an inbound contract so the goods arrive in time.
         </div>
       </v-card-text>
     </v-card>
@@ -42,9 +54,9 @@
     </v-alert>
 
     <v-row v-if="graph && !loading">
-      <!-- Left: node list -->
-      <v-col cols="12" md="4">
-        <v-card>
+      <!-- Left: node list + ship roster -->
+      <v-col cols="12" md="3">
+        <v-card class="mb-4">
           <v-card-title class="text-subtitle-1">Nodes</v-card-title>
           <v-list density="compact" nav>
             <v-list-item
@@ -71,10 +83,12 @@
             </v-list-item>
           </v-list>
         </v-card>
+
+        <ShipRosterPanel />
       </v-col>
 
       <!-- Right: tabbed main panel -->
-      <v-col cols="12" md="8">
+      <v-col cols="12" md="9">
         <v-card>
           <v-tabs v-model="mainTab" density="compact">
             <v-tab value="inspector">
@@ -223,6 +237,104 @@
                         {{ item.balance < 0 ? item.balance : '+' + item.balance }}
                       </span>
                     </template>
+                    <template #item.daysOfStock="{ item }">
+                      <v-chip
+                        v-if="item.daysOfStock !== null"
+                        size="x-small"
+                        :color="daysOfStockColor(item.daysOfStock)"
+                        variant="tonal"
+                      >
+                        {{ formatDaysOfStock(item.daysOfStock) }}
+                      </v-chip>
+                      <span v-else class="text-disabled">∞</span>
+                    </template>
+                    <template #item.runOutAt="{ item }">
+                      <span
+                        v-if="item.runOutAt"
+                        :class="urgencyClass(item.runOutAt)"
+                        :title="item.runOutAt"
+                      >
+                        {{ formatDate(item.runOutAt) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.chainSource="{ item }">
+                      <template v-if="item.chainSource.length === 0">
+                        <span class="text-disabled">–</span>
+                      </template>
+                      <template v-else-if="item.chainSource.length === 1">
+                        <v-chip
+                          size="x-small"
+                          variant="tonal"
+                          color="info"
+                          class="cursor-pointer"
+                          :title="`Supplied from ${
+                            item.chainSourceNames[0] ?? item.chainSource[0]
+                          } — click to jump`"
+                          @click="selectedLocationId = item.chainSource[0]"
+                        >
+                          <v-icon start size="x-small">mdi-arrow-up</v-icon>
+                          {{ item.chainSourceNames[0] ?? item.chainSource[0] }}
+                        </v-chip>
+                      </template>
+                      <template v-else>
+                        <v-menu offset="4" location="bottom end">
+                          <template #activator="{ props }">
+                            <v-chip
+                              v-bind="props"
+                              size="x-small"
+                              variant="tonal"
+                              color="info"
+                              class="cursor-pointer"
+                              :title="`Supplied from ${item.chainSource.length} sources`"
+                            >
+                              <v-icon start size="x-small">mdi-arrow-up</v-icon>
+                              {{ item.chainSourceNames[0] ?? item.chainSource[0] }}
+                              <span class="ml-1 text-medium-emphasis">
+                                +{{ item.chainSource.length - 1 }}
+                              </span>
+                              <v-icon end size="x-small">mdi-menu-down</v-icon>
+                            </v-chip>
+                          </template>
+                          <v-list density="compact">
+                            <v-list-item
+                              v-for="(srcId, i) in item.chainSource"
+                              :key="srcId"
+                              :title="item.chainSourceNames[i] ?? srcId"
+                              @click="selectedLocationId = srcId"
+                            >
+                              <template #prepend>
+                                <v-icon size="small">mdi-arrow-up</v-icon>
+                              </template>
+                            </v-list-item>
+                          </v-list>
+                        </v-menu>
+                      </template>
+                    </template>
+                    <template #item.latestContractAt="{ item }">
+                      <span
+                        v-if="item.chainSource.length > 0"
+                        class="text-disabled"
+                        title="Action lives at the chain source — see the Source column"
+                      >
+                        —
+                      </span>
+                      <span
+                        v-else-if="item.hasOutboundDemand"
+                        class="text-disabled"
+                        title="Per-flow contract-by — see the Flows table below"
+                      >
+                        —
+                      </span>
+                      <span
+                        v-else-if="item.latestContractAt"
+                        :class="urgencyClass(item.latestContractAt)"
+                        :title="item.latestContractAt"
+                      >
+                        {{ formatDate(item.latestContractAt) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
                     <template #no-data>
                       <div class="text-center py-4 text-medium-emphasis">
                         No material activity at this node yet.
@@ -333,6 +445,48 @@
                         <v-icon size="x-small" class="ml-1">mdi-information-outline</v-icon>
                       </span>
                     </template>
+                    <template #item.transitDays="{ item }">
+                      <span v-if="item.transitDays > 0">{{ item.transitDays }}d</span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.cadenceDays="{ item }">
+                      <span>{{ item.cadenceDays }}d</span>
+                    </template>
+                    <template #item.perShipmentAmount="{ item }">
+                      <span v-if="item.perShipmentAmount > 0">
+                        {{ Math.round(item.perShipmentAmount).toLocaleString() }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.nextArrivalAt="{ item }">
+                      <span
+                        v-if="item.nextArrivalAt && item.toLocationId === selectedNode?.locationId"
+                        :title="item.nextArrivalAt"
+                      >
+                        {{ formatDate(item.nextArrivalAt) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.shipBy="{ item }">
+                      <span
+                        v-if="item.shipBy && item.toLocationId === selectedNode?.locationId"
+                        :class="urgencyClass(item.shipBy)"
+                        :title="item.shipBy"
+                      >
+                        {{ formatDate(item.shipBy) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
+                    <template #item.contractBy="{ item }">
+                      <span
+                        v-if="item.contractBy && item.fromLocationId === selectedNode?.locationId"
+                        :class="urgencyClass(item.contractBy)"
+                        :title="item.contractBy"
+                      >
+                        {{ formatDate(item.contractBy) }}
+                      </span>
+                      <span v-else class="text-disabled">–</span>
+                    </template>
                     <template #item.actions="{ item }">
                       <v-btn
                         size="x-small"
@@ -410,11 +564,13 @@ import { useShoppingListStore } from '../stores/shoppingList'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
+import { useSettingsStore } from '../stores/settings'
 import { localizeMaterial } from '../utils/materials'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 import FlowEditDialog from '../components/logistics/FlowEditDialog.vue'
 import BulkFlowDialog from '../components/logistics/BulkFlowDialog.vue'
 import ClaimEditDialog from '../components/logistics/ClaimEditDialog.vue'
+import ShipRosterPanel from '../components/logistics/ShipRosterPanel.vue'
 
 // Dynamically imported: the graph map pulls in cytoscape + dagre (~550 kB
 // minified). Users who only use the Inspector tab never pay that cost —
@@ -459,6 +615,24 @@ import type { KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 const router = useRouter()
 const shoppingList = useShoppingListStore()
 const userStore = useUserStore()
+const settingsStore = useSettingsStore()
+
+// Local mirror of the user setting so we can debounce-on-blur without re-rendering
+// every keystroke through the API.
+const contractLeadDaysInput = ref<number>(settingsStore.logisticsContractLeadDays.value ?? 3)
+
+let contractLeadDaysSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onContractLeadDaysChanged() {
+  if (contractLeadDaysSaveTimer) clearTimeout(contractLeadDaysSaveTimer)
+  contractLeadDaysSaveTimer = setTimeout(async () => {
+    const n = Math.max(0, Math.floor(Number(contractLeadDaysInput.value) || 0))
+    if (n !== settingsStore.logisticsContractLeadDays.value) {
+      settingsStore.logisticsContractLeadDays.value = n
+      // Reload the graph so timing fields recompute server-side with the new value.
+      await loadGraph()
+    }
+  }, 600)
+}
 
 const graph = ref<LogisticsGraph | null>(null)
 const loading = ref(false)
@@ -620,6 +794,10 @@ async function loadGraph() {
   try {
     const result = await api.logistics.graph()
     graph.value = result
+    // Sync the input control with whatever the server actually used.
+    if (typeof result.settings?.contractLeadDays === 'number') {
+      contractLeadDaysInput.value = result.settings.contractLeadDays
+    }
     // Auto-select first node if none chosen
     if (!selectedLocationId.value && result.nodes.length > 0) {
       selectedLocationId.value = result.nodes[0].locationId
@@ -698,6 +876,10 @@ const balanceHeaders = [
   { title: 'Inflow', key: 'inflow', sortable: true, align: 'end' as const },
   { title: 'Outflow', key: 'outflow', sortable: true, align: 'end' as const },
   { title: 'Balance', key: 'balance', sortable: true, align: 'end' as const },
+  { title: 'Days', key: 'daysOfStock', sortable: true, align: 'end' as const },
+  { title: 'Run-out', key: 'runOutAt', sortable: true, align: 'end' as const },
+  { title: 'Source', key: 'chainSource', sortable: true, align: 'end' as const },
+  { title: 'Contract by', key: 'latestContractAt', sortable: true, align: 'end' as const },
 ]
 
 const edgeHeaders = [
@@ -706,6 +888,17 @@ const edgeHeaders = [
   { title: 'Material', key: 'ticker', sortable: true },
   { title: 'Kind', key: 'kind', sortable: true },
   { title: 'Amount', key: 'amount', sortable: true, align: 'end' as const },
+  { title: 'Transit', key: 'transitDays', sortable: true, align: 'end' as const },
+  { title: 'Cadence', key: 'cadenceDays', sortable: true, align: 'end' as const },
+  {
+    title: 'Per ship',
+    key: 'perShipmentAmount',
+    sortable: true,
+    align: 'end' as const,
+  },
+  { title: 'Next arrival', key: 'nextArrivalAt', sortable: true, align: 'end' as const },
+  { title: 'Ship by', key: 'shipBy', sortable: true, align: 'end' as const },
+  { title: 'Contract by', key: 'contractBy', sortable: true, align: 'end' as const },
   { title: '', key: 'actions', sortable: false, width: '48px', align: 'end' as const },
 ]
 
@@ -743,6 +936,12 @@ function balanceRows(node: NodeState): Array<{
   inflow: number
   outflow: number
   balance: number
+  daysOfStock: number | null
+  runOutAt: string | null
+  latestContractAt: string | null
+  chainSource: string[]
+  chainSourceNames: string[]
+  hasOutboundDemand: boolean
 }> {
   const tickers = new Set<string>([
     ...Object.keys(node.nativeConsumption),
@@ -751,19 +950,74 @@ function balanceRows(node: NodeState): Array<{
     ...Object.keys(node.derivedInflow),
     ...Object.keys(node.derivedOutflow),
   ])
-  const rows = [...tickers].map(ticker => ({
-    ticker,
-    nativeProduction: Math.round(node.nativeProduction[ticker] ?? 0),
-    nativeConsumption: Math.round(node.nativeConsumption[ticker] ?? 0),
-    stock: Math.round(node.stock[ticker] ?? 0),
-    inflow: Math.round(node.derivedInflow[ticker] ?? 0),
-    outflow: Math.round(node.derivedOutflow[ticker] ?? 0),
-    balance: Math.round(node.balance[ticker] ?? 0),
-  }))
+  // Tickers that have at least one outbound demand/fixed flow from this node.
+  // For these, contract-by lives on the per-flow row, not at the node level.
+  const outboundDemandTickers = new Set<string>()
+  if (graph.value) {
+    for (const e of graph.value.edges) {
+      if (e.fromLocationId !== node.locationId) continue
+      if (e.kind !== 'demand' && e.kind !== 'fixed') continue
+      outboundDemandTickers.add(e.commodityTicker)
+    }
+  }
+  const rows = [...tickers].map(ticker => {
+    const sources = node.chainSource?.[ticker] ?? []
+    return {
+      ticker,
+      nativeProduction: Math.round(node.nativeProduction[ticker] ?? 0),
+      nativeConsumption: Math.round(node.nativeConsumption[ticker] ?? 0),
+      stock: Math.round(node.stock[ticker] ?? 0),
+      inflow: Math.round(node.derivedInflow[ticker] ?? 0),
+      outflow: Math.round(node.derivedOutflow[ticker] ?? 0),
+      balance: Math.round(node.balance[ticker] ?? 0),
+      daysOfStock: node.daysOfStock?.[ticker] ?? null,
+      runOutAt: node.runOutAt?.[ticker] ?? null,
+      latestContractAt: node.latestContractAt?.[ticker] ?? null,
+      chainSource: sources,
+      chainSourceNames: sources.map(id => nodeNameFor(id)),
+      hasOutboundDemand: outboundDemandTickers.has(ticker),
+    }
+  })
   return rows.sort((a, b) => {
     if (a.balance !== b.balance) return a.balance - b.balance // shortfalls first
     return a.ticker.localeCompare(b.ticker)
   })
+}
+
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+})
+
+function formatDate(iso: string): string {
+  return dateFormatter.format(new Date(iso))
+}
+
+function formatDaysOfStock(days: number | null): string {
+  if (days == null) return '∞'
+  if (days <= 0) return '0d'
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24))
+    return `${hours}h`
+  }
+  return `${Math.round(days)}d`
+}
+
+function daysOfStockColor(days: number | null): string {
+  if (days == null) return 'grey'
+  if (days <= 3) return 'error'
+  if (days < 14) return 'warning'
+  return 'success'
+}
+
+function urgencyClass(iso: string | null): Record<string, boolean> {
+  if (!iso) return {}
+  const ms = new Date(iso).getTime() - Date.now()
+  const days = ms / 86_400_000
+  return {
+    'text-error font-weight-medium': days <= 0,
+    'text-warning': days > 0 && days <= 3,
+  }
 }
 
 function edgesForNode(locationId: string): EdgeState[] {

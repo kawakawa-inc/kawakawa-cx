@@ -22,9 +22,11 @@ import { eq, and, inArray } from 'drizzle-orm'
 import type {
   BuildingData,
   ClaimCategory,
+  EdgeState,
   FlowKind,
   LogisticsGraph,
   NativeConsumptionBreakdown,
+  NodeState,
 } from '@kawakawa/types'
 import {
   solve,
@@ -178,6 +180,8 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     ((await userSettingsService.getSetting(userId, 'burnRepair.stockMode')) as
       | 'included'
       | 'ignored') ?? 'included'
+  const contractLeadDays =
+    ((await userSettingsService.getSetting(userId, 'logistics.contractLeadDays')) as number) ?? 3
   const settings: SolverSettings = { burnDays, repairDays, conditionMode, stockMode }
 
   // ---- Load flows ----
@@ -329,16 +333,23 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   // ---- Compute node natives per planet ----
   // We return a SolverNode per location in `nodeLocIds`. Planets get full FIO math;
   // non-planet locations (hubs) get empty natives and will rely on claims + flows only.
+  // We keep two parallel views per (loc, ticker):
+  //   - totals (multiplied by burnDays/repairDays) — fed to the solver
+  //   - daily rates — used after the solver returns to compute timing
   const repairableTickers = await getRepairableBuildingTickers()
   const now = new Date()
   const solverNodes: SolverNode[] = []
   const storageTypesByLocation = new Map<string, Set<string>>()
+  const dailyConsumptionByLoc = new Map<string, Record<string, number>>()
+  const dailyProductionByLoc = new Map<string, Record<string, number>>()
 
   for (const loc of nodeLocIds) {
     const planetDbId = planetDbIdByLoc.get(loc)
     const nativeConsumption: Record<string, number> = {}
     const nativeProduction: Record<string, number> = {}
     const consumptionBreakdown: Record<string, NativeConsumptionBreakdown> = {}
+    const dailyConsumption: Record<string, number> = {}
+    const dailyProduction: Record<string, number> = {}
 
     if (planetDbId) {
       const tickers = tickersByPlanet.get(loc) ?? new Set<string>()
@@ -347,6 +358,8 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
       if (tickers.size > 0) {
         const burnRates = await getAllBurnRates(planetDbId, tickers)
         for (const [t, rate] of Object.entries(burnRates)) {
+          if (rate <= 0) continue
+          dailyConsumption[t] = (dailyConsumption[t] ?? 0) + rate
           const total = rate * burnDays
           if (total > 0) {
             nativeConsumption[t] = (nativeConsumption[t] ?? 0) + total
@@ -357,6 +370,8 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
         // Production rates — dailyInput becomes consumption, dailyOutput becomes production.
         const prodRates = await getAllProductionRates(planetDbId, tickers, conditionMode === 'max')
         for (const [t, { dailyInput, dailyOutput }] of Object.entries(prodRates)) {
+          if (dailyInput > 0) dailyConsumption[t] = (dailyConsumption[t] ?? 0) + dailyInput
+          if (dailyOutput > 0) dailyProduction[t] = (dailyProduction[t] ?? 0) + dailyOutput
           const netConsumption = Math.max(0, dailyInput - dailyOutput) * burnDays
           const netProduction = Math.max(0, dailyOutput - dailyInput) * burnDays
           if (netConsumption > 0) {
@@ -419,7 +434,16 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
         claim.category as ClaimCategory,
         total
       )
+      // Daily-rate claims contribute to the run-out math; total claims don't
+      // (they're a one-shot demand within the planning horizon, not an ongoing rate).
+      if (claim.rate === 'daily') {
+        dailyConsumption[claim.commodityTicker] =
+          (dailyConsumption[claim.commodityTicker] ?? 0) + claim.quantity
+      }
     }
+
+    dailyConsumptionByLoc.set(loc, dailyConsumption)
+    dailyProductionByLoc.set(loc, dailyProduction)
 
     // Collect storage types touched by any flow at this location (used for stock filtering)
     const storageTypes = new Set<string>()
@@ -472,6 +496,8 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
       kind: row.kind as FlowKind,
       amountOverride: amt,
       priority: row.priority,
+      transitDays: row.transitDays,
+      cadenceDays: row.cadenceDays,
       note: row.note,
     }
   })
@@ -484,7 +510,190 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     getJumpDistance: makeJumpDistance(),
   })
 
+  // ---- Augment with timing fields ----
+  // Per (loc, ticker): days-of-stock and run-out date based on net daily
+  // consumption. Per demand edge: latest dispatch date based on transitDays.
+  // Per (loc, ticker) anywhere it has consumption: latest contract-by date
+  // based on the user's contractLeadDays setting.
+  graph.settings.contractLeadDays = contractLeadDays
+  applyTimingFields(
+    graph,
+    dailyConsumptionByLoc,
+    dailyProductionByLoc,
+    contractLeadDays,
+    now,
+    burnDays
+  )
+
   // Suppress unused-import lint noise from the CATEGORIES constant if not referenced elsewhere
   void CATEGORIES
   return graph
+}
+
+const MS_PER_DAY = 86_400_000
+
+/**
+ * Augment the solver's output with time-aware fields. Pure: only mutates `graph`.
+ *
+ * - dailyConsumption / dailyProduction / dailyOutflow are mirrored onto each
+ *   node. Outflow comes from `derivedOutflow / burnDays` so hubs with stock
+ *   committed downstream surface a real run-out (not "never").
+ * - effective drain = max(0, dailyConsumption - dailyProduction + dailyOutflow).
+ *   daysOfStock = stock / effective drain.
+ * - latestContractAt is computed for every (loc, ticker) the node has a
+ *   run-out date for. Whether the user should ACT on this node's contract-by
+ *   depends on `chainSource` — see below.
+ * - latestShipAt is computed per demand edge whose destination has a run-out.
+ * - chainSource: for each (node, ticker) the node consumes, walk demand/fixed
+ *   inbound edges upstream until we reach a producer / surplus-fed node /
+ *   upstream-most node. That node owns the action ("contract here" or "ship
+ *   from here"). Leaves' chainSource points to that node; the source's own
+ *   chainSource is null. Surplus inbound stops the walk one hop into the
+ *   producer (we don't bubble past producer-driven edges).
+ */
+export function applyTimingFields(
+  graph: LogisticsGraph,
+  dailyConsumptionByLoc: Map<string, Record<string, number>>,
+  dailyProductionByLoc: Map<string, Record<string, number>>,
+  contractLeadDays: number,
+  now: Date,
+  burnDays: number
+): void {
+  const nowMs = now.getTime()
+  const runOutMsByLoc = new Map<string, Map<string, number>>()
+
+  for (const node of graph.nodes) {
+    const dailyC = dailyConsumptionByLoc.get(node.locationId) ?? {}
+    const dailyP = dailyProductionByLoc.get(node.locationId) ?? {}
+    const dailyOutflow: Record<string, number> = {}
+    for (const [t, total] of Object.entries(node.derivedOutflow)) {
+      const rate = burnDays > 0 ? total / burnDays : 0
+      if (rate > 0) dailyOutflow[t] = rate
+    }
+    node.dailyConsumption = { ...dailyC }
+    node.dailyProduction = { ...dailyP }
+    node.dailyOutflow = dailyOutflow
+
+    const tickers = new Set<string>([
+      ...Object.keys(dailyC),
+      ...Object.keys(dailyP),
+      ...Object.keys(dailyOutflow),
+    ])
+    const daysOfStock: Record<string, number | null> = {}
+    const runOutAt: Record<string, string | null> = {}
+    const latestContractAt: Record<string, string | null> = {}
+    const runOutMsForLoc = new Map<string, number>()
+
+    for (const ticker of tickers) {
+      const dc = dailyC[ticker] ?? 0
+      const dp = dailyP[ticker] ?? 0
+      const dout = dailyOutflow[ticker] ?? 0
+      const drain = dc - dp + dout
+      if (drain <= 0) {
+        // No net drain — production + zero outflow covers consumption, or no
+        // consumption at all. Never runs out.
+        daysOfStock[ticker] = null
+        runOutAt[ticker] = null
+        latestContractAt[ticker] = null
+        continue
+      }
+      const stock = node.stock[ticker] ?? 0
+      const days = stock / drain
+      daysOfStock[ticker] = days
+      const runMs = nowMs + days * MS_PER_DAY
+      runOutAt[ticker] = new Date(runMs).toISOString()
+      latestContractAt[ticker] = new Date(runMs - contractLeadDays * MS_PER_DAY).toISOString()
+      runOutMsForLoc.set(ticker, runMs)
+    }
+
+    node.daysOfStock = daysOfStock
+    node.runOutAt = runOutAt
+    node.latestContractAt = latestContractAt
+    runOutMsByLoc.set(node.locationId, runOutMsForLoc)
+  }
+
+  // Chain-source pass: for every ticker that touches this node — its own
+  // consumption, its committed outflow, OR its committed inflow — list the
+  // IMMEDIATE upstream nodes whose committed flows feed this node. Inflow
+  // is the key one for pure aggregator hubs that just receive (no native
+  // consumption, no further outflow). Click-through navigation lets the user
+  // trace the chain one hop at a time.
+  for (const node of graph.nodes) {
+    const chainSource: Record<string, string[]> = {}
+    const tickers = new Set<string>([
+      ...Object.keys(node.dailyConsumption),
+      ...Object.keys(node.dailyOutflow),
+      ...Object.keys(node.derivedInflow),
+    ])
+    for (const ticker of tickers) {
+      chainSource[ticker] = findImmediateSources(node, ticker, graph.edges)
+    }
+    node.chainSource = chainSource
+  }
+
+  // Per-edge cadence pass: compute the next-arrival → load → ship-by → contract-by
+  // timeline plus per-shipment amount. Stage A projects forward from `now`;
+  // Stage B will swap in shipment-anchored arrival dates.
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'demand' && edge.kind !== 'fixed') {
+      // Surplus edges don't get per-shipment timing in Stage A.
+      edge.perShipmentAmount = 0
+      edge.nextArrivalAt = null
+      edge.loadAt = null
+      edge.shipBy = null
+      edge.contractBy = null
+      continue
+    }
+    const dailyAtDest =
+      (dailyConsumptionByLoc.get(edge.toLocationId) ?? {})[edge.commodityTicker] ?? 0
+    edge.perShipmentAmount = dailyAtDest * edge.cadenceDays
+    const arrivalMs = nowMs + edge.cadenceDays * MS_PER_DAY
+    edge.nextArrivalAt = new Date(arrivalMs).toISOString()
+    const loadMs = arrivalMs - edge.transitDays * MS_PER_DAY
+    edge.loadAt = new Date(loadMs).toISOString()
+    edge.shipBy = edge.loadAt
+    edge.contractBy = new Date(loadMs - contractLeadDays * MS_PER_DAY).toISOString()
+  }
+}
+
+/**
+ * List the IMMEDIATE upstream sources for `(node, ticker)`. Returns the
+ * locationIds whose committed flows feed this node directly:
+ *
+ * - If the node produces the ticker itself, returns `[]` (self-source).
+ * - If the node has any committed `surplus` inbound, returns those sources.
+ *   Surplus = producer-push, so those are the actual producers.
+ * - Otherwise, returns committed `demand` / `fixed` inbound sources.
+ * - If neither, returns `[]` (no upstream — this node is the chain origin).
+ *
+ * Only considers edges with `amount > 0` — the solver allocates the full
+ * required to chosen edges and leaves others at 0. Duplicate sources are
+ * deduplicated. The user navigates the chain one hop at a time by clicking
+ * the source chips in the inspector.
+ */
+export function findImmediateSources(
+  node: NodeState,
+  ticker: string,
+  edges: EdgeState[]
+): string[] {
+  if ((node.nativeProduction[ticker] ?? 0) > 0) return []
+
+  const surplusSources: string[] = []
+  const demandSources: string[] = []
+  for (const e of edges) {
+    if (e.toLocationId !== node.locationId) continue
+    if (e.commodityTicker !== ticker) continue
+    if (e.amount <= 0) continue
+    if (e.kind === 'surplus') {
+      if (!surplusSources.includes(e.fromLocationId)) surplusSources.push(e.fromLocationId)
+    } else if (e.kind === 'demand' || e.kind === 'fixed') {
+      if (!demandSources.includes(e.fromLocationId)) demandSources.push(e.fromLocationId)
+    }
+  }
+
+  // Surplus takes priority when present — those are the producer pushes
+  // (the actual supply). Demand inbound on a node with surplus inbound is
+  // unusual but the solver allows it; we surface the producers in that case.
+  if (surplusSources.length > 0) return surplusSources
+  return demandSources
 }

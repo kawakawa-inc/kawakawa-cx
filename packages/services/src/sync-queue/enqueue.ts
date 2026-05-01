@@ -16,6 +16,7 @@ export type JobType =
   | 'commodities'
   | 'locations'
   | 'stations'
+  | 'user-ships'
 
 export type JobSource = 'user' | 'system'
 
@@ -153,6 +154,8 @@ function describeJobType(jobType: JobType): string {
       return "We're syncing locations"
     case 'stations':
       return "We're syncing stations"
+    case 'user-ships':
+      return "We're syncing your ships"
   }
 }
 
@@ -164,13 +167,13 @@ function describeJobType(jobType: JobType): string {
 export async function enqueueUserFullSync(
   userId: number,
   options: { source?: JobSource; notify?: boolean } = {}
-): Promise<{ inventoryJobId: number; planetsJobId: number }> {
+): Promise<{ inventoryJobId: number; planetsJobId: number; shipsJobId: number }> {
   const source = options.source ?? 'user'
   const notify = options.notify ?? source === 'user'
 
   // Fire the "queued" notification only once (on the inventory job) —
-  // otherwise a single sync would generate two "queued" notifications.
-  const [inventoryJobId, planetsJobId] = await Promise.all([
+  // otherwise a single sync would generate multiple "queued" notifications.
+  const [inventoryJobId, planetsJobId, shipsJobId] = await Promise.all([
     enqueue({
       jobType: 'user-inventory',
       userId,
@@ -184,8 +187,15 @@ export async function enqueueUserFullSync(
       source,
       notifyOnComplete: notify,
     }),
+    enqueue({
+      jobType: 'user-ships',
+      userId,
+      source,
+      // Ship sync is small and silent — don't add a notification.
+      notifyOnComplete: false,
+    }),
   ])
-  return { inventoryJobId, planetsJobId }
+  return { inventoryJobId, planetsJobId, shipsJobId }
 }
 
 /**

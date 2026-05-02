@@ -36,7 +36,12 @@
         class="shipment-table"
       >
         <tbody>
-          <tr v-for="s in grouped.planned" :key="s.id" class="shipment-row">
+          <tr
+            v-for="s in grouped.planned"
+            :key="s.id"
+            class="shipment-row clickable"
+            @click="onEdit(s)"
+          >
             <td>
               <v-chip size="x-small" :color="statusColor(s.status)" variant="tonal">
                 {{ s.status }}
@@ -55,11 +60,10 @@
             <td class="text-caption text-medium-emphasis">
               {{ s.lines.length }} line{{ s.lines.length === 1 ? '' : 's' }}
             </td>
-            <td class="text-end">
+            <td class="text-end" @click.stop>
               <v-btn size="x-small" variant="flat" color="primary" @click="onDispatch(s)">
                 Dispatch
               </v-btn>
-              <v-btn size="x-small" variant="text" @click="onEdit(s)">Edit</v-btn>
               <v-btn size="x-small" variant="text" color="warning" @click="onCancel(s)">
                 Cancel
               </v-btn>
@@ -88,7 +92,12 @@
         class="shipment-table"
       >
         <tbody>
-          <tr v-for="s in grouped.dispatched" :key="s.id" class="shipment-row">
+          <tr
+            v-for="s in grouped.dispatched"
+            :key="s.id"
+            class="shipment-row clickable"
+            @click="onEdit(s)"
+          >
             <td>
               <v-chip size="x-small" :color="statusColor(s.status)" variant="tonal">
                 {{ s.status }}
@@ -107,7 +116,7 @@
             <td class="text-caption text-medium-emphasis">
               {{ s.lines.length }} line{{ s.lines.length === 1 ? '' : 's' }}
             </td>
-            <td class="text-end">
+            <td class="text-end" @click.stop>
               <v-btn size="x-small" variant="flat" color="success" @click="onDeliver(s)">
                 Deliver
               </v-btn>
@@ -137,7 +146,12 @@
         class="shipment-table"
       >
         <tbody>
-          <tr v-for="s in grouped.history" :key="s.id" class="shipment-row">
+          <tr
+            v-for="s in grouped.history"
+            :key="s.id"
+            class="shipment-row clickable"
+            @click="onEdit(s)"
+          >
             <td>
               <v-chip size="x-small" :color="statusColor(s.status)" variant="tonal">
                 {{ s.status }}
@@ -344,5 +358,23 @@ async function onDeliver(shipment: Shipment) {
 .shipment-table :deep(td) {
   padding: 6px 12px !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.shipment-row.clickable {
+  cursor: pointer;
+}
+
+.shipment-row.clickable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Stripe alternating rows for readability. Cell-level !important is needed
+ * to win against Vuetify's own row styles. */
+:deep(.shipment-table tbody tr:nth-child(odd) td) {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.shipment-row.clickable:hover :deep(td) {
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 </style>

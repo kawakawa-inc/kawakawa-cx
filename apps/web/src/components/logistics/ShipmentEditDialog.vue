@@ -2,8 +2,25 @@
   <v-dialog :model-value="modelValue" max-width="780" @update:model-value="onDialogUpdate">
     <v-card>
       <v-card-title class="d-flex align-center">
-        <v-icon start>{{ editing ? 'mdi-pencil' : 'mdi-plus' }}</v-icon>
-        {{ editing ? 'Edit Shipment' : 'New Shipment' }}
+        <v-icon start>
+          {{ readOnly ? 'mdi-eye' : editing ? 'mdi-pencil' : 'mdi-plus' }}
+        </v-icon>
+        {{ readOnly ? 'View Shipment' : editing ? 'Edit Shipment' : 'New Shipment' }}
+        <v-chip
+          v-if="readOnly && shipment"
+          size="x-small"
+          class="ml-2"
+          :color="
+            shipment.status === 'delivered'
+              ? 'success'
+              : shipment.status === 'cancelled'
+                ? 'grey'
+                : 'info'
+          "
+          variant="tonal"
+        >
+          {{ shipment.status }}
+        </v-chip>
       </v-card-title>
 
       <v-divider />
@@ -47,6 +64,7 @@
               hint="When the ship loads at the source"
               persistent-hint
               density="compact"
+              :readonly="readOnly"
             />
           </v-col>
           <v-col cols="12" md="6" class="mt-3">
@@ -57,6 +75,7 @@
               :hint="`Auto: load + ${maxTransitForRoute}d transit. Override if needed.`"
               persistent-hint
               density="compact"
+              :readonly="readOnly"
             />
           </v-col>
 
@@ -69,8 +88,10 @@
               label="Ship (optional)"
               clearable
               density="compact"
-              hide-details
+              :hint="shipPickerHint"
+              persistent-hint
               prepend-inner-icon="mdi-rocket"
+              :disabled="readOnly"
             />
           </v-col>
 
@@ -79,7 +100,13 @@
             <div class="d-flex align-center mb-2">
               <span class="text-subtitle-2">Manifest</span>
               <v-spacer />
-              <v-btn size="x-small" prepend-icon="mdi-plus" variant="text" @click="addAdHocLine">
+              <v-btn
+                v-if="!readOnly"
+                size="x-small"
+                prepend-icon="mdi-plus"
+                variant="text"
+                @click="addAdHocLine"
+              >
                 Add ad-hoc material
               </v-btn>
             </div>
@@ -111,7 +138,7 @@
                     </v-icon>
                   </td>
                   <td>
-                    <span v-if="line.flowId != null">{{ line.commodityTicker }}</span>
+                    <span v-if="line.flowId != null || readOnly">{{ line.commodityTicker }}</span>
                     <v-text-field
                       v-else
                       v-model="line.commodityTicker"
@@ -132,7 +159,9 @@
                     }}
                   </td>
                   <td>
+                    <span v-if="readOnly">{{ Math.round(line.amount).toLocaleString() }}</span>
                     <v-text-field
+                      v-else
                       v-model.number="line.amount"
                       type="number"
                       min="1"
@@ -141,7 +170,13 @@
                     />
                   </td>
                   <td>
-                    <v-btn size="x-small" icon variant="text" @click="removeLine(idx)">
+                    <v-btn
+                      v-if="!readOnly"
+                      size="x-small"
+                      icon
+                      variant="text"
+                      @click="removeLine(idx)"
+                    >
                       <v-icon size="small">mdi-close</v-icon>
                     </v-btn>
                   </td>
@@ -149,7 +184,7 @@
               </tbody>
             </v-table>
 
-            <div v-if="missingEligibleFlows.length > 0" class="mt-2">
+            <div v-if="!readOnly && missingEligibleFlows.length > 0" class="mt-2">
               <div class="text-caption text-medium-emphasis mb-1">
                 Eligible flows not in manifest:
               </div>
@@ -176,6 +211,7 @@
               label="Notes (optional)"
               density="compact"
               hide-details
+              :readonly="readOnly"
             />
           </v-col>
         </v-row>
@@ -194,8 +230,8 @@
           Delete
         </v-btn>
         <v-spacer />
-        <v-btn variant="text" @click="close">Cancel</v-btn>
-        <v-btn color="primary" :loading="saving" @click="handleSave">
+        <v-btn variant="text" @click="close">{{ readOnly ? 'Close' : 'Cancel' }}</v-btn>
+        <v-btn v-if="!readOnly" color="primary" :loading="saving" @click="handleSave">
           {{ editing ? 'Save' : 'Create' }}
         </v-btn>
       </v-card-actions>
@@ -208,6 +244,7 @@ import { ref, computed, watch } from 'vue'
 import KeyValueAutocomplete from '../KeyValueAutocomplete.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { api } from '../../services/api'
+import { commodityService } from '../../services/commodityService'
 import type {
   Shipment,
   EdgeState,
@@ -235,6 +272,12 @@ const emit = defineEmits<{
 
 const settingsStore = useSettingsStore()
 const editing = computed(() => props.shipment !== null)
+// A non-planned shipment is a historical record — viewable but not editable.
+// The Cancel/Dispatch/Deliver buttons in the list handle status transitions;
+// the dialog is purely informational once the shipment leaves "planned".
+const readOnly = computed(
+  () => editing.value && props.shipment !== null && props.shipment.status !== 'planned'
+)
 
 interface ManifestLine {
   flowId: number | null
@@ -326,19 +369,87 @@ const maxTransitForRoute = computed(() => {
   return Math.max(...eligibleFlows.value.map(e => e.transitDays))
 })
 
-const shipItems = computed(() =>
-  props.ships
-    .filter(
-      s =>
-        !form.value.fromLocationId ||
-        !s.locationNaturalId ||
-        s.locationNaturalId === form.value.fromLocationId
-    )
-    .map(s => ({
-      title: `${s.name ?? s.registration} · ${s.locationName ?? 'in flight'}`,
+// Total weight + volume of the current manifest, in tons / m³. Used to filter
+// the ship picker to ships that can carry the load.
+const manifestWeight = computed(() => {
+  let total = 0
+  for (const line of form.value.lines) {
+    if (!line.commodityTicker || !line.amount) continue
+    const w = commodityService.getCommodityWeight(line.commodityTicker.toUpperCase()) ?? 0
+    total += w * line.amount
+  }
+  return total
+})
+
+const manifestVolume = computed(() => {
+  let total = 0
+  for (const line of form.value.lines) {
+    if (!line.commodityTicker || !line.amount) continue
+    const v = commodityService.getCommodityVolume(line.commodityTicker.toUpperCase()) ?? 0
+    total += v * line.amount
+  }
+  return total
+})
+
+interface ShipPickerItem {
+  title: string
+  value: number
+  fits: boolean
+  capacity: number
+}
+
+const shipPickerHint = computed(() => {
+  if (manifestWeight.value <= 0 && manifestVolume.value <= 0) {
+    return 'Auto-assign deferred to Stage C; pick manually if you want.'
+  }
+  const w = Math.round(manifestWeight.value)
+  const v = Math.round(manifestVolume.value)
+  const fitting = shipItems.value.filter(s => s.fits).length
+  if (fitting === 0) {
+    return `Manifest: ${w.toLocaleString()}t / ${v.toLocaleString()}m³ — no ship at the source can carry this in one trip. Pick anyway and split, or shrink the manifest.`
+  }
+  return `Manifest: ${w.toLocaleString()}t / ${v.toLocaleString()}m³ — ${fitting} ship${fitting === 1 ? '' : 's'} can carry this. Smallest viable shown first.`
+})
+
+// Ship picker: filter to ships at the source (or with unknown location), then
+// sort by "fits the manifest first, smallest viable first" so the natural
+// default is the smallest ship that can carry the load. Each label shows
+// capacity + a check or warning icon.
+const shipItems = computed<ShipPickerItem[]>(() => {
+  const w = manifestWeight.value
+  const v = manifestVolume.value
+  const candidates = props.ships.filter(
+    s =>
+      !form.value.fromLocationId ||
+      !s.locationNaturalId ||
+      s.locationNaturalId === form.value.fromLocationId
+  )
+  const items = candidates.map(s => {
+    const fits = s.cargo.weightCapacity >= w && s.cargo.volumeCapacity >= v
+    const capParts = []
+    if (s.cargo.weightCapacity > 0) {
+      capParts.push(`${Math.round(s.cargo.weightCapacity).toLocaleString()}t`)
+    }
+    if (s.cargo.volumeCapacity > 0) {
+      capParts.push(`${Math.round(s.cargo.volumeCapacity).toLocaleString()}m³`)
+    }
+    const cap = capParts.length > 0 ? ` · ${capParts.join('/')}` : ''
+    const marker = w + v > 0 ? (fits ? ' ✓' : ' ⚠') : ''
+    return {
+      title: `${s.name ?? s.registration} · ${s.locationName ?? 'in flight'}${cap}${marker}`,
       value: s.id,
-    }))
-)
+      fits,
+      capacity: s.cargo.weightCapacity,
+    }
+  })
+  // Sort: fitting ships first; within each group, smallest capacity first
+  // (so the picker defaults visually to the most efficient choice).
+  items.sort((a, b) => {
+    if (a.fits !== b.fits) return a.fits ? -1 : 1
+    return a.capacity - b.capacity
+  })
+  return items
+})
 
 // When opening the dialog, snapshot the shipment (or reset).
 watch(

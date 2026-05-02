@@ -255,6 +255,7 @@ export function solve(input: SolverInput): LogisticsGraph {
       runOutAt: {},
       latestContractAt: {},
       dailyOutflow: {},
+      dailyInflow: {},
       chainSource: {},
       warnings: [],
     })
@@ -291,6 +292,9 @@ export function solve(input: SolverInput): LogisticsGraph {
     },
     nodes: nodeStates,
     edges: edgeStates,
+    // Loader overwrites this with the user's actual building data; the solver
+    // itself doesn't reason about repair.
+    repairEvents: [],
     warnings,
   }
 }

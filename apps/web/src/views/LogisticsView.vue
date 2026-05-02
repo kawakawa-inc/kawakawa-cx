@@ -10,33 +10,49 @@
         Logistics
         <v-chip size="small" color="warning" variant="tonal">Experimental</v-chip>
         <v-spacer />
-        <v-text-field
-          v-model.number="contractLeadDaysInput"
-          type="number"
-          min="0"
-          label="Contract lead time (days)"
-          density="compact"
-          variant="outlined"
-          hide-details
-          style="max-width: 220px"
-          @update:model-value="onContractLeadDaysChanged"
-        />
         <v-btn
           variant="text"
           size="small"
           prepend-icon="mdi-refresh"
           :loading="loading"
-          @click="loadGraph"
+          @click="refreshAll"
         >
           Refresh
         </v-btn>
       </v-card-title>
       <v-card-text>
-        <div class="text-caption text-medium-emphasis">
-          Directed flow graph. Each flow has its own <strong>cadence</strong> — how often a shipment
-          for that material runs. Per-shipment quantity is <code>dailyConsumption × cadence</code>.
-          The Flows table tells you when each shipment loads, ships, and (if needed) when to place
-          an inbound contract so the goods arrive in time.
+        <div class="text-caption text-medium-emphasis mb-3">
+          Each flow has its own <strong>cadence</strong> — how often a shipment runs. Per-shipment
+          quantity is <code>dailyConsumption × cadence</code> plus any repair material burst when
+          a building's next repair falls within the cadence window. The Plan tab is your action
+          surface; the Inspector is for diagnosing per-base state.
+        </div>
+        <div class="d-flex flex-wrap ga-3 align-center">
+          <span class="text-caption text-medium-emphasis">Settings:</span>
+          <v-text-field
+            v-model.number="contractLeadDaysInput"
+            type="number"
+            min="0"
+            label="Contract lead time (days)"
+            hint="Days a KAWA contract takes to fulfill"
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            style="max-width: 240px"
+            @update:model-value="onContractLeadDaysChanged"
+          />
+          <v-text-field
+            v-model.number="targetRepairAgeInput"
+            type="number"
+            min="1"
+            label="Target repair age (days)"
+            hint="Building age you target for repair (was repairDays)"
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            style="max-width: 260px"
+            @update:model-value="onTargetRepairAgeChanged"
+          />
         </div>
       </v-card-text>
     </v-card>
@@ -91,6 +107,10 @@
       <v-col cols="12" md="9">
         <v-card>
           <v-tabs v-model="mainTab" density="compact">
+            <v-tab value="plan">
+              <v-icon start>mdi-calendar-check</v-icon>
+              Plan
+            </v-tab>
             <v-tab value="inspector">
               <v-icon start>mdi-clipboard-list</v-icon>
               Inspector
@@ -106,6 +126,18 @@
           </v-tabs>
           <v-divider />
           <v-tabs-window v-model="mainTab">
+            <!-- ==================== Plan tab ==================== -->
+            <v-tabs-window-item value="plan">
+              <PlanView
+                ref="planViewRef"
+                :graph="graph"
+                :ships="ships"
+                @navigate-to-node="onNavigateToNode"
+                @edit-shipment="openEditShipment"
+                @send-to-market="handleSendToMarket"
+              />
+            </v-tabs-window-item>
+
             <!-- ==================== Inspector tab ==================== -->
             <v-tabs-window-item value="inspector">
               <template v-if="selectedNode">
@@ -143,14 +175,6 @@
                   >
                     Add Flow
                   </v-btn>
-                  <v-btn
-                    v-if="shoppingCount(selectedNode) > 0"
-                    color="primary"
-                    prepend-icon="mdi-cart-plus"
-                    @click="handleShoppingList(selectedNode)"
-                  >
-                    Shopping List ({{ shoppingCount(selectedNode) }})
-                  </v-btn>
                 </v-card-title>
 
                 <v-divider />
@@ -159,87 +183,61 @@
                 <v-card-text>
                   <div class="text-subtitle-2 mb-2">Per-material balance</div>
                   <v-data-table
-                    v-model:expanded="expandedTickers"
                     :headers="balanceHeaders"
                     :items="balanceRows(selectedNode)"
                     :items-per-page="-1"
                     density="compact"
                     hide-default-footer
-                    class="elevation-0"
+                    class="elevation-0 striped-table"
                     item-value="ticker"
-                    show-expand
                   >
                     <template #item.ticker="{ item }">
                       <CommodityDisplay :ticker="item.ticker" />
                     </template>
-                    <template #expanded-row="{ columns, item }">
-                      <tr class="breakdown-row">
-                        <td :colspan="columns.length">
-                          <div class="pa-3">
-                            <div class="text-caption text-medium-emphasis mb-2">
-                              Consumption breakdown for {{ item.ticker }}
-                            </div>
-                            <div
-                              v-if="consumptionBreakdownParts(selectedNode, item.ticker).length > 0"
-                              class="d-flex flex-wrap ga-2"
-                            >
-                              <div
-                                v-for="part in consumptionBreakdownParts(selectedNode, item.ticker)"
-                                :key="part.label"
-                                class="breakdown-chip"
-                              >
-                                <v-icon size="x-small" class="mr-1">{{ part.icon }}</v-icon>
-                                <span class="text-caption">{{ part.label }}</span>
-                                <span class="text-body-2 font-weight-medium ml-2">
-                                  {{ fmt(part.amount) }}
-                                </span>
-                              </div>
-                            </div>
-                            <div v-else class="text-caption text-medium-emphasis">
-                              No consumption at this node.
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    </template>
-                    <template #item.nativeProduction="{ item }">
-                      <span v-if="item.nativeProduction > 0" class="text-success">
-                        {{ fmt(item.nativeProduction) }}
-                      </span>
+                    <template #item.dailyProduction="{ item }">
+                      <span v-if="item.dailyProduction > 0" class="text-success">{{
+                        fmtRate(item.dailyProduction)
+                      }}</span>
                       <span v-else class="text-disabled">–</span>
                     </template>
-                    <template #item.nativeConsumption="{ item }">
-                      <span v-if="item.nativeConsumption > 0" class="text-warning">
-                        {{ fmt(item.nativeConsumption) }}
-                      </span>
+                    <template #item.dailyConsumption="{ item }">
+                      <span v-if="item.dailyConsumption > 0" class="text-warning">{{
+                        fmtRate(item.dailyConsumption)
+                      }}</span>
                       <span v-else class="text-disabled">–</span>
                     </template>
                     <template #item.stock="{ item }">
                       <span v-if="item.stock > 0">{{ fmt(item.stock) }}</span>
                       <span v-else class="text-disabled">–</span>
                     </template>
-                    <template #item.inflow="{ item }">
-                      <span v-if="item.inflow > 0" class="text-success">{{
-                        fmt(item.inflow)
+                    <template #item.dailyInflow="{ item }">
+                      <span v-if="item.dailyInflow > 0" class="text-success">{{
+                        fmtRate(item.dailyInflow)
                       }}</span>
                       <span v-else class="text-disabled">–</span>
                     </template>
-                    <template #item.outflow="{ item }">
-                      <span v-if="item.outflow > 0" class="text-warning">{{
-                        fmt(item.outflow)
+                    <template #item.dailyOutflow="{ item }">
+                      <span v-if="item.dailyOutflow > 0" class="text-warning">{{
+                        fmtRate(item.dailyOutflow)
                       }}</span>
                       <span v-else class="text-disabled">–</span>
                     </template>
-                    <template #item.balance="{ item }">
+                    <template #item.netDaily="{ item }">
                       <span
+                        v-if="item.netDaily !== 0"
                         :class="{
-                          'text-error font-weight-medium': item.balance < 0,
-                          'text-success font-weight-medium': item.balance > 0,
-                          'text-disabled': item.balance === 0,
+                          'text-error font-weight-medium': item.netDaily < 0,
+                          'text-success font-weight-medium': item.netDaily > 0,
                         }"
+                        :title="
+                          item.netDaily > 0
+                            ? 'Local surplus per day (production − consumption); ignores planned in/outflow'
+                            : 'Local deficit per day — this much needed from outside (production − consumption); ignores planned in/outflow'
+                        "
                       >
-                        {{ item.balance < 0 ? item.balance : '+' + item.balance }}
+                        {{ item.netDaily > 0 ? '+' : '' }}{{ fmtRate(item.netDaily) }}
                       </span>
+                      <span v-else class="text-disabled">–</span>
                     </template>
                     <template #item.daysOfStock="{ item }">
                       <v-chip
@@ -315,30 +313,6 @@
                         </v-menu>
                       </template>
                     </template>
-                    <template #item.latestContractAt="{ item }">
-                      <span
-                        v-if="item.chainSource.length > 0"
-                        class="text-disabled"
-                        title="Action lives at the chain source — see the Source column"
-                      >
-                        —
-                      </span>
-                      <span
-                        v-else-if="item.hasOutboundDemand"
-                        class="text-disabled"
-                        title="Per-flow contract-by — see the Flows table below"
-                      >
-                        —
-                      </span>
-                      <span
-                        v-else-if="item.latestContractAt"
-                        :class="urgencyClass(item.latestContractAt)"
-                        :title="item.latestContractAt"
-                      >
-                        {{ formatDate(item.latestContractAt) }}
-                      </span>
-                      <span v-else class="text-disabled">–</span>
-                    </template>
                     <template #no-data>
                       <div class="text-center py-4 text-medium-emphasis">
                         No material activity at this node yet.
@@ -348,6 +322,60 @@
                 </v-card-text>
 
                 <v-divider />
+
+                <!-- Upcoming repair events at this node -->
+                <v-card-text v-if="repairsForNode(selectedNode.locationId).length > 0">
+                  <div class="text-subtitle-2 mb-2 d-flex align-center">
+                    <v-icon size="small" class="mr-1">mdi-wrench</v-icon>
+                    Upcoming repairs ({{ repairsForNode(selectedNode.locationId).length }})
+                  </div>
+                  <v-data-table
+                    :headers="repairHeaders"
+                    :items="repairsForNode(selectedNode.locationId)"
+                    :items-per-page="-1"
+                    density="compact"
+                    hide-default-footer
+                    class="elevation-0 striped-table"
+                  >
+                    <template #item.buildingTicker="{ item }">
+                      <strong>{{ item.buildingTicker }}</strong>
+                      <span
+                        v-if="item.count > 1"
+                        class="text-caption text-medium-emphasis ml-1"
+                        :title="`${item.count} buildings at this condition`"
+                      >
+                        ×{{ item.count }}
+                      </span>
+                    </template>
+                    <template #item.condition="{ item }">
+                      <v-chip
+                        size="x-small"
+                        :color="item.condition < 0.7 ? 'error' : item.condition < 0.85 ? 'warning' : 'success'"
+                        variant="tonal"
+                      >
+                        {{ Math.round(item.condition * 100) }}%
+                      </v-chip>
+                    </template>
+                    <template #item.nextRepairAt="{ item }">
+                      <span :class="urgencyClass(item.nextRepairAt)" :title="item.nextRepairAt">
+                        {{ formatDate(item.nextRepairAt) }}
+                      </span>
+                    </template>
+                    <template #item.materials="{ item }">
+                      <span class="text-caption">
+                        <span
+                          v-for="(m, i) in item.materials"
+                          :key="m.ticker"
+                          :class="{ 'mr-2': i < item.materials.length - 1 }"
+                        >
+                          {{ m.amount }}× <strong>{{ m.ticker }}</strong></span
+                        >
+                      </span>
+                    </template>
+                  </v-data-table>
+                </v-card-text>
+
+                <v-divider v-if="repairsForNode(selectedNode.locationId).length > 0" />
 
                 <!-- Manual claims at this node -->
                 <v-card-text v-if="claimsByLocation.get(selectedNode.locationId)?.length">
@@ -360,7 +388,7 @@
                     :items-per-page="-1"
                     density="compact"
                     hide-default-footer
-                    class="elevation-0"
+                    class="elevation-0 striped-table"
                   >
                     <template #item.category="{ item }">
                       <v-chip
@@ -405,7 +433,7 @@
                     :items-per-page="-1"
                     density="compact"
                     hide-default-footer
-                    class="elevation-0"
+                    class="elevation-0 striped-table"
                   >
                     <template #item.direction="{ item }">
                       <v-icon
@@ -437,17 +465,6 @@
                       <v-chip size="x-small" :color="kindColor(item.kind)" variant="tonal">
                         {{ item.kind }}
                       </v-chip>
-                    </template>
-                    <template #item.amount="{ item }">
-                      <span v-if="item.amount > 0">{{ fmt(item.amount) }}</span>
-                      <span
-                        v-else
-                        class="text-disabled"
-                        title="Solver computed 0 — destination doesn't need this material"
-                      >
-                        0
-                        <v-icon size="x-small" class="ml-1">mdi-information-outline</v-icon>
-                      </span>
                     </template>
                     <template #item.transitDays="{ item }">
                       <span v-if="item.transitDays > 0">{{ item.transitDays }}d</span>
@@ -597,6 +614,7 @@ import ClaimEditDialog from '../components/logistics/ClaimEditDialog.vue'
 import ShipRosterPanel from '../components/logistics/ShipRosterPanel.vue'
 import ShipmentList from '../components/logistics/ShipmentList.vue'
 import ShipmentEditDialog from '../components/logistics/ShipmentEditDialog.vue'
+import PlanView from '../components/logistics/PlanView.vue'
 
 // Dynamically imported: the graph map pulls in cytoscape + dagre (~550 kB
 // minified). Users who only use the Inspector tab never pay that cost —
@@ -648,6 +666,7 @@ const settingsStore = useSettingsStore()
 // Local mirror of the user setting so we can debounce-on-blur without re-rendering
 // every keystroke through the API.
 const contractLeadDaysInput = ref<number>(settingsStore.logisticsContractLeadDays.value ?? 3)
+const targetRepairAgeInput = ref<number>(settingsStore.logisticsTargetRepairAge.value ?? 45)
 
 let contractLeadDaysSaveTimer: ReturnType<typeof setTimeout> | null = null
 function onContractLeadDaysChanged() {
@@ -662,12 +681,29 @@ function onContractLeadDaysChanged() {
   }, 600)
 }
 
+let targetRepairAgeSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onTargetRepairAgeChanged() {
+  if (targetRepairAgeSaveTimer) clearTimeout(targetRepairAgeSaveTimer)
+  targetRepairAgeSaveTimer = setTimeout(async () => {
+    const n = Math.max(1, Math.floor(Number(targetRepairAgeInput.value) || 45))
+    if (n !== settingsStore.logisticsTargetRepairAge.value) {
+      settingsStore.logisticsTargetRepairAge.value = n
+      await loadGraph()
+    }
+  }, 600)
+}
+
 const graph = ref<LogisticsGraph | null>(null)
 const loading = ref(false)
 const selectedLocationId = ref<string>('')
 const snackbar = ref({ show: false, color: 'info', message: '' })
-const expandedTickers = ref<string[]>([])
-const mainTab = ref<'inspector' | 'shipments' | 'graph'>('inspector')
+const mainTab = ref<'plan' | 'inspector' | 'shipments' | 'graph'>('plan')
+const planViewRef = ref<InstanceType<typeof PlanView> | null>(null)
+
+function onNavigateToNode(locationId: string) {
+  selectedLocationId.value = locationId
+  mainTab.value = 'inspector'
+}
 
 // Flow CRUD state
 const flows = ref<LogisticsFlow[]>([])
@@ -812,8 +848,7 @@ function openEditShipment(shipment: Shipment) {
 }
 
 async function handleShipmentSaved() {
-  // Reload the shipment list and the graph (B.3 will make graph reflect plans).
-  await Promise.all([shipmentListRef.value?.reload(), loadGraph()])
+  await Promise.all([shipmentListRef.value?.reload(), planViewRef.value?.reload(), loadGraph()])
 }
 
 async function loadCommodityItems() {
@@ -858,9 +893,12 @@ async function loadGraph() {
   try {
     const result = await api.logistics.graph()
     graph.value = result
-    // Sync the input control with whatever the server actually used.
+    // Sync the input controls with whatever the server actually used.
     if (typeof result.settings?.contractLeadDays === 'number') {
       contractLeadDaysInput.value = result.settings.contractLeadDays
+    }
+    if (typeof result.settings?.repairDays === 'number' && result.settings.repairDays > 0) {
+      targetRepairAgeInput.value = result.settings.repairDays
     }
     // Auto-select first node if none chosen
     if (!selectedLocationId.value && result.nodes.length > 0) {
@@ -885,8 +923,30 @@ onMounted(async () => {
     loadFlows(),
     loadClaims(),
     loadGraph(),
+    loadShipsForDialog(),
   ])
 })
+
+/**
+ * Refresh everything visible on the Logistics page. Clears the in-memory
+ * location/commodity caches first so newly-synced or newly-un-excluded
+ * locations show up — `getAllLocations()` returns memoized data otherwise,
+ * which is fine for stable universe data but stale when the user changes
+ * their FIO exclusion list and expects affected planets to reappear.
+ */
+async function refreshAll() {
+  locationService.clearCache()
+  await Promise.all([
+    loadCommodityItems(),
+    loadLocationItems(),
+    loadFlows(),
+    loadClaims(),
+    loadGraph(),
+    loadShipsForDialog(),
+    shipmentListRef.value?.reload(),
+    planViewRef.value?.reload(),
+  ])
+}
 
 // ==================== View helpers ====================
 
@@ -928,30 +988,48 @@ function fmt(n: number): string {
   return Math.round(n).toLocaleString()
 }
 
+/**
+ * Format a daily rate. Below 10 we show one decimal so 0.4/d doesn't read as
+ * "0/d" and round to nothing useful; at and above 10 we round to whole units.
+ */
+function fmtRate(n: number): string {
+  if (n === 0) return '0/d'
+  const abs = Math.abs(n)
+  const formatted = abs < 10 ? n.toFixed(1) : Math.round(n).toLocaleString()
+  return `${formatted}/d`
+}
+
 function nodeNameFor(locationId: string): string {
   return graph.value?.nodes.find(n => n.locationId === locationId)?.locationName ?? locationId
 }
 
+// Inspector is a diagnostic view — daily rates for everything flowing through
+// the node, plus stock and a chain-source pointer. Contract-by belongs in the
+// Plan tab (the action surface); the Inspector answers "what does this base
+// look like" not "what should I do." Production + Consumption are useful here
+// for understanding the node's intrinsic behavior even though Burn & Repair
+// also has them — context matters more than non-duplication.
 const balanceHeaders = [
   { title: 'Material', key: 'ticker', sortable: true },
-  { title: 'Production', key: 'nativeProduction', sortable: true, align: 'end' as const },
-  { title: 'Consumption', key: 'nativeConsumption', sortable: true, align: 'end' as const },
+  { title: 'Production/d', key: 'dailyProduction', sortable: true, align: 'end' as const },
+  { title: 'Consumption/d', key: 'dailyConsumption', sortable: true, align: 'end' as const },
   { title: 'Stock', key: 'stock', sortable: true, align: 'end' as const },
-  { title: 'Inflow', key: 'inflow', sortable: true, align: 'end' as const },
-  { title: 'Outflow', key: 'outflow', sortable: true, align: 'end' as const },
-  { title: 'Balance', key: 'balance', sortable: true, align: 'end' as const },
+  { title: 'Inflow/d', key: 'dailyInflow', sortable: true, align: 'end' as const },
+  { title: 'Outflow/d', key: 'dailyOutflow', sortable: true, align: 'end' as const },
+  { title: 'Net/d', key: 'netDaily', sortable: true, align: 'end' as const },
   { title: 'Days', key: 'daysOfStock', sortable: true, align: 'end' as const },
   { title: 'Run-out', key: 'runOutAt', sortable: true, align: 'end' as const },
   { title: 'Source', key: 'chainSource', sortable: true, align: 'end' as const },
-  { title: 'Contract by', key: 'latestContractAt', sortable: true, align: 'end' as const },
 ]
 
+// "Amount" (legacy: solver burnDays-allocated total) deliberately omitted —
+// "Per ship" carries the right cadence-aware number including repair burst,
+// and showing both invited confusion ("why is amount 0 but per-ship 16?").
 const edgeHeaders = [
   { title: '', key: 'direction', sortable: false, width: '40px' },
   { title: 'Counterparty', key: 'other', sortable: true },
   { title: 'Material', key: 'ticker', sortable: true },
   { title: 'Kind', key: 'kind', sortable: true },
-  { title: 'Amount', key: 'amount', sortable: true, align: 'end' as const },
   { title: 'Transit', key: 'transitDays', sortable: true, align: 'end' as const },
   { title: 'Cadence', key: 'cadenceDays', sortable: true, align: 'end' as const },
   {
@@ -994,56 +1072,52 @@ function claimCategoryColor(c: ClaimCategory): string {
 
 function balanceRows(node: NodeState): Array<{
   ticker: string
-  nativeProduction: number
-  nativeConsumption: number
+  dailyProduction: number
+  dailyConsumption: number
   stock: number
-  inflow: number
-  outflow: number
-  balance: number
+  dailyInflow: number
+  dailyOutflow: number
+  netDaily: number
   daysOfStock: number | null
   runOutAt: string | null
-  latestContractAt: string | null
   chainSource: string[]
   chainSourceNames: string[]
-  hasOutboundDemand: boolean
 }> {
   const tickers = new Set<string>([
-    ...Object.keys(node.nativeConsumption),
-    ...Object.keys(node.nativeProduction),
+    ...Object.keys(node.dailyConsumption),
+    ...Object.keys(node.dailyProduction),
     ...Object.keys(node.stock),
-    ...Object.keys(node.derivedInflow),
-    ...Object.keys(node.derivedOutflow),
+    ...Object.keys(node.dailyInflow),
+    ...Object.keys(node.dailyOutflow),
   ])
-  // Tickers that have at least one outbound demand/fixed flow from this node.
-  // For these, contract-by lives on the per-flow row, not at the node level.
-  const outboundDemandTickers = new Set<string>()
-  if (graph.value) {
-    for (const e of graph.value.edges) {
-      if (e.fromLocationId !== node.locationId) continue
-      if (e.kind !== 'demand' && e.kind !== 'fixed') continue
-      outboundDemandTickers.add(e.commodityTicker)
-    }
-  }
   const rows = [...tickers].map(ticker => {
     const sources = node.chainSource?.[ticker] ?? []
+    const dC = node.dailyConsumption?.[ticker] ?? 0
+    const dP = node.dailyProduction?.[ticker] ?? 0
+    const dIn = node.dailyInflow?.[ticker] ?? 0
+    const dOut = node.dailyOutflow?.[ticker] ?? 0
+    // Local net only — does NOT include planned inflow/outflow. Those are
+    // visible in their own columns; Net/d is the base's intrinsic deficit
+    // or surplus per day. Negative Net/d at a leaf = "I need this much
+    // shipped in per day"; positive = "I have this much extra locally."
+    const netDaily = dP - dC
     return {
       ticker,
-      nativeProduction: Math.round(node.nativeProduction[ticker] ?? 0),
-      nativeConsumption: Math.round(node.nativeConsumption[ticker] ?? 0),
+      dailyProduction: dP,
+      dailyConsumption: dC,
       stock: Math.round(node.stock[ticker] ?? 0),
-      inflow: Math.round(node.derivedInflow[ticker] ?? 0),
-      outflow: Math.round(node.derivedOutflow[ticker] ?? 0),
-      balance: Math.round(node.balance[ticker] ?? 0),
+      dailyInflow: dIn,
+      dailyOutflow: dOut,
+      netDaily,
       daysOfStock: node.daysOfStock?.[ticker] ?? null,
       runOutAt: node.runOutAt?.[ticker] ?? null,
-      latestContractAt: node.latestContractAt?.[ticker] ?? null,
       chainSource: sources,
       chainSourceNames: sources.map(id => nodeNameFor(id)),
-      hasOutboundDemand: outboundDemandTickers.has(ticker),
     }
   })
   return rows.sort((a, b) => {
-    if (a.balance !== b.balance) return a.balance - b.balance // shortfalls first
+    // Most-depleting first (most negative netDaily); ties → ticker name.
+    if (a.netDaily !== b.netDaily) return a.netDaily - b.netDaily
     return a.ticker.localeCompare(b.ticker)
   })
 }
@@ -1091,57 +1165,96 @@ function edgesForNode(locationId: string): EdgeState[] {
   )
 }
 
-interface BreakdownPart {
-  label: string
-  icon: string
-  amount: number
+const repairHeaders = [
+  { title: 'Building', key: 'buildingTicker', sortable: true },
+  { title: 'Condition', key: 'condition', sortable: true, align: 'end' as const },
+  { title: 'Next repair', key: 'nextRepairAt', sortable: true, align: 'end' as const },
+  { title: 'Materials (summed)', key: 'materials', sortable: false },
+]
+
+interface GroupedRepair {
+  buildingTicker: string
+  count: number
+  /** Hull condition 0..1 of any building in the group (all share rounded %). */
+  condition: number
+  /** Earliest next-repair date across the group. */
+  nextRepairAt: string
+  materials: Array<{ ticker: string; amount: number }>
 }
 
-function consumptionBreakdownParts(node: NodeState, ticker: string): BreakdownPart[] {
-  const bd = node.consumptionBreakdown?.[ticker]
-  if (!bd) return []
-  const parts: BreakdownPart[] = []
-  if (bd.workforceBurn > 0) {
-    parts.push({ label: 'Workforce burn', icon: 'mdi-fire', amount: bd.workforceBurn })
-  }
-  if (bd.repair > 0) {
-    parts.push({ label: 'Repair', icon: 'mdi-wrench', amount: bd.repair })
-  }
-  if (bd.productionInputs > 0) {
-    parts.push({
-      label: 'Production inputs',
-      icon: 'mdi-factory',
-      amount: bd.productionInputs,
-    })
-  }
-  for (const [category, amount] of Object.entries(bd.claims ?? {})) {
-    if (amount > 0) {
-      parts.push({
-        label: claimCategoryLabel(category as ClaimCategory),
-        icon: claimCategoryIcon(category as ClaimCategory),
-        amount,
-      })
+/**
+ * Group repair events at a base by `(building ticker, rounded condition %)`
+ * so e.g. eight WPLs all at 99% collapse into a single row with summed
+ * materials. Different condition tiers stay separate so the user can see
+ * which buildings are oldest. Within a group, materials are summed across
+ * all buildings; nextRepairAt is the earliest in the group.
+ */
+function repairsForNode(locationId: string): GroupedRepair[] {
+  if (!graph.value) return []
+  const groups = new Map<
+    string,
+    { ticker: string; count: number; condition: number; nextRepairAt: string; mats: Map<string, number> }
+  >()
+  for (const r of graph.value.repairEvents) {
+    if (r.locationNaturalId !== locationId) continue
+    const pct = Math.round(r.condition * 100)
+    const key = `${r.buildingTicker}|${pct}`
+    let g = groups.get(key)
+    if (!g) {
+      g = {
+        ticker: r.buildingTicker,
+        count: 0,
+        condition: r.condition,
+        nextRepairAt: r.nextRepairAt,
+        mats: new Map(),
+      }
+      groups.set(key, g)
+    }
+    g.count++
+    if (r.nextRepairAt < g.nextRepairAt) g.nextRepairAt = r.nextRepairAt
+    for (const m of r.materials) {
+      g.mats.set(m.ticker, (g.mats.get(m.ticker) ?? 0) + m.amount)
     }
   }
-  return parts
+  return [...groups.values()]
+    .map(g => ({
+      buildingTicker: g.ticker,
+      count: g.count,
+      condition: g.condition,
+      nextRepairAt: g.nextRepairAt,
+      materials: [...g.mats.entries()]
+        .map(([ticker, amount]) => ({ ticker, amount }))
+        .sort((a, b) => a.ticker.localeCompare(b.ticker)),
+    }))
+    .sort((a, b) => a.nextRepairAt.localeCompare(b.nextRepairAt))
 }
 
-function handleShoppingList(node: NodeState): void {
-  const materials: Record<string, number> = {}
-  for (const [ticker, qty] of Object.entries(node.shoppingList)) {
-    const rounded = Math.ceil(qty)
-    if (rounded > 0) materials[ticker] = rounded
-  }
-  if (Object.keys(materials).length === 0) {
+/**
+ * Send-to-Market for a single location: bundle every contract action at that
+ * location across the current look-ahead window into a shopping list, then
+ * route to /market with the location filter and the user's default price
+ * list filter pre-applied. Mirrors the Pricing Calculator's send-to-market
+ * pattern but keyed off Plan's already-grouped contractActions.
+ */
+function handleSendToMarket(locationId: string, locationName: string): void {
+  const actions = planViewRef.value?.contractActionsForLocation?.(locationId) ?? []
+  if (actions.length === 0) {
     snackbar.value = {
       show: true,
       color: 'info',
-      message: `${node.locationName} has no shortfalls — nothing to buy.`,
+      message: `No contracts at ${locationName} in the look-ahead window.`,
     }
     return
   }
-  shoppingList.setMaterials(materials, `Logistics – ${node.locationName}`)
-  router.push('/market')
+  const materials: Record<string, number> = {}
+  for (const a of actions) {
+    materials[a.ticker] = (materials[a.ticker] ?? 0) + Math.ceil(a.amount)
+  }
+  shoppingList.setMaterials(materials, `Logistics – ${locationName}`)
+  const query: Record<string, string> = { location: locationId }
+  const defaultPriceList = settingsStore.defaultPriceList.value
+  if (defaultPriceList) query.pricing = defaultPriceList
+  router.push({ path: '/market', query })
 }
 </script>
 
@@ -1154,16 +1267,13 @@ code {
   border-radius: 3px;
 }
 
-.breakdown-row {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.breakdown-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/*
+ * Stripe alternating rows on Inspector tables. The :deep() pierces Vuetify's
+ * internal DOM (the striped-table class is on the v-data-table wrapper, the
+ * actual <table> is several layers deep). Important is needed because Vuetify
+ * applies its own per-row hover/striped styles at higher specificity.
+ */
+:deep(.striped-table tbody tr:nth-child(odd) td) {
+  background: rgba(255, 255, 255, 0.025) !important;
 }
 </style>

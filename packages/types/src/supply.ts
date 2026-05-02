@@ -658,6 +658,13 @@ export interface NodeState {
    */
   dailyOutflow: Record<string, number>
   /**
+   * Per-ticker daily inflow rate from committed inbound edges
+   * (`derivedInflow / burnDays`). Symmetric with `dailyOutflow`; used in the
+   * Inspector to show "Inflow/day" alongside "Outflow/day" instead of the
+   * old burnDays-totals display.
+   */
+  dailyInflow: Record<string, number>
+  /**
    * Per-ticker IMMEDIATE upstream sources for this ticker's inflow — the
    * locationIds whose committed flows feed this node. The UI surfaces these
    * as click-through chips so the user can navigate one hop at a time:
@@ -679,6 +686,33 @@ export interface NodeState {
   warnings: string[]
 }
 
+/**
+ * A scheduled repair event for one of the user's buildings. Repair is no
+ * longer folded into per-day consumption — it's a discrete event with a known
+ * date and material list. The Plan tab consumes these to surface "ship by /
+ * contract by" deadlines for repair shipments.
+ *
+ * `nextRepairAt = (lastRepairAt ?? buildingCreated) + repairDays`, where
+ * `repairDays` is the user's target repair age. (A future per-building override
+ * will refine this; today the global setting applies to all buildings.)
+ */
+export interface RepairEvent {
+  /** FIO building id (stable across syncs). */
+  buildingId: string
+  /** Building type ticker, e.g. "HB1". */
+  buildingTicker: string
+  /** Planet the building is on. */
+  locationNaturalId: string
+  /** Display name for the planet. */
+  locationName: string
+  /** When the next repair is due. ISO string. */
+  nextRepairAt: string
+  /** Hull condition (0..1) at the time of the graph build. */
+  condition: number
+  /** Per-ticker material requirements for this repair. */
+  materials: Array<{ ticker: string; amount: number }>
+}
+
 /** Full solver output: one graph response per user */
 export interface LogisticsGraph {
   settings: {
@@ -695,6 +729,13 @@ export interface LogisticsGraph {
   }
   nodes: NodeState[]
   edges: EdgeState[]
+  /**
+   * Upcoming repair events across all the user's buildings. Each event has
+   * a known date (lastRepairAt + repairDays target age) and material list.
+   * The Plan tab uses these to surface contract-by / ship-by deadlines for
+   * repair shipments alongside flow-cadence shipments.
+   */
+  repairEvents: RepairEvent[]
   warnings: string[]
 }
 

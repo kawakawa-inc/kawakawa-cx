@@ -251,6 +251,14 @@ export const useSettingsStore = () => {
     set: (value: number) => updateSetting('logistics.contractLeadDays', value),
   })
 
+  // Target repair age — building age (days) the user wants to repair at. Same
+  // storage key as the Burn/Repair feature; logistics consumes it as the
+  // "next-repair anchor" for repair-event scheduling. Default 45.
+  const logisticsTargetRepairAge = computed({
+    get: () => (settingsValues.value['burnRepair.repairDays'] as number) ?? 45,
+    set: (value: number) => updateSetting('burnRepair.repairDays', value),
+  })
+
   // Discord settings
   const discordMessageVisibility = computed({
     get: () => settingsValues.value['discord.messageVisibility'] as MessageVisibility,
@@ -333,6 +341,7 @@ export const useSettingsStore = () => {
     // Typed computed properties - Logistics
     logisticsExcludedPlanets,
     logisticsContractLeadDays,
+    logisticsTargetRepairAge,
 
     // Typed computed properties - Discord
     discordMessageVisibility,

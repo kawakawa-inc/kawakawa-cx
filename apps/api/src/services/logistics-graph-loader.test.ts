@@ -31,6 +31,7 @@ function makeNode(
     runOutAt: {},
     latestContractAt: {},
     dailyOutflow: {},
+    dailyInflow: {},
     chainSource: {},
     warnings: [],
     ...extra,
@@ -78,6 +79,7 @@ function makeGraph(nodes: NodeState[], edges: EdgeState[] = []): LogisticsGraph 
     },
     nodes,
     edges,
+    repairEvents: [],
     warnings: [],
   }
 }

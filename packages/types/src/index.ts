@@ -527,6 +527,28 @@ export interface OrderReservation {
   updatedAt: string // ISO date string
 }
 
+// Compact reservation summary returned for the per-order reservations view.
+// Surfaced in the market and "my orders" expanded rows so anyone who can see
+// the order can see who's holding stock against it. Notes are only populated
+// for the order owner and the reservation's own counterparty — everyone else
+// gets `notes: null`.
+export interface OrderReservationSummary {
+  id: number
+  status: ReservationStatus
+  quantity: number
+  counterpartyUserId: number
+  counterpartyName: string
+  expiresAt: string | null // ISO date string
+  createdAt: string // ISO date string
+  updatedAt: string // ISO date string
+  invoiceId: number | null // Linked invoice if reservation is part of one
+  // True when the caller is allowed to open the invoice (owner or counterparty
+  // of that invoice). The frontend uses this to render the invoice id as a
+  // link vs. plain text — clicking when forbidden would 403, so we hide it.
+  canViewInvoice: boolean
+  notes: string | null // null unless caller is order owner or reservation's counterparty
+}
+
 // Reservation with related order and user info
 export interface ReservationWithDetails extends OrderReservation {
   // The order owner (seller if sellOrderId set, buyer if buyOrderId set)

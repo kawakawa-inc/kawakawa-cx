@@ -20,6 +20,7 @@ import type {
   UpdateReservationStatusRequest,
   ReservationStatus,
   NotificationType,
+  OrderReservationSummary,
 } from '@kawakawa/types'
 import {
   db,
@@ -29,7 +30,7 @@ import {
   users,
   invoiceLineItems,
 } from '../db/index.js'
-import { eq, or, and, isNull } from 'drizzle-orm'
+import { eq, or, and, isNull, inArray, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '@kawakawa/services/notifications'
@@ -328,6 +329,136 @@ export class ReservationsController extends Controller {
       isOrderOwner: r.orderOwnerUserId === userId,
       isCounterparty: r.counterpartyUserId === userId,
     }
+  }
+
+  /**
+   * Get reservations against a specific sell order. Visible to the order owner
+   * unconditionally; everyone else gated by the order's orderType permission
+   * (orders.view_internal / orders.view_partner). Notes are only included for
+   * the order owner and the reservation's own counterparty.
+   *
+   * @param all If true, include cancelled/rejected/expired reservations and the
+   *   full fulfilled history. Default omits those and caps fulfilled to 30 days.
+   */
+  @Get('sell-order/{sellOrderId}')
+  public async getReservationsForSellOrder(
+    @Path() sellOrderId: number,
+    @Request() request: { user: JwtPayload },
+    @Query() all?: boolean
+  ): Promise<OrderReservationSummary[]> {
+    return this.getReservationsForOrder(sellOrderId, 'sell', request.user, all === true)
+  }
+
+  /**
+   * Get reservations against a specific buy order. Same visibility model as
+   * {@link getReservationsForSellOrder}.
+   */
+  @Get('buy-order/{buyOrderId}')
+  public async getReservationsForBuyOrder(
+    @Path() buyOrderId: number,
+    @Request() request: { user: JwtPayload },
+    @Query() all?: boolean
+  ): Promise<OrderReservationSummary[]> {
+    return this.getReservationsForOrder(buyOrderId, 'buy', request.user, all === true)
+  }
+
+  private async getReservationsForOrder(
+    orderId: number,
+    side: 'sell' | 'buy',
+    caller: JwtPayload,
+    showAll: boolean
+  ): Promise<OrderReservationSummary[]> {
+    // Look up the order — must exist and be active. Soft-deleted orders are
+    // hidden from this endpoint to mirror the order list filter; the original
+    // parties can still see their reservation via the invoice flow.
+    let orderOwnerUserId: number
+    let orderType: 'internal' | 'partner'
+    if (side === 'sell') {
+      const [order] = await db
+        .select({ userId: sellOrders.userId, orderType: sellOrders.orderType })
+        .from(sellOrders)
+        .where(and(eq(sellOrders.id, orderId), isNull(sellOrders.deletedAt)))
+      if (!order) throw NotFound('Sell order not found')
+      orderOwnerUserId = order.userId
+      orderType = order.orderType
+    } else {
+      const [order] = await db
+        .select({ userId: buyOrders.userId, orderType: buyOrders.orderType })
+        .from(buyOrders)
+        .where(and(eq(buyOrders.id, orderId), isNull(buyOrders.deletedAt)))
+      if (!order) throw NotFound('Buy order not found')
+      orderOwnerUserId = order.userId
+      orderType = order.orderType
+    }
+
+    // Permission gate — owner always allowed; others must hold the same view
+    // permission that gates the market listing for this order's type.
+    const isOwner = orderOwnerUserId === caller.userId
+    if (!isOwner) {
+      const viewPermission =
+        orderType === 'internal' ? 'orders.view_internal' : 'orders.view_partner'
+      if (!(await hasPermission(caller.roles, viewPermission))) {
+        throw Forbidden(`You do not have permission to view ${orderType} order reservations`)
+      }
+    }
+
+    // Default filter: only the reservations that currently impact the order's
+    // available quantity — pending + confirmed. Fulfilled is excluded because
+    // a fulfilled trade is closed (and once the seller's FIO has refreshed,
+    // it stops affecting available anyway). Cancelled/rejected/expired never
+    // impact available. The `?all=true` query param surfaces the full history.
+    const sideColumn =
+      side === 'sell' ? orderReservations.sellOrderId : orderReservations.buyOrderId
+    const filters = [eq(sideColumn, orderId)]
+    if (!showAll) {
+      filters.push(inArray(orderReservations.status, ['pending', 'confirmed']))
+    }
+
+    // One query: reservations + counterparty display name + invoice id (if any).
+    const rows = await db
+      .select({
+        id: orderReservations.id,
+        status: orderReservations.status,
+        quantity: orderReservations.quantity,
+        counterpartyUserId: orderReservations.counterpartyUserId,
+        counterpartyName: users.displayName,
+        notes: orderReservations.notes,
+        expiresAt: orderReservations.expiresAt,
+        createdAt: orderReservations.createdAt,
+        updatedAt: orderReservations.updatedAt,
+        invoiceId: invoiceLineItems.invoiceId,
+      })
+      .from(orderReservations)
+      .innerJoin(users, eq(users.id, orderReservations.counterpartyUserId))
+      .leftJoin(invoiceLineItems, eq(invoiceLineItems.reservationId, orderReservations.id))
+      .where(and(...filters))
+      .orderBy(sql`${orderReservations.createdAt} DESC`)
+
+    // Notes redaction: only the order owner and the reservation's own
+    // counterparty see the notes. Everyone else gets null.
+    //
+    // canViewInvoice mirrors InvoicesController.getInvoice's access rule: an
+    // invoice is viewable by its owner (the user who built the invoice — i.e.
+    // the reservation's counterparty) and the invoice's counterparty (the
+    // order owner). The set is the same as the notes-visibility set, so we
+    // compute it once.
+    return rows.map(r => {
+      const isReservationCounterparty = r.counterpartyUserId === caller.userId
+      const canSeePrivate = isOwner || isReservationCounterparty
+      return {
+        id: r.id,
+        status: r.status,
+        quantity: r.quantity,
+        counterpartyUserId: r.counterpartyUserId,
+        counterpartyName: r.counterpartyName ?? 'Unknown',
+        expiresAt: r.expiresAt?.toISOString() ?? null,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+        invoiceId: r.invoiceId,
+        canViewInvoice: r.invoiceId != null && canSeePrivate,
+        notes: canSeePrivate ? r.notes : null,
+      }
+    })
   }
 
   /**

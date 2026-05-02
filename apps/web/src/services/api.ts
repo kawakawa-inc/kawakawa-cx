@@ -808,6 +808,25 @@ interface ReservationWithDetails {
   isCounterparty: boolean
 }
 
+// Compact reservation surfaced in the per-order expanded view in MarketView /
+// MyOrdersView. `notes` is null unless the caller is the order owner or this
+// reservation's own counterparty. `canViewInvoice` is true only when the
+// caller is allowed to open the linked invoice — used to gate the link UI so
+// we don't render a clickable link that would 403 on click.
+export interface OrderReservationSummary {
+  id: number
+  status: ReservationStatus
+  quantity: number
+  counterpartyUserId: number
+  counterpartyName: string
+  expiresAt: string | null
+  createdAt: string
+  updatedAt: string
+  invoiceId: number | null
+  canViewInvoice: boolean
+  notes: string | null
+}
+
 interface CreateSellOrderReservationRequest {
   sellOrderId: number
   quantity: number
@@ -2687,6 +2706,42 @@ const realApi = {
       throw new Error(`Failed to get reservation: ${response.statusText}`)
     }
 
+    return response.json()
+  },
+
+  getReservationsForSellOrder: async (
+    sellOrderId: number,
+    opts?: { all?: boolean }
+  ): Promise<OrderReservationSummary[]> => {
+    const params = opts?.all ? '?all=true' : ''
+    const response = await fetchWithLogging(
+      `/api/reservations/sell-order/${sellOrderId}${params}`,
+      { method: 'GET', headers: getAuthHeaders() }
+    )
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 403) throw new Error('Permission denied')
+      if (response.status === 404) throw new Error('Sell order not found')
+      throw new Error(`Failed to get reservations: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  getReservationsForBuyOrder: async (
+    buyOrderId: number,
+    opts?: { all?: boolean }
+  ): Promise<OrderReservationSummary[]> => {
+    const params = opts?.all ? '?all=true' : ''
+    const response = await fetchWithLogging(`/api/reservations/buy-order/${buyOrderId}${params}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      if (response.status === 403) throw new Error('Permission denied')
+      if (response.status === 404) throw new Error('Buy order not found')
+      throw new Error(`Failed to get reservations: ${response.statusText}`)
+    }
     return response.json()
   },
 
@@ -5280,6 +5335,10 @@ export const api = {
     reopen: (id: number, request?: UpdateReservationStatusRequest) =>
       realApi.reopenReservation(id, request),
     delete: (id: number) => realApi.deleteReservation(id),
+    forSellOrder: (sellOrderId: number, opts?: { all?: boolean }) =>
+      realApi.getReservationsForSellOrder(sellOrderId, opts),
+    forBuyOrder: (buyOrderId: number, opts?: { all?: boolean }) =>
+      realApi.getReservationsForBuyOrder(buyOrderId, opts),
   },
   invoices: {
     // Status filter uses stored DB status, not calculated display status

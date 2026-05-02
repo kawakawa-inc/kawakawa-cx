@@ -1,5 +1,5 @@
 import { db, fioInventory, fioUserStorage, orderReservations } from '@kawakawa/db'
-import { and, eq, inArray, or, gt, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, gt, isNull, sql, max } from 'drizzle-orm'
 import type { SellOrderLimitMode } from '@kawakawa/types'
 
 /**
@@ -58,6 +58,43 @@ export function calculateAvailableQuantity(
     default:
       return fioQuantity
   }
+}
+
+/**
+ * Get the most recent FIO upload timestamp across all of a user's storages.
+ *
+ * Used as a session-wide fallback when checking whether a fulfilled reservation
+ * should still be subtracted from available. The per-location fioUploadedAt is
+ * more precise but only exists when the user currently holds stock at that
+ * location — if they sold their entire holding, no row exists and we'd have no
+ * signal that they've refreshed FIO since the trade closed. Per-user max picks
+ * up the next best signal: any storage refresh implies the player has played
+ * since the trade and the new inventory state is what FIO knows.
+ *
+ * @param userIds - User IDs to look up
+ * @returns Map of userId -> max fio_uploaded_at (null if no storages have one)
+ */
+export async function getUserMaxFioUploadedAt(
+  userIds: number[]
+): Promise<Map<number, Date | null>> {
+  if (userIds.length === 0) {
+    return new Map()
+  }
+
+  const rows = await db
+    .select({
+      userId: fioUserStorage.userId,
+      maxUploadedAt: max(fioUserStorage.fioUploadedAt),
+    })
+    .from(fioUserStorage)
+    .where(inArray(fioUserStorage.userId, userIds))
+    .groupBy(fioUserStorage.userId)
+
+  const map = new Map<number, Date | null>()
+  for (const row of rows) {
+    map.set(row.userId, row.maxUploadedAt)
+  }
+  return map
 }
 
 /**
@@ -383,12 +420,17 @@ export async function enrichSellOrdersWithQuantities(
   const userIds = [...new Set(orders.map(o => o.userId))]
   const orderIds = orders.map(o => o.id)
 
-  // Fetch inventory, active reservations, and fulfilled reservations in parallel
-  const [inventoryMap, activeReservationMap, fulfilledReservationsMap] = await Promise.all([
-    getInventoryForUsers(userIds),
-    getActiveReservationStatsForSellOrders(orderIds),
-    getFulfilledReservationsForSellOrders(orderIds),
-  ])
+  // Fetch inventory, active reservations, fulfilled reservations, and per-user
+  // max FIO upload timestamp in parallel. The user-wide max is used as a
+  // fallback for fulfilled-quantity decay when the order's location has no
+  // inventory row (e.g. seller cleared their stock at that location entirely).
+  const [inventoryMap, activeReservationMap, fulfilledReservationsMap, userMaxFioMap] =
+    await Promise.all([
+      getInventoryForUsers(userIds),
+      getActiveReservationStatsForSellOrders(orderIds),
+      getFulfilledReservationsForSellOrders(orderIds),
+      getUserMaxFioUploadedAt(userIds),
+    ])
 
   // Build quantity info for each order
   const quantityMap = new Map<number, SellOrderQuantityInfo>()
@@ -399,10 +441,24 @@ export async function enrichSellOrdersWithQuantities(
     const activeStats = activeReservationMap.get(order.id) ?? { count: 0, quantity: 0 }
     const fulfilledReservations = fulfilledReservationsMap.get(order.id) ?? []
 
+    // For the fulfilled-quantity decay check we want the most accurate "the
+    // seller has refreshed FIO since this trade" signal we can muster. The
+    // location-specific timestamp is best when present; fall back to the
+    // user-wide max so a fulfilled trade stops counting once the seller has
+    // played and FIO uploaded since fulfillment, even if their stock at this
+    // location dropped to zero (and so no inventory row exists).
+    const userMaxFio = userMaxFioMap.get(order.userId) ?? null
+    const effectiveFioUploadedAt =
+      inventoryInfo.fioUploadedAt && userMaxFio
+        ? inventoryInfo.fioUploadedAt > userMaxFio
+          ? inventoryInfo.fioUploadedAt
+          : userMaxFio
+        : (inventoryInfo.fioUploadedAt ?? userMaxFio)
+
     // Calculate FIO-aware fulfilled quantity
     const fulfilledQuantity = calculateEffectiveFulfilledQuantity(
       fulfilledReservations,
-      inventoryInfo.fioUploadedAt
+      effectiveFioUploadedAt
     )
 
     const fioQuantity = inventoryInfo.quantity

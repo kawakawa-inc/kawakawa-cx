@@ -258,6 +258,7 @@
 
       <v-data-table
         :key="shoppingListKey"
+        v-model:expanded="expandedRows"
         :headers="headers"
         :items="filteredItems"
         :loading="loading"
@@ -265,6 +266,7 @@
         :row-props="getRowProps"
         :item-value="item => `${item.itemType}-${item.id}`"
         :class="['elevation-0', 'clickable-rows', { 'icon-rows': hasIcons }]"
+        show-expand
         @click:row="onRowClick"
       >
         <template #item.itemType="{ item }">
@@ -490,6 +492,34 @@
           </v-menu>
         </template>
 
+        <!-- Hide the expand chevron entirely on rows with no active reservations.
+             There's nothing to show, and the affordance implies content that isn't there. -->
+        <template #item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+          <v-btn
+            v-if="internalItem.raw.activeReservationCount > 0"
+            icon
+            size="small"
+            variant="text"
+            @click.stop="toggleExpand(internalItem)"
+          >
+            <v-icon>{{
+              isExpanded(internalItem) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+            }}</v-icon>
+          </v-btn>
+        </template>
+
+        <template #expanded-row="{ columns, item }">
+          <tr class="market-expanded-row">
+            <td :colspan="columns.length" class="pa-0">
+              <OrderReservationsTable
+                :order-id="item.id"
+                :side="item.itemType === 'sell' ? 'sell' : 'buy'"
+                @open-invoice="onOpenInvoiceFromExpand"
+              />
+            </td>
+          </tr>
+        </template>
+
         <template #no-data>
           <div class="text-center py-8">
             <v-icon size="64" color="grey-lighten-1">mdi-storefront-outline</v-icon>
@@ -708,6 +738,7 @@
             min="1"
             :rules="[v => v > 0 || 'Quantity must be positive']"
             required
+            @keyup.enter="onInvoiceQuantityEnter"
           />
 
           <div class="text-body-2 text-medium-emphasis">
@@ -825,6 +856,7 @@ import {
 } from '../composables'
 import OrderDialog from '../components/OrderDialog.vue'
 import OrderDetailDialog from '../components/OrderDetailDialog.vue'
+import OrderReservationsTable from '../components/OrderReservationsTable.vue'
 import PriceListDisplay from '../components/PriceListDisplay.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
@@ -984,6 +1016,10 @@ const orderDialog = ref(false)
 const orderDialogTab = ref<'buy' | 'sell'>('buy')
 const orderInitialCommodity = ref<string | undefined>(undefined)
 const orderInitialLocation = ref<string | undefined>(undefined)
+
+// Expanded rows show per-order reservation details (OrderReservationsTable).
+// Vuetify keys expanded rows by item-value; this view uses `${itemType}-${id}`.
+const expandedRows = ref<string[]>([])
 
 // Order detail dialog with deep linking
 const {
@@ -1370,6 +1406,22 @@ const openContractBreakdown = async () => {
   }
 }
 
+// Open the contract-breakdown dialog for an arbitrary invoice id — used by the
+// per-order expanded reservation rows when the user clicks an invoice link.
+const onOpenInvoiceFromExpand = async (invoiceId: number) => {
+  try {
+    submittedInvoice.value = await api.invoices.get(invoiceId)
+    showContractBreakdown.value = true
+  } catch (e) {
+    showSnackbar(
+      e instanceof Error && e.message === 'Permission denied'
+        ? "You don't have access to that invoice"
+        : 'Failed to load invoice',
+      'error'
+    )
+  }
+}
+
 const onInvoiceSubmitted = (invoiceId: number, invoicedQuantities: Record<string, number>) => {
   showSnackbar('Invoice submitted successfully!', 'success')
   loadMarketItems()
@@ -1526,8 +1578,10 @@ const getListQuantity = (item: MarketItem): number | null => {
   if (!materials || item.itemType !== 'sell') return null
   const remaining = remainingListNeeds.value[item.commodityTicker]
   if (remaining === undefined) return null
-  // Cap to the available remaining quantity on this order
-  return Math.min(remaining, item.remainingQuantity)
+  // Cap to the available remaining quantity on this order, but never go below 0:
+  // an oversold listing has remainingQuantity < 0, and we don't want that
+  // negative value to surface on the Invoice button or as the dialog default.
+  return Math.max(0, Math.min(remaining, item.remainingQuantity))
 }
 
 // Check if shopping list need for this item is fully satisfied
@@ -1950,6 +2004,15 @@ watch(addToInvoiceDialog, isOpen => {
     })
   }
 })
+
+// Submit on Enter from the quantity input — but guard the same way the button
+// does (must have a positive quantity, must not already be submitting).
+const onInvoiceQuantityEnter = () => {
+  if (addingToInvoice.value || !addToInvoiceQuantity.value || addToInvoiceQuantity.value <= 0) {
+    return
+  }
+  void confirmAddToInvoice()
+}
 
 const confirmAddToInvoice = async () => {
   if (!addingToInvoiceItem.value || !addToInvoiceQuantity.value || addToInvoiceQuantity.value <= 0)

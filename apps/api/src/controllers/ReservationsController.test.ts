@@ -81,6 +81,7 @@ describe('ReservationsController', () => {
     mockSelect = {} as any
     mockSelect.from = vi.fn().mockReturnValue(mockSelect)
     mockSelect.innerJoin = vi.fn().mockReturnValue(mockSelect)
+    mockSelect.leftJoin = vi.fn().mockReturnValue(mockSelect)
     mockSelect.where = vi.fn().mockReturnValue(mockSelect)
     mockSelect.orderBy = vi.fn().mockReturnValue(mockSelect)
     mockSelect.limit = vi.fn().mockResolvedValue([])
@@ -505,6 +506,156 @@ describe('ReservationsController', () => {
       await expect(controller.deleteReservation(1, mockCounterpartyRequest)).rejects.toThrow(
         'Only pending reservations can be deleted'
       )
+    })
+  })
+
+  describe('getReservationsForSellOrder', () => {
+    const orderRow = { userId: 2, orderType: 'internal' as const }
+    const baseRow = {
+      id: 1,
+      status: 'pending' as const,
+      quantity: 100,
+      counterpartyUserId: 1,
+      counterpartyName: 'Counterparty',
+      notes: 'private context',
+      expiresAt: null,
+      createdAt: new Date('2026-05-01'),
+      updatedAt: new Date('2026-05-01'),
+      invoiceId: 42,
+    }
+
+    it('returns reservations to the order owner with notes intact', async () => {
+      mockSelect.where.mockResolvedValueOnce([orderRow])
+      mockSelect.orderBy.mockResolvedValueOnce([baseRow])
+
+      const result = await controller.getReservationsForSellOrder(2, mockOrderOwnerRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].notes).toBe('private context')
+      expect(result[0].invoiceId).toBe(42)
+      expect(result[0].canViewInvoice).toBe(true)
+      expect(result[0].counterpartyName).toBe('Counterparty')
+      // Owner sees regardless of permission, so the permission check is skipped.
+      expect(permissionService.hasPermission).not.toHaveBeenCalled()
+    })
+
+    it("redacts notes and gates the invoice link for viewers who aren't the owner or the reservation's counterparty", async () => {
+      mockSelect.where.mockResolvedValueOnce([orderRow])
+      // Reservation's counterparty is user 1; caller is user 99 (not owner, not counterparty).
+      mockSelect.orderBy.mockResolvedValueOnce([{ ...baseRow, counterpartyUserId: 1 }])
+      vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
+
+      const result = await controller.getReservationsForSellOrder(2, {
+        user: { userId: 99, username: 'bystander', roles: ['member'] },
+      })
+
+      expect(result[0].notes).toBeNull()
+      // invoiceId is still surfaced (informational), but the frontend won't
+      // render it as a clickable link because canViewInvoice is false.
+      expect(result[0].invoiceId).toBe(42)
+      expect(result[0].canViewInvoice).toBe(false)
+    })
+
+    it("preserves notes and the invoice link when caller is the reservation's own counterparty", async () => {
+      mockSelect.where.mockResolvedValueOnce([orderRow])
+      // Caller (user 1) is the reservation's counterparty.
+      mockSelect.orderBy.mockResolvedValueOnce([{ ...baseRow, counterpartyUserId: 1 }])
+      vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
+
+      const result = await controller.getReservationsForSellOrder(2, mockCounterpartyRequest)
+
+      expect(result[0].notes).toBe('private context')
+      expect(result[0].canViewInvoice).toBe(true)
+    })
+
+    it('marks canViewInvoice false when there is no linked invoice', async () => {
+      mockSelect.where.mockResolvedValueOnce([orderRow])
+      // Reservation has no invoice link — even the owner sees canViewInvoice: false.
+      mockSelect.orderBy.mockResolvedValueOnce([{ ...baseRow, invoiceId: null }])
+
+      const result = await controller.getReservationsForSellOrder(2, mockOrderOwnerRequest)
+
+      expect(result[0].invoiceId).toBeNull()
+      expect(result[0].canViewInvoice).toBe(false)
+    })
+
+    it('throws Forbidden when a non-owner lacks orders.view_internal for an internal order', async () => {
+      mockSelect.where.mockResolvedValueOnce([orderRow])
+      vi.mocked(permissionService.hasPermission).mockResolvedValue(false)
+
+      await expect(
+        controller.getReservationsForSellOrder(2, {
+          user: { userId: 99, username: 'bystander', roles: ['guest'] },
+        })
+      ).rejects.toThrow('view internal order reservations')
+      expect(permissionService.hasPermission).toHaveBeenCalledWith(
+        ['guest'],
+        'orders.view_internal'
+      )
+    })
+
+    it('checks orders.view_partner for partner-typed orders', async () => {
+      mockSelect.where.mockResolvedValueOnce([{ ...orderRow, orderType: 'partner' }])
+      mockSelect.orderBy.mockResolvedValueOnce([])
+      vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
+
+      await controller.getReservationsForSellOrder(2, {
+        user: { userId: 99, username: 'bystander', roles: ['member'] },
+      })
+
+      expect(permissionService.hasPermission).toHaveBeenCalledWith(
+        ['member'],
+        'orders.view_partner'
+      )
+    })
+
+    it('throws NotFound when the sell order is missing or soft-deleted', async () => {
+      mockSelect.where.mockResolvedValueOnce([])
+
+      await expect(
+        controller.getReservationsForSellOrder(999, mockOrderOwnerRequest)
+      ).rejects.toThrow('Sell order not found')
+    })
+  })
+
+  describe('getReservationsForBuyOrder', () => {
+    it('returns reservations and enforces orders.view_internal for non-owners', async () => {
+      mockSelect.where.mockResolvedValueOnce([{ userId: 2, orderType: 'internal' as const }])
+      mockSelect.orderBy.mockResolvedValueOnce([
+        {
+          id: 5,
+          status: 'confirmed',
+          quantity: 250,
+          counterpartyUserId: 1,
+          counterpartyName: 'Filler',
+          notes: 'will deliver tomorrow',
+          expiresAt: null,
+          createdAt: new Date('2026-05-01'),
+          updatedAt: new Date('2026-05-01'),
+          invoiceId: null,
+        },
+      ])
+      vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
+
+      const result = await controller.getReservationsForBuyOrder(1, {
+        user: { userId: 99, username: 'bystander', roles: ['member'] },
+      })
+
+      expect(result).toHaveLength(1)
+      expect(result[0].notes).toBeNull() // bystander redaction
+      expect(result[0].invoiceId).toBeNull()
+      expect(permissionService.hasPermission).toHaveBeenCalledWith(
+        ['member'],
+        'orders.view_internal'
+      )
+    })
+
+    it('throws NotFound when the buy order is missing or soft-deleted', async () => {
+      mockSelect.where.mockResolvedValueOnce([])
+
+      await expect(
+        controller.getReservationsForBuyOrder(999, mockOrderOwnerRequest)
+      ).rejects.toThrow('Buy order not found')
     })
   })
 })

@@ -22,7 +22,7 @@
  */
 
 import { corpSnapshotTickerStock, db, fioInventory, fioUserStorage, sellOrders } from '@kawakawa/db'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray, sql, and, isNull } from 'drizzle-orm'
 import { enrichSellOrdersWithQuantities } from '../market/index.js'
 import { resolveActiveMembers } from './corp-members.js'
 import { createLogger } from '../utils/logger.js'
@@ -76,7 +76,7 @@ export async function computeCorpListedStock(userIds: number[]): Promise<Record<
       limitQuantity: sellOrders.limitQuantity,
     })
     .from(sellOrders)
-    .where(inArray(sellOrders.userId, userIds))
+    .where(and(inArray(sellOrders.userId, userIds), isNull(sellOrders.deletedAt)))
 
   if (orders.length === 0) return {}
 

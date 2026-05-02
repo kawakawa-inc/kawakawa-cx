@@ -85,7 +85,7 @@ describe('MarketController', () => {
     })
 
     it('should return empty array when no orders exist', async () => {
-      mockSelect.innerJoin.mockResolvedValueOnce([])
+      mockSelect.where.mockResolvedValueOnce([])
 
       const result = await controller.getMarketListings(mockRequest)
 
@@ -122,7 +122,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -226,7 +226,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -286,7 +286,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -333,7 +333,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -375,7 +375,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -444,7 +444,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -479,7 +479,7 @@ describe('MarketController', () => {
     })
 
     it('should return empty array when no orders exist', async () => {
-      mockSelect.innerJoin.mockResolvedValueOnce([])
+      mockSelect.where.mockResolvedValueOnce([])
 
       const result = await controller.getMarketBuyRequests(mockRequest)
 
@@ -514,7 +514,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 
@@ -574,7 +574,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(
         new Map([[1, { count: 2, quantity: 30, fulfilledQuantity: 10 }]])
@@ -616,7 +616,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 
@@ -643,7 +643,7 @@ describe('MarketController', () => {
         },
       ]
 
-      mockSelect.innerJoin.mockResolvedValueOnce(mockOrders)
+      mockSelect.where.mockResolvedValueOnce(mockOrders)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 

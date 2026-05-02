@@ -20,7 +20,7 @@ import type {
   DemandSource,
 } from '@kawakawa/types'
 import { db, buyOrders, fioCommodities, fioLocations, orderReservations } from '../db/index.js'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, sql, isNull } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { hasPermission } from '../utils/permissionService.js'
@@ -140,7 +140,7 @@ export class BuyOrdersController extends Controller {
       })
       .from(buyOrders)
       .leftJoin(reservationStats, eq(buyOrders.id, reservationStats.buyOrderId))
-      .where(eq(buyOrders.userId, userId))
+      .where(and(eq(buyOrders.userId, userId), isNull(buyOrders.deletedAt)))
 
     if (orders.length === 0) {
       return []
@@ -253,7 +253,7 @@ export class BuyOrdersController extends Controller {
       })
       .from(buyOrders)
       .leftJoin(reservationStats, eq(buyOrders.id, reservationStats.buyOrderId))
-      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId)))
+      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId), isNull(buyOrders.deletedAt)))
 
     if (!order) {
       this.setStatus(404)
@@ -373,7 +373,8 @@ export class BuyOrdersController extends Controller {
       throw BadRequest(`Location ${body.locationId} not found`)
     }
 
-    // Check for duplicate buy order (same commodity/location/orderType/currency)
+    // Check for duplicate ACTIVE buy order (same commodity/location/orderType/currency)
+    // Soft-deleted prior listings are ignored, matching the partial unique index.
     const [existing] = await db
       .select({ id: buyOrders.id })
       .from(buyOrders)
@@ -383,7 +384,8 @@ export class BuyOrdersController extends Controller {
           eq(buyOrders.commodityTicker, body.commodityTicker),
           eq(buyOrders.locationId, body.locationId),
           eq(buyOrders.orderType, orderType),
-          eq(buyOrders.currency, body.currency)
+          eq(buyOrders.currency, body.currency),
+          isNull(buyOrders.deletedAt)
         )
       )
 
@@ -485,11 +487,11 @@ export class BuyOrdersController extends Controller {
     const userId = request.user.userId
     const userRoles = request.user.roles
 
-    // Verify order exists and belongs to user
+    // Verify order exists and belongs to user (active only — can't update a soft-deleted order)
     const [existing] = await db
       .select()
       .from(buyOrders)
-      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId)))
+      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId), isNull(buyOrders.deletedAt)))
 
     if (!existing) {
       this.setStatus(404)
@@ -644,7 +646,8 @@ export class BuyOrdersController extends Controller {
   }
 
   /**
-   * Delete a buy order
+   * Delete a buy order (soft-delete: marks deletedAt so existing reservations and invoice
+   * line items keep their FK pointers intact)
    */
   @Delete('{id}')
   @SuccessResponse('204', 'Deleted')
@@ -657,14 +660,17 @@ export class BuyOrdersController extends Controller {
     const [existing] = await db
       .select({ id: buyOrders.id })
       .from(buyOrders)
-      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId)))
+      .where(and(eq(buyOrders.id, id), eq(buyOrders.userId, userId), isNull(buyOrders.deletedAt)))
 
     if (!existing) {
       this.setStatus(404)
       throw NotFound('Buy order not found')
     }
 
-    await db.delete(buyOrders).where(eq(buyOrders.id, id))
+    await db
+      .update(buyOrders)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(buyOrders.id, id))
     this.setStatus(204)
   }
 }

@@ -34,7 +34,7 @@ import {
   buyOrders,
   users,
 } from '../db/index.js'
-import { eq, and, or, inArray, sql, aliasedTable } from 'drizzle-orm'
+import { eq, and, or, inArray, sql, isNull, aliasedTable } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '@kawakawa/services/notifications'
@@ -83,6 +83,14 @@ function calculateInvoiceStatus(
   // Explicitly cancelled invoices stay cancelled regardless of reservation rows
   if (dbStatus === 'cancelled') {
     return 'cancelled'
+  }
+
+  // Explicitly fulfilled invoices stay fulfilled regardless of reservation rows.
+  // Reservation rows can vanish later (e.g. an underlying buy/sell order is later
+  // soft-deleted, or pre-soft-delete history left some null), but a fulfilled
+  // invoice was already closed by the owner — that's the source of truth.
+  if (dbStatus === 'fulfilled') {
+    return 'fulfilled'
   }
 
   // If no line items or no reservations yet, treat as pending
@@ -882,8 +890,11 @@ export class InvoicesController extends Controller {
 
       reservationId = body.reservationId
     } else if (body.sellOrderId) {
-      // Buying from a sell order
-      const [order] = await db.select().from(sellOrders).where(eq(sellOrders.id, body.sellOrderId))
+      // Buying from a sell order (must be active — can't add new line items against soft-deleted orders)
+      const [order] = await db
+        .select()
+        .from(sellOrders)
+        .where(and(eq(sellOrders.id, body.sellOrderId), isNull(sellOrders.deletedAt)))
       if (!order) throw NotFound('Sell order not found')
       if (order.userId !== invoice.counterpartyUserId) {
         throw BadRequest('Sell order owner must match invoice counterparty')
@@ -897,8 +908,11 @@ export class InvoicesController extends Controller {
 
       unitPrice = await resolveOrderPrice(order, commodityTicker, locationId, currency)
     } else {
-      // Selling to a buy order
-      const [order] = await db.select().from(buyOrders).where(eq(buyOrders.id, body.buyOrderId!))
+      // Selling to a buy order (must be active — can't add new line items against soft-deleted orders)
+      const [order] = await db
+        .select()
+        .from(buyOrders)
+        .where(and(eq(buyOrders.id, body.buyOrderId!), isNull(buyOrders.deletedAt)))
       if (!order) throw NotFound('Buy order not found')
       if (order.userId !== invoice.counterpartyUserId) {
         throw BadRequest('Buy order owner must match invoice counterparty')

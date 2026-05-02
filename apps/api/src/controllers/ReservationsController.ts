@@ -29,7 +29,7 @@ import {
   users,
   invoiceLineItems,
 } from '../db/index.js'
-import { eq, or } from 'drizzle-orm'
+import { eq, or, and, isNull } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound, Forbidden } from '../utils/errors.js'
 import { notificationService } from '@kawakawa/services/notifications'
@@ -341,11 +341,11 @@ export class ReservationsController extends Controller {
   ): Promise<ReservationResponse> {
     const userId = request.user.userId
 
-    // Verify the sell order exists
+    // Verify the sell order exists and is active (soft-deleted orders can't accept new reservations)
     const [sellOrder] = await db
       .select()
       .from(sellOrders)
-      .where(eq(sellOrders.id, body.sellOrderId))
+      .where(and(eq(sellOrders.id, body.sellOrderId), isNull(sellOrders.deletedAt)))
 
     if (!sellOrder) {
       throw NotFound('Sell order not found')
@@ -436,8 +436,11 @@ export class ReservationsController extends Controller {
   ): Promise<ReservationResponse> {
     const userId = request.user.userId
 
-    // Verify the buy order exists
-    const [buyOrder] = await db.select().from(buyOrders).where(eq(buyOrders.id, body.buyOrderId))
+    // Verify the buy order exists and is active (soft-deleted orders can't accept new reservations)
+    const [buyOrder] = await db
+      .select()
+      .from(buyOrders)
+      .where(and(eq(buyOrders.id, body.buyOrderId), isNull(buyOrders.deletedAt)))
 
     if (!buyOrder) {
       throw NotFound('Buy order not found')

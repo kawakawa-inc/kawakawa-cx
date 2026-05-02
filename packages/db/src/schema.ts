@@ -18,7 +18,7 @@ import {
   foreignKey,
   primaryKey,
 } from 'drizzle-orm/pg-core'
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 
 // Enums
 export const currencyEnum = pgEnum('currency', ['ICA', 'CIS', 'AIC', 'NCC'])
@@ -481,12 +481,17 @@ export const sellOrders = pgTable(
     reserveTargetDays: integer('reserve_target_days'), // days of burn to reserve (demand only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at'), // soft-delete tombstone; preserves history for fulfilled invoices
   },
   table => ({
-    // Unique constraint: one sell order per commodity/location/orderType/currency combination per user
+    // Unique constraint: one ACTIVE sell order per commodity/location/orderType/currency per user.
+    // Partial index lets a user re-create a listing after the prior one was soft-deleted.
     uniqueUserCommodityLocationTypeCurrency: uniqueIndex(
       'sell_orders_user_commodity_location_type_currency_idx'
-    ).on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency),
+    )
+      .on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency)
+      .where(sql`${table.deletedAt} IS NULL`),
+    deletedAtIdx: index('sell_orders_deleted_at_idx').on(table.deletedAt),
   })
 )
 
@@ -514,12 +519,17 @@ export const buyOrders = pgTable(
     targetDays: integer('target_days'), // days of stock to maintain (burn only)
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at'), // soft-delete tombstone; preserves history for fulfilled invoices
   },
   table => ({
-    // Unique constraint: one buy order per commodity/location/orderType/currency combination per user
+    // Unique constraint: one ACTIVE buy order per commodity/location/orderType/currency per user.
+    // Partial index lets a user re-create a listing after the prior one was soft-deleted.
     uniqueUserCommodityLocationTypeCurrency: uniqueIndex(
       'buy_orders_user_commodity_location_type_currency_idx'
-    ).on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency),
+    )
+      .on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency)
+      .where(sql`${table.deletedAt} IS NULL`),
+    deletedAtIdx: index('buy_orders_deleted_at_idx').on(table.deletedAt),
   })
 )
 

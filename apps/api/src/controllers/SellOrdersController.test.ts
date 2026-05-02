@@ -25,6 +25,7 @@ vi.mock('../db/index.js', () => ({
     reserveDemandSource: 'reserveDemandSource',
     reserveTargetDays: 'reserveTargetDays',
     updatedAt: 'updatedAt',
+    deletedAt: 'deletedAt',
   },
   fioInventory: {
     userId: 'userId',
@@ -981,18 +982,24 @@ describe('SellOrdersController', () => {
   })
 
   describe('deleteSellOrder', () => {
-    it('should delete a sell order', async () => {
+    it('should soft-delete a sell order by setting deletedAt', async () => {
       mockSelect.where.mockResolvedValueOnce([{ id: 1 }])
 
       const setStatusSpy = vi.spyOn(controller, 'setStatus')
 
       await controller.deleteSellOrder(1, mockRequest)
 
-      expect(db.delete).toHaveBeenCalled()
+      // Soft-delete: update with deletedAt rather than hard delete (preserves history
+      // for any reservations and invoice line items that point at this order)
+      expect(db.update).toHaveBeenCalled()
+      expect(db.delete).not.toHaveBeenCalled()
+      expect(mockUpdate.set).toHaveBeenCalledWith(
+        expect.objectContaining({ deletedAt: expect.any(Date) })
+      )
       expect(setStatusSpy).toHaveBeenCalledWith(204)
     })
 
-    it('should throw 404 when order not found', async () => {
+    it('should throw 404 when order not found or already soft-deleted', async () => {
       mockSelect.where.mockResolvedValueOnce([])
 
       const setStatusSpy = vi.spyOn(controller, 'setStatus')

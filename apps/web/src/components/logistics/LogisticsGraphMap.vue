@@ -9,6 +9,7 @@
         :get-location-display="getLocationDisplay"
         :extra-suggestion-types="kindSuggestions"
         :help-tokens="graphHelpTokens"
+        history-key="logistics-graph"
         @update:chips="onChipsUpdate"
       />
       <div class="d-flex align-center mt-2 ga-2">

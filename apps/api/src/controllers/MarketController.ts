@@ -5,7 +5,7 @@ import {
   getReservationStatsForBuyOrders,
 } from '@kawakawa/services/market'
 import { db, sellOrders, buyOrders, users } from '../db/index.js'
-import { eq } from 'drizzle-orm'
+import { eq, isNull } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
 import { fioClient } from '@kawakawa/services/fio'
@@ -145,6 +145,7 @@ export class MarketController extends Controller {
       })
       .from(sellOrders)
       .innerJoin(users, eq(sellOrders.userId, users.id))
+      .where(isNull(sellOrders.deletedAt))
 
     if (orders.length === 0) {
       return []
@@ -331,6 +332,7 @@ export class MarketController extends Controller {
       })
       .from(buyOrders)
       .innerJoin(users, eq(buyOrders.userId, users.id))
+      .where(isNull(buyOrders.deletedAt))
 
     if (orders.length === 0) {
       return []

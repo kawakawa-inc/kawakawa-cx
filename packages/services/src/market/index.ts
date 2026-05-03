@@ -1,6 +1,7 @@
 export {
   calculateAvailableQuantity,
   getInventoryForUsers,
+  getUserMaxFioUploadedAt,
   getReservationStatsForOrders,
   getReservationStatsForBuyOrders,
   enrichSellOrdersWithQuantities,

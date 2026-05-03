@@ -39,3 +39,4 @@ export {
 } from './useCargoHold'
 export { useCalculatorImport } from './useCalculatorImport'
 export { usePageState } from './usePageState'
+export { useSearchHistory, type SearchHistory } from './useSearchHistory'

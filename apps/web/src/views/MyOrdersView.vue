@@ -83,12 +83,42 @@
           </v-card-title>
 
           <v-data-table
+            v-model:expanded="expandedSellRows"
             :headers="sellHeaders"
             :items="filteredSellOrders"
             :loading="loadingSell"
             :items-per-page="25"
+            item-value="id"
+            show-expand
             :class="['elevation-0', { 'icon-rows': hasIcons }]"
           >
+            <!-- Suppress the expand chevron on rows with no active reservations. -->
+            <template #item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+              <v-btn
+                v-if="internalItem.raw.activeReservationCount > 0"
+                icon
+                size="small"
+                variant="text"
+                @click.stop="toggleExpand(internalItem)"
+              >
+                <v-icon>{{
+                  isExpanded(internalItem) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+                }}</v-icon>
+              </v-btn>
+            </template>
+
+            <template #expanded-row="{ columns, item }">
+              <tr>
+                <td :colspan="columns.length" class="pa-0">
+                  <OrderReservationsTable
+                    :order-id="item.id"
+                    side="sell"
+                    @open-invoice="onOpenInvoiceFromExpand"
+                  />
+                </td>
+              </tr>
+            </template>
+
             <template #item.commodityTicker="{ item }">
               <CommodityDisplay :ticker="item.commodityTicker" class="font-weight-medium" />
             </template>
@@ -286,12 +316,41 @@
           </v-card-title>
 
           <v-data-table
+            v-model:expanded="expandedBuyRows"
             :headers="buyHeaders"
             :items="filteredBuyOrders"
             :loading="loadingBuy"
             :items-per-page="25"
+            item-value="id"
+            show-expand
             :class="['elevation-0', { 'icon-rows': hasIcons }]"
           >
+            <!-- Suppress the expand chevron on rows with no active reservations. -->
+            <template #item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+              <v-btn
+                v-if="internalItem.raw.activeReservationCount > 0"
+                icon
+                size="small"
+                variant="text"
+                @click.stop="toggleExpand(internalItem)"
+              >
+                <v-icon>{{
+                  isExpanded(internalItem) ? 'mdi-chevron-down' : 'mdi-chevron-right'
+                }}</v-icon>
+              </v-btn>
+            </template>
+
+            <template #expanded-row="{ columns, item }">
+              <tr>
+                <td :colspan="columns.length" class="pa-0">
+                  <OrderReservationsTable
+                    :order-id="item.id"
+                    side="buy"
+                    @open-invoice="onOpenInvoiceFromExpand"
+                  />
+                </td>
+              </tr>
+            </template>
             <template #item.commodityTicker="{ item }">
               <CommodityDisplay :ticker="item.commodityTicker" class="font-weight-medium" />
             </template>
@@ -455,6 +514,7 @@
                   :get-location-display="getLocationDisplay"
                   :get-commodity-name="getCommodityName"
                   :help-tokens="invoiceHelpTokens"
+                  history-key="my-orders-invoices"
                   @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>
@@ -1004,6 +1064,7 @@ import CommodityIcon from '../components/CommodityIcon.vue'
 import InvoiceDetailDialog from '../components/invoices/InvoiceDetailDialog.vue'
 import InvoiceStatusChip from '../components/invoices/InvoiceStatusChip.vue'
 import InvoiceExpandedRow from '../components/invoices/InvoiceExpandedRow.vue'
+import OrderReservationsTable from '../components/OrderReservationsTable.vue'
 import TokenSearchInput, {
   type SearchChip,
   type HelpToken,
@@ -1041,6 +1102,18 @@ const activeTab = useUrlTab({
   validTabs: ORDERS_TABS,
   defaultTab: 'buy',
 })
+
+// Per-order expanded rows on the sell/buy tabs render the reservations table.
+// Vuetify keys expanded rows by `item-value`; both tables here use `id`.
+const expandedSellRows = ref<string[]>([])
+const expandedBuyRows = ref<string[]>([])
+
+const onOpenInvoiceFromExpand = (invoiceId: number) => {
+  // Reservation rows in the expanded table show a linked invoice id; clicking
+  // it routes through the existing deep-link handler so the user lands in the
+  // invoices tab with the detail dialog open.
+  void openInvoiceById(invoiceId)
+}
 
 const sellHeaders = [
   { title: 'Commodity', key: 'commodityTicker', sortable: true },

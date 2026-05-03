@@ -32,6 +32,7 @@ vi.mock('../db/index.js', () => ({
     sourceMode: 'sourceMode',
     demandSource: 'demandSource',
     targetDays: 'targetDays',
+    deletedAt: 'deletedAt',
   },
   fioCommodities: { ticker: 'ticker' },
   fioLocations: { naturalId: 'naturalId' },
@@ -154,6 +155,35 @@ describe('BuyOrdersController', () => {
           mockRequest
         )
       ).rejects.toThrow('targetDays must be > 0')
+    })
+  })
+
+  describe('deleteBuyOrder', () => {
+    it('should soft-delete a buy order by setting deletedAt', async () => {
+      mockSelectWhere.mockResolvedValueOnce([{ id: 1 }])
+
+      const setStatusSpy = vi.spyOn(controller, 'setStatus')
+
+      await controller.deleteBuyOrder(1, mockRequest)
+
+      // Soft-delete: update with deletedAt rather than hard delete (preserves history
+      // for any reservations and invoice line items that point at this order)
+      expect(mockUpdateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ deletedAt: expect.any(Date) })
+      )
+      expect(mockDeleteWhere).not.toHaveBeenCalled()
+      expect(setStatusSpy).toHaveBeenCalledWith(204)
+    })
+
+    it('should throw 404 when order not found or already soft-deleted', async () => {
+      mockSelectWhere.mockResolvedValueOnce([])
+
+      const setStatusSpy = vi.spyOn(controller, 'setStatus')
+
+      await expect(controller.deleteBuyOrder(999, mockRequest)).rejects.toThrow(
+        'Buy order not found'
+      )
+      expect(setStatusSpy).toHaveBeenCalledWith(404)
     })
   })
 })

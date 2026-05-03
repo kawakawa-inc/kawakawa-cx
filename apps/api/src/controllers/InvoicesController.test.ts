@@ -274,6 +274,22 @@ describe('InvoicesController', () => {
         'You do not have access to this invoice'
       )
     })
+
+    it("reports a fulfilled-in-db invoice as 'fulfilled' even when line items have null reservations", async () => {
+      // Regression: a fulfilled invoice whose underlying buy/sell order was later
+      // soft-deleted (or hard-deleted in the legacy cascade era) leaves the line item
+      // with reservation_id=NULL. Without the early-return, calculateInvoiceStatus
+      // would see the null status and report the invoice as 'pending' — counterparty
+      // can't act, owner sees a phantom active invoice. The fulfilled DB status is
+      // the source of truth.
+      mockSelect.where.mockResolvedValueOnce([{ ...mockInvoice, status: 'fulfilled' as const }])
+      mockSelect.where.mockResolvedValueOnce([{ displayName: 'Partner' }])
+      mockSelect.orderBy.mockResolvedValueOnce([{ ...mockLineItem, reservationStatus: null }])
+
+      const result = await controller.getInvoice(1, mockUserRequest)
+
+      expect(result.status).toBe('fulfilled')
+    })
   })
 
   describe('getOrCreateForPartner', () => {

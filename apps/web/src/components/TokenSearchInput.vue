@@ -1,13 +1,17 @@
 <template>
   <div ref="wrapperRef" class="token-search-wrapper">
     <div class="token-search-container" :class="{ focused: isFocused }" @click="focusInput">
-      <kbd class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
+      <v-icon v-if="leadingIcon" size="small" color="grey" class="search-icon">{{
+        leadingIcon
+      }}</v-icon>
+      <kbd v-else class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
 
       <!-- Chips for parsed tokens -->
       <v-chip
         v-for="(chip, index) in chips"
         :key="`${chip.type}-${chip.value}-${index}`"
         :color="chip.color"
+        :prepend-icon="chipIconByType[chip.type]"
         size="small"
         closable
         class="token-chip"
@@ -27,6 +31,7 @@
         @blur="onBlur"
         @keydown="handleKeydown"
         @input="handleInput"
+        @paste="handlePaste"
       />
 
       <!-- Clear button -->
@@ -55,7 +60,12 @@
           @mousedown.prevent="selectSuggestion(suggestion)"
           @mouseenter="selectedIndex = index"
         >
-          <v-chip :color="suggestion.color" size="x-small" class="suggestion-chip">
+          <v-chip
+            :color="suggestion.color"
+            :prepend-icon="chipIconByType[suggestion.type]"
+            size="x-small"
+            class="suggestion-chip"
+          >
             {{ suggestion.typeLabel }}
           </v-chip>
           <span class="suggestion-text">{{ suggestion.display }}</span>
@@ -63,7 +73,81 @@
         </div>
       </div>
       <div v-else-if="showHelp" class="suggestions-dropdown help-dropdown" :style="dropdownStyle">
-        <div class="help-title">Start typing to search. You can add:</div>
+        <!-- Favorites: pinned tickers / locations the user has explicitly
+             starred. Shown first because they're the most curated set. -->
+        <template v-if="favoriteRows.length > 0">
+          <div class="history-section">
+            <div class="help-title">Favorites</div>
+            <div v-for="row in favoriteRows" :key="`fav-${row.type}`" class="history-row">
+              <span class="history-row-label">{{ row.label }}</span>
+              <div class="history-chips">
+                <v-chip
+                  v-for="chip in row.chips"
+                  :key="`${chip.type}-${chip.value}`"
+                  :color="chipColor(chip.type, chip.value)"
+                  :prepend-icon="chipIconByType[chip.type]"
+                  size="x-small"
+                  class="history-chip"
+                  @mousedown.prevent="applyHistoryChip(chip)"
+                >
+                  {{ chip.display }}
+                  <!-- Filled star on favorites — click to unstar. mousedown.stop
+                       so the chip's apply handler doesn't also fire. -->
+                  <v-icon
+                    end
+                    size="x-small"
+                    color="amber"
+                    class="favorite-toggle"
+                    @mousedown.stop.prevent="onFavoriteToggle(chip)"
+                  >
+                    mdi-star
+                  </v-icon>
+                </v-chip>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- History rows: one per chip type the user has used here before.
+             Most-recent-first; click a chip to add it to the search. -->
+        <template v-if="historyRows.length > 0">
+          <v-divider v-if="favoriteRows.length > 0" class="my-2" />
+          <div class="history-section">
+            <div class="help-title">Recent</div>
+            <div v-for="row in historyRows" :key="row.type" class="history-row">
+              <span class="history-row-label">{{ row.label }}</span>
+              <div class="history-chips">
+                <v-chip
+                  v-for="chip in row.chips"
+                  :key="`${chip.type}-${chip.value}`"
+                  :color="chipColor(chip.type, chip.value)"
+                  :prepend-icon="chipIconByType[chip.type]"
+                  size="x-small"
+                  class="history-chip"
+                  @mousedown.prevent="applyHistoryChip(chip)"
+                >
+                  {{ chip.display }}
+                  <!-- Outline star on recent (favoritable types only) — click
+                       to promote into Favorites. -->
+                  <v-icon
+                    v-if="searchHistory.canFavorite(chip.type)"
+                    end
+                    size="x-small"
+                    class="favorite-toggle favorite-toggle-empty"
+                    @mousedown.stop.prevent="onFavoriteToggle(chip)"
+                  >
+                    mdi-star-outline
+                  </v-icon>
+                </v-chip>
+              </div>
+            </div>
+          </div>
+          <v-divider v-if="helpTokens.length > 0" class="my-2" />
+        </template>
+
+        <div v-if="helpTokens.length > 0" class="help-title">
+          Start typing to search. You can add:
+        </div>
         <div v-for="(tok, i) in helpTokens" :key="i" class="help-row">
           <v-chip
             :color="tok.color ?? 'grey'"
@@ -89,6 +173,7 @@ import { parseShoppingList, isShoppingList } from '@kawakawa/types/shopping-list
 import { commodityService } from '../services/commodityService'
 import { locationService } from '../services/locationService'
 import { useShoppingListStore } from '../stores/shoppingList'
+import { useSearchHistory } from '../composables/useSearchHistory'
 
 export type SearchChipType =
   | 'commodity'
@@ -188,6 +273,44 @@ interface Props {
    * declare what tokens they understand so the help stays accurate.
    */
   helpTokens?: HelpToken[]
+  /**
+   * External chip state — when provided, the input becomes controlled. This
+   * is what the BR ticker/category surfaces use so their string[] data model
+   * round-trips correctly. When omitted, chips live entirely inside this
+   * component (the legacy Market / MyOrders / Logistics use case).
+   */
+  chips?: SearchChip[]
+  /** Optional per-type prepend icon shown on chips (e.g. mdi-folder-outline for category). */
+  chipIconByType?: Partial<Record<SearchChipType, string>>
+  /**
+   * Replaces the default `/` kbd shortcut leading icon with an MDI icon. Pass
+   * e.g. `"mdi-tag-multiple"` for the BR ticker filter.
+   */
+  leadingIcon?: string
+  /**
+   * When set, pasting multi-token text (split on whitespace/comma/semicolon)
+   * creates one chip of this type per token instead of dropping into the
+   * input as raw text. BR uses this to accept comma-separated ticker lists.
+   */
+  pasteSplitTo?: SearchChipType
+  /**
+   * When set, pressing Enter on a non-empty input that doesn't match any
+   * suggestion creates a chip of this type from the typed text. Lets BR
+   * accept arbitrary tickers that aren't in the catalog.
+   */
+  enterCreatesType?: SearchChipType
+  /**
+   * Stable id for client-side search history (localStorage). When set, the
+   * empty-state dropdown surfaces a per-type "Recent" row above the help
+   * cheat sheet. Use a unique key per surface (e.g. "market", "burn-repair").
+   */
+  historyKey?: string
+  /**
+   * When set, restricts suggestions and the autocomplete dropdown to these
+   * chip types. BR uses this to keep ticker/category-only filtering free of
+   * locations, users, and buy/sell keywords from the catch-all branches.
+   */
+  allowedSuggestionTypes?: SearchChipType[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -198,11 +321,120 @@ const props = withDefaults(defineProps<Props>(), {
   getCommodityName: (ticker: string) => ticker,
   extraSuggestionTypes: () => [],
   helpTokens: () => [],
+  chips: undefined,
+  chipIconByType: () => ({}),
+  leadingIcon: undefined,
+  pasteSplitTo: undefined,
+  enterCreatesType: undefined,
+  historyKey: undefined,
+  allowedSuggestionTypes: undefined,
 })
 
-const showHelp = computed(
-  () => isFocused.value && inputText.value.trim().length === 0 && props.helpTokens.length > 0
+// Per-surface search history (no-op when historyKey is undefined). Records on
+// every chip add and surfaces "Recent" rows in the empty-state dropdown.
+const searchHistory = useSearchHistory(props.historyKey)
+
+// Empty-state dropdown shows the cheat sheet, the per-type history rows, the
+// favorites rows, or any combination. Hide entirely when none of the three
+// have content (matches legacy behavior on surfaces without helpTokens).
+const showHelp = computed(() => {
+  if (!isFocused.value) return false
+  if (inputText.value.trim().length !== 0) return false
+  return (
+    props.helpTokens.length > 0 || historyRows.value.length > 0 || favoriteRows.value.length > 0
+  )
+})
+
+interface HistoryRow {
+  type: SearchChipType
+  label: string
+  chips: SearchChip[]
+}
+
+// Pluralized labels per chip type. Falls back to the type name when missing —
+// extra chip types brought in by `extraSuggestionTypes` get a plain "Recent
+// {type}" treatment without us having to teach the composable about them.
+const HISTORY_TYPE_LABELS: Partial<Record<SearchChipType, string>> = {
+  commodity: 'Commodities',
+  location: 'Locations',
+  user: 'Users',
+  itemType: 'Type',
+  category: 'Categories',
+  storage: 'Storage',
+  source: 'Source',
+  destination: 'Destination',
+}
+
+// Canonical type order for history/favorites rendering — keeps surfaces
+// consistent so a user's eye lands on Commodities first regardless of which
+// page they're on.
+const HISTORY_TYPE_ORDER: SearchChipType[] = [
+  'commodity',
+  'category',
+  'location',
+  'source',
+  'destination',
+  'storage',
+  'user',
+  'itemType',
+]
+
+// Build per-type rows from a chip map, optionally hiding entries that pass
+// the `excludeIf` filter. Used by both Recent (excludes favorited) and
+// Favorites (no exclusion).
+function buildRows(
+  map: Partial<Record<SearchChipType, SearchChip[]>>,
+  excludeIf?: (chip: SearchChip) => boolean
+): HistoryRow[] {
+  const out: HistoryRow[] = []
+  const seen = new Set<string>()
+  const pushRow = (type: SearchChipType): void => {
+    const all = map[type]
+    if (!all) return
+    const chips = excludeIf ? all.filter(c => !excludeIf(c)) : all
+    if (chips.length === 0) return
+    out.push({ type, label: HISTORY_TYPE_LABELS[type] ?? type, chips })
+    seen.add(type)
+  }
+  for (const type of HISTORY_TYPE_ORDER) pushRow(type)
+  // Catch extra types (e.g. category-like things from extraSuggestionTypes
+  // that aren't in the canonical order).
+  for (const type of Object.keys(map) as SearchChipType[]) {
+    if (seen.has(type)) continue
+    pushRow(type)
+  }
+  return out
+}
+
+// Recent excludes anything currently in Favorites — no point showing the
+// same chip twice.
+const historyRows = computed<HistoryRow[]>(() =>
+  buildRows(searchHistory.historyByType.value, chip =>
+    searchHistory.isFavorite(chip.type, chip.value)
+  )
 )
+
+const favoriteRows = computed<HistoryRow[]>(() => buildRows(searchHistory.favoritesByType.value))
+
+// Click a recent chip to apply it. Dedups against current chips and routes
+// through the same singular-type-replacement logic as suggestion picks.
+function applyHistoryChip(chip: SearchChip): void {
+  if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
+  if (chip.type === 'itemType' || chip.type === 'category') {
+    chips.value = chips.value.filter(c => c.type !== chip.type)
+  }
+  chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
+  // Push to front of history so re-clicked items stay sticky.
+  searchHistory.record(chip)
+  emitChanges()
+  nextTick(() => focusInput())
+}
+
+// Star/unstar handler. The composable filters non-favoritable types itself,
+// so we don't need to gate at the UI layer beyond the v-if on the icon.
+function onFavoriteToggle(chip: SearchChip): void {
+  searchHistory.toggleFavorite(chip)
+}
 
 const emit = defineEmits<{
   (e: 'update:chips', chips: SearchChip[]): void
@@ -213,9 +445,29 @@ const inputRef = ref<HTMLInputElement | null>(null)
 const wrapperRef = ref<HTMLElement | null>(null)
 const isFocused = ref(false)
 const inputText = ref('')
-const chips = ref<SearchChip[]>([])
+// Internal chip state. When `props.chips` is provided we mirror it here so the
+// rest of the component can keep using the same ref; the watcher below pushes
+// external updates in, and emitChanges pushes our changes out.
+const chips = ref<SearchChip[]>(props.chips ? [...props.chips] : [])
 const selectedIndex = ref(0)
 const showSuggestions = ref(false)
+
+// Mirror external chip state into the internal ref. Guarded so emit-then-prop
+// round-trips don't bounce: if the incoming prop already matches our state
+// (same length and ids in order), skip the assignment.
+watch(
+  () => props.chips,
+  next => {
+    if (!next) return
+    const same =
+      next.length === chips.value.length &&
+      next.every((c, i) => c.type === chips.value[i].type && c.value === chips.value[i].value)
+    if (!same) {
+      chips.value = [...next]
+    }
+  },
+  { deep: true }
+)
 
 // Dropdown positioning (for teleported dropdown)
 const dropdownPosition = ref({ top: 0, left: 0, width: 0 })
@@ -526,7 +778,14 @@ const suggestions = computed((): Suggestion[] => {
     return 0
   })
 
-  return results.slice(0, 8)
+  // Optional consumer-side gate: when allowedSuggestionTypes is set, drop any
+  // result outside that allowlist. Keeps BR's ticker/category surface from
+  // surfacing locations/users/buy-sell from the catch-all matchers.
+  const filtered = props.allowedSuggestionTypes
+    ? results.filter(r => props.allowedSuggestionTypes!.includes(r.type))
+    : results
+
+  return filtered.slice(0, 8)
 })
 
 // Get the current word being typed (last word in input)
@@ -547,6 +806,7 @@ const selectSuggestion = (suggestion: Suggestion) => {
     }
 
     chips.value.push(chip)
+    searchHistory.record(chip)
 
     // Keep any previous words, remove the current one
     const words = inputText.value.split(/\s+/)
@@ -813,9 +1073,19 @@ const handleKeydown = (event: globalThis.KeyboardEvent) => {
     }
   }
 
-  // Enter without suggestions - just prevent newline
+  // Enter without matching suggestions: when the consumer wants free-form
+  // input (e.g. BR ticker filter accepts arbitrary tickers not yet in the
+  // catalog), commit the typed text as a chip of the configured type.
   if (event.key === 'Enter') {
     event.preventDefault()
+    if (props.enterCreatesType) {
+      const trimmed = inputText.value.trim()
+      if (trimmed) {
+        addChipFromRawToken(trimmed, props.enterCreatesType)
+        inputText.value = ''
+        showSuggestions.value = false
+      }
+    }
   }
 
   // Escape - blur input (Shift+Escape clears everything)
@@ -835,6 +1105,72 @@ const handleKeydown = (event: globalThis.KeyboardEvent) => {
     chips.value.pop()
     emitChanges()
   }
+}
+
+// Split a pasted/typed buffer on whitespace, commas, semicolons, newlines.
+// Used by `pasteSplitTo` and `enterCreatesType` paths to handle pasted lists.
+const splitPastedTokens = (raw: string): string[] =>
+  raw
+    .split(/[\s,;]+/)
+    .map(t => t.trim())
+    .filter(t => t.length > 0)
+
+// Build a `display` string for a chip created from an arbitrary token. We
+// route through the consumer's display formatters when relevant so chip text
+// matches how the rest of the page renders that type.
+const formatChipDisplay = (type: SearchChipType, value: string): string => {
+  switch (type) {
+    case 'commodity':
+      return props.getCommodityDisplay(value)
+    case 'location':
+      return props.getLocationDisplay(value)
+    default:
+      return value
+  }
+}
+
+// Normalize the raw token into a stored value. Tickers are uppercased so
+// dedup matches regardless of the user's case. Other types pass through.
+const normalizeTokenValue = (type: SearchChipType, raw: string): string => {
+  if (type === 'commodity') return raw.toUpperCase()
+  return raw
+}
+
+// Append a chip from a raw token (typed text or pasted token). Dedups against
+// existing chips of the same type+value. Singular types (itemType, category)
+// replace the prior chip of that type.
+const addChipFromRawToken = (raw: string, type: SearchChipType) => {
+  const value = normalizeTokenValue(type, raw)
+  if (!value) return
+  if (chips.value.some(c => c.type === type && c.value === value)) return
+  if (type === 'itemType' || type === 'category') {
+    chips.value = chips.value.filter(c => c.type !== type)
+  }
+  const chip: SearchChip = {
+    type,
+    value,
+    display: formatChipDisplay(type, value),
+    color: chipColor(type, value),
+  }
+  chips.value.push(chip)
+  searchHistory.record(chip)
+  emitChanges()
+}
+
+// Paste handler — when `pasteSplitTo` is set and the paste contains multiple
+// tokens, intercept and create chips for each. Single tokens fall through to
+// the default paste behavior so the user can still tweak before committing.
+const handlePaste = (event: ClipboardEvent) => {
+  if (!props.pasteSplitTo) return
+  const text = event.clipboardData?.getData('text') ?? ''
+  const tokens = splitPastedTokens(text)
+  if (tokens.length <= 1) return
+  event.preventDefault()
+  for (const token of tokens) {
+    addChipFromRawToken(token, props.pasteSplitTo)
+  }
+  inputText.value = ''
+  showSuggestions.value = false
 }
 
 // Remove a chip by index
@@ -878,7 +1214,9 @@ defineExpose({
     if (chip.type === 'itemType' || chip.type === 'category') {
       chips.value = chips.value.filter(c => c.type !== chip.type)
     }
-    chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
+    const decorated = { ...chip, color: chipColor(chip.type, chip.value) }
+    chips.value.push(decorated)
+    searchHistory.record(decorated)
     emitChanges()
   },
   removeChipByTypeValue: (type: SearchChip['type'], value: string) => {
@@ -1051,5 +1389,54 @@ defineExpose({
 
 .help-dropdown .help-desc {
   color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.help-dropdown .history-section {
+  margin-bottom: 4px;
+}
+
+.help-dropdown .history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+
+.help-dropdown .history-row-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  min-width: 80px;
+}
+
+.help-dropdown .history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.help-dropdown .history-chip {
+  cursor: pointer;
+}
+
+.help-dropdown .favorite-toggle {
+  cursor: pointer;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+
+.help-dropdown .favorite-toggle:hover {
+  opacity: 1;
+}
+
+.help-dropdown .favorite-toggle-empty {
+  opacity: 0.4;
+}
+
+.help-dropdown .favorite-toggle-empty:hover {
+  opacity: 0.9;
+  color: rgb(var(--v-theme-amber, 255 193 7));
 }
 </style>

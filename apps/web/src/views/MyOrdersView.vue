@@ -514,6 +514,7 @@
                   :get-location-display="getLocationDisplay"
                   :get-commodity-name="getCommodityName"
                   :help-tokens="invoiceHelpTokens"
+                  history-key="my-orders-invoices"
                   @update:chips="invoiceSearchChips = $event"
                 />
               </v-col>

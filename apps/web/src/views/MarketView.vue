@@ -184,6 +184,7 @@
           :get-location-display="getLocationDisplay"
           :get-commodity-name="getCommodityName"
           :help-tokens="marketHelpTokens"
+          history-key="market"
           placeholder="Search: COF, BEN, Buy, Sell..."
           class="flex-grow-1"
           @update:chips="onChipsUpdate"

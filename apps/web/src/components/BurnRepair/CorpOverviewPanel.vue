@@ -73,10 +73,19 @@
             <div class="text-caption text-medium-emphasis mb-2">
               Tickers and categories in scope. Empty = every corp ticker.
             </div>
-            <TickerCategoryInput
-              :model-value="viewTickers"
+            <TokenSearchInput
+              :chips="viewTickerChips"
+              :extra-suggestion-types="tickerCategorySuggestions"
+              :allowed-suggestion-types="['commodity', 'category']"
+              :chip-icon-by-type="tickerChipIcons"
+              :help-tokens="tickerHelpTokens"
+              :get-commodity-display="tickerDisplayForChip"
+              leading-icon="mdi-tag-multiple"
+              paste-split-to="commodity"
+              enter-creates-type="commodity"
               placeholder="Add tickers or categories…"
-              @update:model-value="onTickersChange"
+              history-key="burn-repair"
+              @update:chips="onViewTickerChipsUpdate"
             />
           </v-card-text>
         </v-card>
@@ -218,9 +227,19 @@
          column picker now lives inside the table card itself, next to Copy
          CSV (see MaterialsTable). -->
     <div class="mb-3">
-      <TickerCategoryInput
-        v-model="materialsTickerFilter"
+      <TokenSearchInput
+        :chips="materialsTickerChips"
+        :extra-suggestion-types="tickerCategorySuggestions"
+        :allowed-suggestion-types="['commodity', 'category']"
+        :chip-icon-by-type="tickerChipIcons"
+        :help-tokens="tickerHelpTokens"
+        :get-commodity-display="tickerDisplayForChip"
+        leading-icon="mdi-tag-multiple"
+        paste-split-to="commodity"
+        enter-creates-type="commodity"
         placeholder="Filter materials by ticker or category…"
+        history-key="burn-repair"
+        @update:chips="onMaterialsTickerChipsUpdate"
       />
     </div>
 
@@ -395,9 +414,17 @@ import {
 } from './viewTemplates'
 import UsersIncludedMenu from './UsersIncludedMenu.vue'
 import ExcludedMembersChip from './ExcludedMembersChip.vue'
-import TickerCategoryInput from './TickerCategoryInput.vue'
+import TokenSearchInput, {
+  type SearchChip,
+  type ExtraSuggestionType,
+} from '../TokenSearchInput.vue'
 import { commodityService } from '../../services/commodityService'
-import { resolveTickerScope } from '../../utils/tickerScope'
+import { useSettingsStore } from '../../stores/settings'
+import {
+  resolveTickerScope,
+  scopeEntriesToChips,
+  chipsToScopeEntries,
+} from '../../utils/tickerScope'
 import type { Commodity } from '../../types'
 import {
   DEFAULT_MATERIALS_TABLE_COLUMNS,
@@ -1019,6 +1046,83 @@ async function loadCommodityCatalog(): Promise<void> {
   commodityCatalog.value = cached.length > 0 ? cached : await commodityService.getAllCommodities()
 }
 void loadCommodityCatalog()
+
+// ==================== TokenSearchInput wiring ====================
+// BR's data model is `string[]` of bare tickers + `category:Name` entries.
+// TokenSearchInput speaks SearchChip[]. The helpers in tickerScope.ts plus a
+// few derived bits below let us round-trip cleanly without disturbing the
+// downstream resolveTickerScope / view persistence code paths.
+
+const settingsStore = useSettingsStore()
+const tickerDisplayForChip = (ticker: string): string =>
+  commodityService.getCommodityDisplay(ticker, settingsStore.commodityDisplayMode.value)
+
+// Extra suggestion type for categories — derived live from the loaded
+// commodity catalog so newly-added categories surface immediately. Each option
+// stores the bare category name; chip conversion adds the `category:` prefix
+// when we serialize back to the BR string[] model.
+const tickerCategorySuggestions = computed<ExtraSuggestionType[]>(() => {
+  const counts = new Map<string, number>()
+  for (const c of commodityCatalog.value) {
+    if (!c.category) continue
+    counts.set(c.category, (counts.get(c.category) ?? 0) + 1)
+  }
+  const options = [...counts.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map(cat => ({ value: cat, display: cat }))
+  return [
+    {
+      type: 'category',
+      typeLabel: 'Category',
+      color: 'teal',
+      options,
+    },
+  ]
+})
+
+// Visual: keep the same prepend icons the old TickerCategoryInput had — folder
+// for category, package for tickers — so users don't lose familiarity.
+const tickerChipIcons = {
+  category: 'mdi-folder-outline',
+  commodity: 'mdi-package-variant',
+} as const
+
+// Cheat-sheet rows shown in the empty-state dropdown (mirrors the previous
+// component's help section).
+const tickerHelpTokens = [
+  {
+    label: 'Ticker',
+    color: 'primary',
+    example: 'RAT',
+    description: 'A single commodity ticker.',
+    icon: 'mdi-package-variant',
+  },
+  {
+    label: 'Category',
+    color: 'teal',
+    example: 'category:Consumables (basic)',
+    description: 'Live reference — expands to every ticker in this category right now.',
+    icon: 'mdi-folder-outline',
+  },
+]
+
+// Two adapter pairs — one for the per-view scope and one for the materials
+// table's local ad-hoc filter. Each pair turns the underlying string[] state
+// into SearchChip[] for the input, and converts the input's chip emit back to
+// string[] for the existing handlers.
+const viewTickerChips = computed<SearchChip[]>(() =>
+  scopeEntriesToChips(viewTickers.value, tickerDisplayForChip)
+)
+function onViewTickerChipsUpdate(chips: SearchChip[]): void {
+  onTickersChange(chipsToScopeEntries(chips))
+}
+
+const materialsTickerChips = computed<SearchChip[]>(() =>
+  scopeEntriesToChips(materialsTickerFilter.value, tickerDisplayForChip)
+)
+function onMaterialsTickerChipsUpdate(chips: SearchChip[]): void {
+  materialsTickerFilter.value = chipsToScopeEntries(chips)
+}
 
 const tickerSet = computed<Set<string> | null>(() =>
   resolveTickerScope(activeView.value.tickers, commodityCatalog.value)

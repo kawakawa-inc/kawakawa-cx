@@ -80,10 +80,19 @@
                 Type a ticker (e.g. <code>RAT</code>) or paste a list. Suggestions rank exact ticker
                 matches first.
               </div>
-              <TickerCategoryInput
-                :model-value="tickers"
+              <TokenSearchInput
+                :chips="tickerChips"
+                :extra-suggestion-types="tickerCategorySuggestions"
+                :allowed-suggestion-types="['commodity', 'category']"
+                :chip-icon-by-type="tickerChipIcons"
+                :help-tokens="tickerHelpTokens"
+                :get-commodity-display="tickerDisplayForChip"
+                leading-icon="mdi-tag-multiple"
+                paste-split-to="commodity"
+                enter-creates-type="commodity"
                 placeholder="Add tickers or categories…"
-                @update:model-value="v => emit('update:tickers', v)"
+                history-key="burn-repair"
+                @update:chips="onTickerChipsUpdate"
               />
             </div>
           </template>
@@ -217,10 +226,19 @@
 import { computed, onMounted, ref } from 'vue'
 import type { CorpMetricGroupBy, MetricKey, ViewCardFilter } from '@kawakawa/types'
 import { CORP_METRIC_DEFS, FILTER_OPERATORS, isMetricFilterable } from '@kawakawa/types'
-import TickerCategoryInput from './TickerCategoryInput.vue'
+import TokenSearchInput, {
+  type SearchChip,
+  type ExtraSuggestionType,
+} from '../TokenSearchInput.vue'
 import { commodityService } from '../../services/commodityService'
+import { useSettingsStore } from '../../stores/settings'
 import type { Commodity } from '../../types'
-import { makeCategoryEntry, parseScopeEntry } from '../../utils/tickerScope'
+import {
+  chipsToScopeEntries,
+  makeCategoryEntry,
+  parseScopeEntry,
+  scopeEntriesToChips,
+} from '../../utils/tickerScope'
 
 /**
  * Card-level filter popover modeled on the Market `FilterMenu`: left rail
@@ -252,6 +270,49 @@ onMounted(async () => {
   const cached = commodityService.getAllCommoditiesSync()
   commodities.value = cached.length > 0 ? cached : await commodityService.getAllCommodities()
 })
+
+// -------- TokenSearchInput wiring (string[] ↔ SearchChip[]) --------
+const settingsStore = useSettingsStore()
+const tickerDisplayForChip = (ticker: string): string =>
+  commodityService.getCommodityDisplay(ticker, settingsStore.commodityDisplayMode.value)
+
+const tickerCategorySuggestions = computed<ExtraSuggestionType[]>(() => [
+  {
+    type: 'category',
+    typeLabel: 'Category',
+    color: 'teal',
+    options: categoryEntries.value.map(e => ({ value: e.name, display: e.name })),
+  },
+])
+
+const tickerChipIcons = {
+  category: 'mdi-folder-outline',
+  commodity: 'mdi-package-variant',
+} as const
+
+const tickerHelpTokens = [
+  {
+    label: 'Ticker',
+    color: 'primary',
+    example: 'RAT',
+    description: 'A single commodity ticker.',
+    icon: 'mdi-package-variant',
+  },
+  {
+    label: 'Category',
+    color: 'teal',
+    example: 'category:Consumables (basic)',
+    description: 'Live reference — expands to every ticker in this category right now.',
+    icon: 'mdi-folder-outline',
+  },
+]
+
+const tickerChips = computed<SearchChip[]>(() =>
+  scopeEntriesToChips(props.tickers, tickerDisplayForChip)
+)
+function onTickerChipsUpdate(chips: SearchChip[]): void {
+  emit('update:tickers', chipsToScopeEntries(chips))
+}
 
 // -------- Categories picker --------
 interface CategoryEntry {

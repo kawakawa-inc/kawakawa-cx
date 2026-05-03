@@ -1,1 +1,0 @@
-ALTER TABLE "fio_user_ships" ALTER COLUMN "name" DROP NOT NULL;

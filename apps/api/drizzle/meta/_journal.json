@@ -145,36 +145,8 @@
     {
       "idx": 20,
       "version": "7",
-      "when": 1777522682796,
-      "tag": "0020_spooky_violations",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1777525529656,
-      "tag": "0021_certain_ser_duncan",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1777576774252,
-      "tag": "0022_early_thor_girl",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1777593573672,
-      "tag": "0023_supreme_silverclaw",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
-      "version": "7",
-      "when": 1777606538108,
-      "tag": "0024_wooden_imperial_guard",
+      "when": 1777743357386,
+      "tag": "0020_real_pride",
       "breakpoints": true
     }
   ]

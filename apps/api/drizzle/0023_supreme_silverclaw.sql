@@ -1,1 +1,0 @@
-ALTER TABLE "logistics_flows" ADD COLUMN "cadence_days" integer DEFAULT 7 NOT NULL;

@@ -41,10 +41,19 @@
         <div class="text-caption text-medium-emphasis mb-1">
           Tickers (this card) — overrides the view scope; leave empty to inherit it.
         </div>
-        <TickerCategoryInput
-          :model-value="graph.tickers ?? []"
+        <TokenSearchInput
+          :chips="graphTickerChips"
+          :extra-suggestion-types="tickerCategorySuggestions"
+          :allowed-suggestion-types="['commodity', 'category']"
+          :chip-icon-by-type="tickerChipIcons"
+          :help-tokens="tickerHelpTokens"
+          :get-commodity-display="tickerDisplayForChip"
+          leading-icon="mdi-tag-multiple"
+          paste-split-to="commodity"
+          enter-creates-type="commodity"
           placeholder="e.g. RAT, Consumables…"
-          @update:model-value="v => updateGraph({ tickers: v.length > 0 ? v : undefined })"
+          history-key="burn-repair"
+          @update:chips="onGraphTickerChipsUpdate"
         />
 
         <v-row dense class="mt-3">
@@ -153,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type {
   CorpMetricGroupBy,
   GraphConfig,
@@ -163,7 +172,14 @@ import type {
   ViewCard,
 } from '@kawakawa/types'
 import { CORP_METRIC_DEFS } from '@kawakawa/types'
-import TickerCategoryInput from './TickerCategoryInput.vue'
+import TokenSearchInput, {
+  type SearchChip,
+  type ExtraSuggestionType,
+} from '../TokenSearchInput.vue'
+import { commodityService } from '../../services/commodityService'
+import { useSettingsStore } from '../../stores/settings'
+import type { Commodity } from '../../types'
+import { chipsToScopeEntries, scopeEntriesToChips } from '../../utils/tickerScope'
 
 /**
  * Graph-card configuration dialog. Extracted from the legacy
@@ -191,6 +207,65 @@ const open = computed<boolean>({
   get: () => props.modelValue,
   set: v => emit('update:modelValue', v),
 })
+
+// -------- TokenSearchInput wiring (string[] ↔ SearchChip[]) --------
+const settingsStore = useSettingsStore()
+const tickerDisplayForChip = (ticker: string): string =>
+  commodityService.getCommodityDisplay(ticker, settingsStore.commodityDisplayMode.value)
+
+const commodities = ref<Commodity[]>([])
+onMounted(async () => {
+  const cached = commodityService.getAllCommoditiesSync()
+  commodities.value = cached.length > 0 ? cached : await commodityService.getAllCommodities()
+})
+
+const tickerCategorySuggestions = computed<ExtraSuggestionType[]>(() => {
+  const counts = new Map<string, number>()
+  for (const c of commodities.value) {
+    if (!c.category) continue
+    counts.set(c.category, (counts.get(c.category) ?? 0) + 1)
+  }
+  return [
+    {
+      type: 'category',
+      typeLabel: 'Category',
+      color: 'teal',
+      options: [...counts.keys()]
+        .sort((a, b) => a.localeCompare(b))
+        .map(cat => ({ value: cat, display: cat })),
+    },
+  ]
+})
+
+const tickerChipIcons = {
+  category: 'mdi-folder-outline',
+  commodity: 'mdi-package-variant',
+} as const
+
+const tickerHelpTokens = [
+  {
+    label: 'Ticker',
+    color: 'primary',
+    example: 'RAT',
+    description: 'A single commodity ticker.',
+    icon: 'mdi-package-variant',
+  },
+  {
+    label: 'Category',
+    color: 'teal',
+    example: 'category:Consumables (basic)',
+    description: 'Live reference — expands to every ticker in this category right now.',
+    icon: 'mdi-folder-outline',
+  },
+]
+
+const graphTickerChips = computed<SearchChip[]>(() =>
+  scopeEntriesToChips(graph.value.tickers ?? [], tickerDisplayForChip)
+)
+function onGraphTickerChipsUpdate(chips: SearchChip[]): void {
+  const next = chipsToScopeEntries(chips)
+  updateGraph({ tickers: next.length > 0 ? next : undefined })
+}
 
 const DEFAULT_GRAPH: GraphConfig = {
   yMetrics: ['productionDaily'],

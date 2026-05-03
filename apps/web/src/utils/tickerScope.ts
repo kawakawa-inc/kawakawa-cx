@@ -12,6 +12,7 @@
  */
 
 import type { Commodity } from '../types'
+import type { SearchChip } from '../components/TokenSearchInput.vue'
 
 const CATEGORY_PREFIX = 'category:'
 
@@ -34,6 +35,45 @@ export function parseScopeEntry(raw: string): ParsedScopeEntry {
 
 export function makeCategoryEntry(category: string): string {
   return `${CATEGORY_PREFIX}${category}`
+}
+
+/**
+ * Convert BR's raw scope entries (`string[]`) into the SearchChip array shape
+ * that TokenSearchInput expects. Existing entries pass through their original
+ * conventions: bare uppercase tickers become `commodity` chips, `category:Foo`
+ * becomes a `category` chip. The `tickerDisplay` argument lets the caller
+ * inject the user's commodity-display preference (ticker / name / both).
+ */
+export function scopeEntriesToChips(
+  entries: string[],
+  tickerDisplay: (ticker: string) => string
+): SearchChip[] {
+  return entries.map(raw => {
+    const parsed = parseScopeEntry(raw)
+    if (parsed.kind === 'category') {
+      return { type: 'category', value: parsed.value, display: parsed.value }
+    }
+    return { type: 'commodity', value: parsed.value, display: tickerDisplay(parsed.value) }
+  })
+}
+
+/**
+ * Inverse of {@link scopeEntriesToChips} — when TokenSearchInput emits its
+ * `update:chips`, BR consumers convert back to the raw `string[]` model so
+ * downstream code (resolveTickerScope, view persistence, etc.) keeps working
+ * unchanged. Non-ticker / non-category chips are dropped, since BR surfaces
+ * are configured to only allow those two types in the first place.
+ */
+export function chipsToScopeEntries(chips: SearchChip[]): string[] {
+  const out: string[] = []
+  for (const chip of chips) {
+    if (chip.type === 'category') {
+      out.push(makeCategoryEntry(chip.value))
+    } else if (chip.type === 'commodity') {
+      out.push(chip.value)
+    }
+  }
+  return out
 }
 
 /**

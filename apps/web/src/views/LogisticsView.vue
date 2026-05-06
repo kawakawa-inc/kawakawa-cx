@@ -23,8 +23,8 @@
       <v-card-text>
         <div class="text-caption text-medium-emphasis mb-3">
           Each flow has its own <strong>cadence</strong> — how often a shipment runs. Per-shipment
-          quantity is <code>dailyConsumption × cadence</code> plus any repair material burst when
-          a building's next repair falls within the cadence window. The Plan tab is your action
+          quantity is <code>dailyConsumption × cadence</code> plus any repair material burst when a
+          building's next repair falls within the cadence window. The Plan tab is your action
           surface; the Inspector is for diagnosing per-base state.
         </div>
         <div class="d-flex flex-wrap ga-3 align-center">
@@ -350,7 +350,13 @@
                     <template #item.condition="{ item }">
                       <v-chip
                         size="x-small"
-                        :color="item.condition < 0.7 ? 'error' : item.condition < 0.85 ? 'warning' : 'success'"
+                        :color="
+                          item.condition < 0.7
+                            ? 'error'
+                            : item.condition < 0.85
+                              ? 'warning'
+                              : 'success'
+                        "
                         variant="tonal"
                       >
                         {{ Math.round(item.condition * 100) }}%
@@ -1193,7 +1199,13 @@ function repairsForNode(locationId: string): GroupedRepair[] {
   if (!graph.value) return []
   const groups = new Map<
     string,
-    { ticker: string; count: number; condition: number; nextRepairAt: string; mats: Map<string, number> }
+    {
+      ticker: string
+      count: number
+      condition: number
+      nextRepairAt: string
+      mats: Map<string, number>
+    }
   >()
   for (const r of graph.value.repairEvents) {
     if (r.locationNaturalId !== locationId) continue

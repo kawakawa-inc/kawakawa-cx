@@ -1,5 +1,5 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="780" @update:model-value="onDialogUpdate">
+  <v-dialog :model-value="modelValue" max-width="980" @update:model-value="onDialogUpdate">
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon start>
@@ -29,57 +29,13 @@
         <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mb-3">
           {{ error }}
         </v-alert>
+        <v-alert v-if="notice" type="info" density="compact" variant="tonal" class="mb-3">
+          {{ notice }}
+        </v-alert>
 
+        <!-- Ship + notes -->
         <v-row dense>
-          <v-col cols="12" md="6">
-            <KeyValueAutocomplete
-              v-model="form.fromLocationId"
-              :items="locationItems"
-              :favorites="settingsStore.favoritedLocations.value"
-              label="Origin"
-              :disabled="editing"
-              density="compact"
-              hide-details
-              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
-            />
-          </v-col>
-          <v-col cols="12" md="6">
-            <KeyValueAutocomplete
-              v-model="form.toLocationId"
-              :items="locationItems"
-              :favorites="settingsStore.favoritedLocations.value"
-              label="Destination"
-              :disabled="editing"
-              density="compact"
-              hide-details
-              @update:favorites="settingsStore.updateSetting('market.favoritedLocations', $event)"
-            />
-          </v-col>
-
-          <v-col cols="12" md="6" class="mt-3">
-            <v-text-field
-              v-model="form.plannedLoadAt"
-              type="date"
-              label="Planned load date"
-              hint="When the ship loads at the source"
-              persistent-hint
-              density="compact"
-              :readonly="readOnly"
-            />
-          </v-col>
-          <v-col cols="12" md="6" class="mt-3">
-            <v-text-field
-              v-model="form.plannedArrivalAt"
-              type="date"
-              label="Planned arrival date"
-              :hint="`Auto: load + ${maxTransitForRoute}d transit. Override if needed.`"
-              persistent-hint
-              density="compact"
-              :readonly="readOnly"
-            />
-          </v-col>
-
-          <v-col cols="12" class="mt-3">
+          <v-col cols="12" md="7">
             <v-autocomplete
               v-model="form.shipDbId"
               :items="shipItems"
@@ -94,118 +50,7 @@
               :disabled="readOnly"
             />
           </v-col>
-
-          <!-- Manifest -->
-          <v-col cols="12" class="mt-4">
-            <div class="d-flex align-center mb-2">
-              <span class="text-subtitle-2">Manifest</span>
-              <v-spacer />
-              <v-btn
-                v-if="!readOnly"
-                size="x-small"
-                prepend-icon="mdi-plus"
-                variant="text"
-                @click="addAdHocLine"
-              >
-                Add ad-hoc material
-              </v-btn>
-            </div>
-
-            <div
-              v-if="eligibleFlows.length === 0 && form.lines.length === 0"
-              class="text-medium-emphasis text-caption pa-3"
-            >
-              Pick an origin and destination to see eligible flows for this route, or add an ad-hoc
-              material.
-            </div>
-
-            <v-table v-else density="compact" class="manifest-table">
-              <thead>
-                <tr>
-                  <th style="width: 40px"></th>
-                  <th>Material</th>
-                  <th class="text-end" style="width: 110px">Cadence</th>
-                  <th class="text-end" style="width: 130px">Suggested</th>
-                  <th class="text-end" style="width: 130px">Amount</th>
-                  <th style="width: 40px"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(line, idx) in form.lines" :key="idx">
-                  <td>
-                    <v-icon size="x-small" :color="line.flowId == null ? 'warning' : 'primary'">
-                      {{ line.flowId == null ? 'mdi-package-variant-closed' : 'mdi-cogs' }}
-                    </v-icon>
-                  </td>
-                  <td>
-                    <span v-if="line.flowId != null || readOnly">{{ line.commodityTicker }}</span>
-                    <v-text-field
-                      v-else
-                      v-model="line.commodityTicker"
-                      density="compact"
-                      hide-details
-                      placeholder="ticker"
-                      class="ad-hoc-ticker"
-                    />
-                  </td>
-                  <td class="text-end text-caption text-medium-emphasis">
-                    {{ line.flowId != null ? `${flowMeta(line.flowId).cadenceDays}d` : '—' }}
-                  </td>
-                  <td class="text-end text-caption text-medium-emphasis">
-                    {{
-                      line.flowId != null
-                        ? Math.round(flowMeta(line.flowId).perShipmentAmount).toLocaleString()
-                        : '—'
-                    }}
-                  </td>
-                  <td>
-                    <span v-if="readOnly">{{ Math.round(line.amount).toLocaleString() }}</span>
-                    <v-text-field
-                      v-else
-                      v-model.number="line.amount"
-                      type="number"
-                      min="1"
-                      density="compact"
-                      hide-details
-                    />
-                  </td>
-                  <td>
-                    <v-btn
-                      v-if="!readOnly"
-                      size="x-small"
-                      icon
-                      variant="text"
-                      @click="removeLine(idx)"
-                    >
-                      <v-icon size="small">mdi-close</v-icon>
-                    </v-btn>
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-
-            <div v-if="!readOnly && missingEligibleFlows.length > 0" class="mt-2">
-              <div class="text-caption text-medium-emphasis mb-1">
-                Eligible flows not in manifest:
-              </div>
-              <div class="d-flex flex-wrap ga-1">
-                <v-chip
-                  v-for="f in missingEligibleFlows"
-                  :key="f.id"
-                  size="x-small"
-                  color="primary"
-                  variant="tonal"
-                  class="cursor-pointer"
-                  prepend-icon="mdi-plus"
-                  @click="addEligibleFlow(f.id)"
-                >
-                  {{ f.commodityTicker }} ({{ Math.round(f.perShipmentAmount).toLocaleString() }})
-                </v-chip>
-              </div>
-            </div>
-          </v-col>
-
-          <v-col cols="12" class="mt-2">
+          <v-col cols="12" md="5">
             <v-text-field
               v-model="form.notes"
               label="Notes (optional)"
@@ -215,6 +60,319 @@
             />
           </v-col>
         </v-row>
+
+        <!-- Stops -->
+        <div class="d-flex align-center mt-4 mb-2">
+          <span class="text-subtitle-2">Stops</span>
+          <span class="text-caption text-medium-emphasis ml-2"> ({{ form.stops.length }}) </span>
+          <v-spacer />
+          <v-btn
+            v-if="!readOnly && form.stops.length >= 2"
+            size="x-small"
+            prepend-icon="mdi-clock-outline"
+            variant="text"
+            :loading="suggestingTimes"
+            :disabled="!canSuggestTimes"
+            :title="
+              canSuggestTimes
+                ? 'Estimate arrival times from jump distance + cargo load'
+                : 'Pick a location for every stop first'
+            "
+            @click="handleSuggestTimes"
+          >
+            Suggest times
+          </v-btn>
+          <v-btn
+            v-if="!readOnly"
+            size="x-small"
+            prepend-icon="mdi-plus"
+            variant="text"
+            @click="addStop"
+          >
+            Add stop
+          </v-btn>
+        </div>
+
+        <div
+          v-if="form.stops.length === 0"
+          class="text-medium-emphasis text-caption pa-3 stops-empty"
+        >
+          A trip needs at least 2 stops. Add the origin and at least one destination.
+        </div>
+
+        <v-table v-else density="compact" class="stops-table">
+          <thead>
+            <tr>
+              <th style="width: 40px">#</th>
+              <th>Location</th>
+              <th style="width: 290px">Time</th>
+              <th style="width: 60px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(stop, idx) in form.stops" :key="idx">
+              <td class="text-caption text-medium-emphasis">{{ idx + 1 }}</td>
+              <td>
+                <KeyValueAutocomplete
+                  v-model="stop.locationId"
+                  :items="locationItems"
+                  :favorites="settingsStore.favoritedLocations.value"
+                  :label="idx === 0 ? 'Origin' : `Stop ${idx + 1}`"
+                  density="compact"
+                  hide-details
+                  :disabled="readOnly"
+                  @update:favorites="
+                    settingsStore.updateSetting('market.favoritedLocations', $event)
+                  "
+                />
+              </td>
+              <td>
+                <v-text-field
+                  v-model="stop.plannedArriveAt"
+                  type="datetime-local"
+                  :label="idx === 0 ? 'Departs' : 'Arrives'"
+                  density="compact"
+                  hide-details
+                  :readonly="readOnly"
+                />
+              </td>
+              <td class="text-end">
+                <v-btn
+                  v-if="!readOnly"
+                  size="x-small"
+                  icon
+                  variant="text"
+                  :disabled="!canRemoveStop(idx)"
+                  :title="
+                    canRemoveStop(idx)
+                      ? 'Remove this stop'
+                      : 'A line uses this stop — remove the line first'
+                  "
+                  @click="removeStop(idx)"
+                >
+                  <v-icon size="small">mdi-close</v-icon>
+                </v-btn>
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+
+        <!-- Manifest -->
+        <div class="d-flex align-center mt-5 mb-2 flex-wrap ga-2">
+          <span class="text-subtitle-2">Manifest</span>
+          <span class="text-caption text-medium-emphasis">
+            ({{ includedCount }} of {{ form.rows.length }}
+            included)
+          </span>
+          <v-spacer />
+          <v-btn
+            v-if="!readOnly && form.rows.length > 0"
+            size="x-small"
+            variant="text"
+            @click="setAllIncluded(true)"
+          >
+            All
+          </v-btn>
+          <v-btn
+            v-if="!readOnly && form.rows.length > 0"
+            size="x-small"
+            variant="text"
+            @click="setAllIncluded(false)"
+          >
+            None
+          </v-btn>
+          <v-btn
+            v-if="!readOnly && form.stops.length >= 2"
+            size="x-small"
+            prepend-icon="mdi-plus"
+            variant="text"
+            @click="addCustomRow"
+          >
+            Add custom row
+          </v-btn>
+        </div>
+
+        <div
+          v-if="form.stops.length < 2"
+          class="text-medium-emphasis text-caption pa-3 stops-empty"
+        >
+          Add at least two stops before composing a manifest.
+        </div>
+
+        <div
+          v-else-if="form.rows.length === 0"
+          class="text-medium-emphasis text-caption pa-3 stops-empty"
+        >
+          No flows match this set of stops yet. Define flows on the Inspector tab, or click
+          <strong>Add custom row</strong> for an ad-hoc line.
+        </div>
+
+        <v-table v-else density="compact" class="manifest-table">
+          <thead>
+            <tr>
+              <th style="width: 50px" class="text-center" title="Include in this trip">Send</th>
+              <th style="width: 36px"></th>
+              <th style="width: 110px">Material</th>
+              <th style="width: 200px">From</th>
+              <th style="width: 200px">To</th>
+              <th class="text-end" style="width: 140px">Amount</th>
+              <th class="text-end" style="width: 140px">Cargo</th>
+              <th style="width: 36px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in form.rows" :key="row.key" :class="{ 'row-excluded': !row.included }">
+              <td class="text-center">
+                <v-checkbox-btn
+                  :model-value="row.included"
+                  density="compact"
+                  hide-details
+                  :disabled="readOnly"
+                  @update:model-value="row.included = !!$event"
+                />
+              </td>
+              <td>
+                <v-icon
+                  size="x-small"
+                  :color="row.flowId == null ? 'warning' : 'primary'"
+                  :title="row.flowId == null ? 'Ad-hoc' : 'From a flow'"
+                >
+                  {{ row.flowId == null ? 'mdi-package-variant-closed' : 'mdi-cogs' }}
+                </v-icon>
+              </td>
+              <td>
+                <span v-if="row.flowId != null || readOnly">{{ row.commodityTicker }}</span>
+                <v-text-field
+                  v-else
+                  v-model="row.commodityTicker"
+                  density="compact"
+                  hide-details
+                  placeholder="ticker"
+                  class="ad-hoc-ticker"
+                />
+              </td>
+              <td>
+                <span v-if="row.flowId != null || readOnly" class="text-caption">
+                  {{ stopLabel(row.originStopIndex) }}
+                </span>
+                <v-select
+                  v-else
+                  v-model.number="row.originStopIndex"
+                  :items="stopOptionsForOrigin(row)"
+                  item-title="title"
+                  item-value="value"
+                  density="compact"
+                  hide-details
+                />
+              </td>
+              <td>
+                <span v-if="row.flowId != null || readOnly" class="text-caption">
+                  {{ stopLabel(row.destinationStopIndex) }}
+                </span>
+                <v-select
+                  v-else
+                  v-model.number="row.destinationStopIndex"
+                  :items="stopOptionsForDestination(row)"
+                  item-title="title"
+                  item-value="value"
+                  density="compact"
+                  hide-details
+                />
+              </td>
+              <td class="text-end">
+                <span v-if="readOnly">{{ Math.round(row.amount).toLocaleString() }}</span>
+                <v-text-field
+                  v-else
+                  v-model.number="row.amount"
+                  type="number"
+                  min="1"
+                  density="compact"
+                  hide-details
+                />
+              </td>
+              <td class="text-end text-caption text-medium-emphasis">
+                {{ formatCargo(row) }}
+              </td>
+              <td>
+                <v-btn
+                  v-if="!readOnly && row.flowId == null"
+                  size="x-small"
+                  icon
+                  variant="text"
+                  title="Remove this custom row"
+                  @click="removeRow(row.key)"
+                >
+                  <v-icon size="small">mdi-close</v-icon>
+                </v-btn>
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+
+        <!-- Capacity meter -->
+        <template v-if="form.shipDbId != null && form.stops.length >= 2">
+          <div class="d-flex align-center mt-4 mb-1">
+            <v-icon size="x-small" class="mr-1">mdi-weight</v-icon>
+            <span class="text-subtitle-2">Capacity per segment</span>
+            <span class="text-caption text-medium-emphasis ml-2">
+              {{ shipCapLabel }}
+            </span>
+          </div>
+          <v-table density="compact" class="capacity-table">
+            <thead>
+              <tr>
+                <th>Segment</th>
+                <th style="width: 220px">Weight</th>
+                <th style="width: 220px">Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="seg in segmentLoads" :key="seg.segmentIndex">
+                <td class="text-caption">
+                  {{ stopLabel(seg.segmentIndex) }} → {{ stopLabel(seg.segmentIndex + 1) }}
+                </td>
+                <td>
+                  <div class="d-flex align-center ga-2">
+                    <v-progress-linear
+                      :model-value="pctOf(seg.weight, shipWeightCap)"
+                      :color="seg.overWeight ? 'error' : 'primary'"
+                      height="6"
+                      style="max-width: 100px"
+                    />
+                    <span
+                      class="text-caption"
+                      :class="seg.overWeight ? 'text-error' : 'text-medium-emphasis'"
+                    >
+                      {{ Math.round(seg.weight).toLocaleString() }}t /
+                      {{ Math.round(shipWeightCap).toLocaleString() }}t
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <div class="d-flex align-center ga-2">
+                    <v-progress-linear
+                      :model-value="pctOf(seg.volume, shipVolumeCap)"
+                      :color="seg.overVolume ? 'error' : 'primary'"
+                      height="6"
+                      style="max-width: 100px"
+                    />
+                    <span
+                      class="text-caption"
+                      :class="seg.overVolume ? 'text-error' : 'text-medium-emphasis'"
+                    >
+                      {{ Math.round(seg.volume).toLocaleString() }}m³ /
+                      {{ Math.round(shipVolumeCap).toLocaleString() }}m³
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-if="capacityViolations.length > 0" class="text-caption text-error mt-1">
+            {{ capacityViolations.length }} segment{{ capacityViolations.length === 1 ? '' : 's' }}
+            over capacity. Reduce a manifest line or pick a larger ship before saving.
+          </div>
+        </template>
       </v-card-text>
 
       <v-divider />
@@ -231,7 +389,13 @@
         </v-btn>
         <v-spacer />
         <v-btn variant="text" @click="close">{{ readOnly ? 'Close' : 'Cancel' }}</v-btn>
-        <v-btn v-if="!readOnly" color="primary" :loading="saving" @click="handleSave">
+        <v-btn
+          v-if="!readOnly"
+          color="primary"
+          :loading="saving"
+          :disabled="capacityViolations.length > 0"
+          @click="handleSave"
+        >
           {{ editing ? 'Save' : 'Create' }}
         </v-btn>
       </v-card-actions>
@@ -245,13 +409,16 @@ import KeyValueAutocomplete from '../KeyValueAutocomplete.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { api } from '../../services/api'
 import { commodityService } from '../../services/commodityService'
+import { locationService } from '../../services/locationService'
+import { useUserStore } from '../../stores/user'
 import type {
   Shipment,
-  EdgeState,
   LogisticsGraph,
   UserShip,
   CreateShipmentRequest,
   UpdateShipmentRequest,
+  ShipmentLineInput,
+  ShipmentStopInput,
 } from '@kawakawa/types'
 import type { KeyValueItem } from '../KeyValueAutocomplete.vue'
 
@@ -271,125 +438,388 @@ const emit = defineEmits<{
 }>()
 
 const settingsStore = useSettingsStore()
+const userStore = useUserStore()
 const editing = computed(() => props.shipment !== null)
-// A non-planned shipment is a historical record — viewable but not editable.
-// The Cancel/Dispatch/Deliver buttons in the list handle status transitions;
-// the dialog is purely informational once the shipment leaves "planned".
+// Non-planned shipments are historical: viewable but not editable. Status
+// transitions are handled in the list (Cancel/Dispatch/Deliver buttons).
 const readOnly = computed(
   () => editing.value && props.shipment !== null && props.shipment.status !== 'planned'
 )
 
-interface ManifestLine {
+interface FormStop {
+  locationId: string
+  /** YYYY-MM-DDTHH:MM (datetime-local) — converted to ISO on save. */
+  plannedArriveAt: string
+}
+
+/**
+ * One row in the manifest table. Both due flows (pre-populated, unchecked)
+ * and ad-hoc lines live here as a single list — the `flowId` distinguishes
+ * them and `included` is whether the row ends up in the saved manifest.
+ */
+interface ManifestRow {
+  /** Stable key for v-for. `flow:<id>` for flow rows, `adhoc:<n>` for custom. */
+  key: string
+  /** Flow id for due-flow rows; null for ad-hoc. */
   flowId: number | null
   commodityTicker: string
+  originStopIndex: number
+  destinationStopIndex: number
   amount: number
+  /** Checkbox state: true = include in the saved manifest. */
+  included: boolean
 }
 
 interface FormShape {
-  fromLocationId: string
-  toLocationId: string
   shipDbId: number | null
-  plannedLoadAt: string // YYYY-MM-DD
-  plannedArrivalAt: string // YYYY-MM-DD
   notes: string
-  lines: ManifestLine[]
+  stops: FormStop[]
+  rows: ManifestRow[]
 }
 
-function todayISO(): string {
-  const d = new Date()
-  return d.toISOString().slice(0, 10)
+function defaultStopAt(offsetDays: number): string {
+  const d = new Date(Date.now() + offsetDays * 86_400_000)
+  // datetime-local format: YYYY-MM-DDTHH:MM in LOCAL time, so use local accessors.
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
 }
 
 function emptyForm(): FormShape {
   return {
-    fromLocationId: '',
-    toLocationId: '',
     shipDbId: null,
-    plannedLoadAt: todayISO(),
-    plannedArrivalAt: todayISO(),
     notes: '',
-    lines: [],
+    stops: [
+      { locationId: '', plannedArriveAt: defaultStopAt(0) },
+      { locationId: '', plannedArriveAt: defaultStopAt(1) },
+    ],
+    rows: [],
   }
+}
+
+/** Monotonic counter for ad-hoc row keys. Reset whenever the dialog re-opens. */
+let adhocCounter = 0
+
+function isoToLocalInput(iso: string): string {
+  // Convert ISO timestamp to a datetime-local-compatible YYYY-MM-DDTHH:MM in
+  // the user's local time. The HTML <input type="datetime-local"> doesn't
+  // accept a 'Z' suffix.
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
 }
 
 const form = ref<FormShape>(emptyForm())
 const saving = ref(false)
 const deleting = ref(false)
+const suggestingTimes = ref(false)
 const error = ref('')
+const notice = ref('')
 
-// All committed (amount > 0) demand/fixed edges in the graph for the current
-// (from, to). These are the eligible flows for the shipment's manifest.
-const eligibleFlows = computed<EdgeState[]>(() => {
-  if (!props.graph) return []
-  if (!form.value.fromLocationId || !form.value.toLocationId) return []
-  return props.graph.edges.filter(
-    e =>
-      (e.kind === 'demand' || e.kind === 'fixed') &&
-      e.fromLocationId === form.value.fromLocationId &&
-      e.toLocationId === form.value.toLocationId
-  )
-})
+// ==================== Stop management ====================
 
-const missingEligibleFlows = computed(() => {
-  const inManifest = new Set(form.value.lines.map(l => l.flowId).filter(v => v !== null))
-  return eligibleFlows.value.filter(f => !inManifest.has(f.id))
-})
-
-function flowMeta(flowId: number): EdgeState {
-  return (
-    props.graph?.edges.find(e => e.id === flowId) ??
-    ({
-      id: flowId,
-      cadenceDays: 7,
-      perShipmentAmount: 0,
-    } as EdgeState)
-  )
-}
-
-function addEligibleFlow(flowId: number) {
-  const flow = props.graph?.edges.find(e => e.id === flowId)
-  if (!flow) return
-  form.value.lines.push({
-    flowId,
-    commodityTicker: flow.commodityTicker,
-    amount: Math.max(1, Math.round(flow.perShipmentAmount)),
+function addStop() {
+  const lastStopAt = form.value.stops[form.value.stops.length - 1]?.plannedArriveAt
+  // Default the new stop to a day after the last one.
+  const baseTime = lastStopAt ? new Date(lastStopAt).getTime() : Date.now()
+  const next = new Date(baseTime + 86_400_000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  form.value.stops.push({
+    locationId: '',
+    plannedArriveAt:
+      `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}` +
+      `T${pad(next.getHours())}:${pad(next.getMinutes())}`,
   })
 }
 
-function addAdHocLine() {
-  form.value.lines.push({ flowId: null, commodityTicker: '', amount: 1 })
+function canRemoveStop(idx: number): boolean {
+  if (form.value.stops.length <= 2) return false
+  // Only included rows block removal — unchecked flow rows will be re-derived
+  // from current eligibility after the stop change anyway.
+  return !form.value.rows.some(
+    r => r.included && (r.originStopIndex === idx || r.destinationStopIndex === idx)
+  )
 }
 
-function removeLine(idx: number) {
-  form.value.lines.splice(idx, 1)
+function removeStop(idx: number) {
+  if (!canRemoveStop(idx)) return
+  form.value.stops.splice(idx, 1)
+  // Shift line indices that pointed past the removed stop.
+  for (const row of form.value.rows) {
+    if (row.originStopIndex > idx) row.originStopIndex--
+    if (row.destinationStopIndex > idx) row.destinationStopIndex--
+  }
 }
 
-const maxTransitForRoute = computed(() => {
-  if (eligibleFlows.value.length === 0) return 0
-  return Math.max(...eligibleFlows.value.map(e => e.transitDays))
+function stopLabel(idx: number): string {
+  const stop = form.value.stops[idx]
+  if (!stop) return `Stop ${idx + 1}`
+  if (!stop.locationId) return `Stop ${idx + 1}`
+  return `${idx + 1}: ${locationService.getLocationDisplay(
+    stop.locationId,
+    userStore.getLocationDisplayMode()
+  )}`
+}
+
+const canSuggestTimes = computed(
+  () => form.value.stops.length >= 2 && form.value.stops.every(s => !!s.locationId)
+)
+
+/**
+ * Estimate arrival times for stops 2..N using the server's tier-1 heuristic
+ * (jump count + same-system constant + cargo load factor). Stop 1's time is
+ * preserved as the trip start. Warnings are surfaced as an inline notice.
+ * Only included rows count toward cargo mass.
+ */
+async function handleSuggestTimes() {
+  if (!canSuggestTimes.value) return
+  suggestingTimes.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const startAt = localInputToIso(form.value.stops[0].plannedArriveAt)
+    const result = await api.logistics.suggestStopTimes({
+      startAt,
+      stops: form.value.stops.map(s => ({ locationId: s.locationId })),
+      shipDbId: form.value.shipDbId,
+      lines: includedLines.value,
+    })
+    for (let i = 1; i < result.stops.length && i < form.value.stops.length; i++) {
+      form.value.stops[i].plannedArriveAt = isoToLocalInput(result.stops[i].plannedArriveAt)
+    }
+    if (result.warnings.length > 0) {
+      notice.value = `Suggested. Note: ${result.warnings.join(' ')}`
+    } else {
+      notice.value = `Suggested arrival times applied. These are rough — adjust if you have a better feel for a specific route.`
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to suggest stop times'
+  } finally {
+    suggestingTimes.value = false
+  }
+}
+
+// ==================== Manifest rows (flows + ad-hoc, unified) ====================
+
+interface EligibleFlow {
+  flowId: number
+  commodityTicker: string
+  originStopIndex: number
+  destinationStopIndex: number
+  suggestedAmount: number
+}
+
+/**
+ * For each demand/fixed flow in the graph, find the FIRST (i, j) pair of
+ * stops where i < j, stops[i] = flow.from, stops[j] = flow.to. Used to seed
+ * the manifest table with rows for what's "due on this route."
+ */
+const eligibleFlows = computed<EligibleFlow[]>(() => {
+  if (!props.graph) return []
+  const stopsLocs = form.value.stops.map(s => s.locationId)
+  if (stopsLocs.length < 2) return []
+  const out: EligibleFlow[] = []
+  for (const edge of props.graph.edges) {
+    if (edge.kind !== 'demand' && edge.kind !== 'fixed') continue
+    if (edge.perShipmentAmount <= 0) continue
+    const originIdx = stopsLocs.indexOf(edge.fromLocationId)
+    if (originIdx < 0) continue
+    const destIdx = stopsLocs.indexOf(edge.toLocationId, originIdx + 1)
+    if (destIdx < 0) continue
+    out.push({
+      flowId: edge.id,
+      commodityTicker: edge.commodityTicker,
+      originStopIndex: originIdx,
+      destinationStopIndex: destIdx,
+      suggestedAmount: edge.perShipmentAmount,
+    })
+  }
+  return out
 })
 
-// Total weight + volume of the current manifest, in tons / m³. Used to filter
-// the ship picker to ships that can carry the load.
-const manifestWeight = computed(() => {
-  let total = 0
-  for (const line of form.value.lines) {
-    if (!line.commodityTicker || !line.amount) continue
-    const w = commodityService.getCommodityWeight(line.commodityTicker.toUpperCase()) ?? 0
-    total += w * line.amount
+/**
+ * Reconcile flow rows with current eligibility. Adds rows for newly-eligible
+ * flows (unchecked, with suggested amount), removes rows whose flow is no
+ * longer eligible, and re-points origin/destination indices when stops shift
+ * but the flow still applies. Ad-hoc rows pass through unchanged.
+ */
+function syncFlowRows(): void {
+  const eligible = eligibleFlows.value
+  const eligibleById = new Map(eligible.map(e => [e.flowId, e]))
+
+  // Drop flow rows whose flow is no longer eligible.
+  form.value.rows = form.value.rows.filter(r => r.flowId === null || eligibleById.has(r.flowId))
+
+  // Update origin/destination on still-eligible flow rows.
+  for (const row of form.value.rows) {
+    if (row.flowId === null) continue
+    const e = eligibleById.get(row.flowId)
+    if (!e) continue
+    row.originStopIndex = e.originStopIndex
+    row.destinationStopIndex = e.destinationStopIndex
   }
-  return total
+
+  // Add any newly-eligible flows as unchecked rows with suggested amount.
+  const haveFlowIds = new Set(
+    form.value.rows.map(r => r.flowId).filter((v): v is number => v !== null)
+  )
+  for (const e of eligible) {
+    if (haveFlowIds.has(e.flowId)) continue
+    form.value.rows.push({
+      key: `flow:${e.flowId}`,
+      flowId: e.flowId,
+      commodityTicker: e.commodityTicker,
+      originStopIndex: e.originStopIndex,
+      destinationStopIndex: e.destinationStopIndex,
+      amount: Math.max(1, Math.round(e.suggestedAmount)),
+      included: false,
+    })
+  }
+}
+
+// Keep flow rows in sync with the current set of stops + graph.
+watch(
+  () => [form.value.stops.map(s => s.locationId).join('|'), props.graph] as const,
+  () => syncFlowRows()
+)
+
+function addCustomRow() {
+  // Default a new custom row to load at first stop, drop at last stop.
+  form.value.rows.push({
+    key: `adhoc:${++adhocCounter}`,
+    flowId: null,
+    commodityTicker: '',
+    originStopIndex: 0,
+    destinationStopIndex: form.value.stops.length - 1,
+    amount: 1,
+    included: true,
+  })
+}
+
+function removeRow(rowKey: string) {
+  form.value.rows = form.value.rows.filter(r => r.key !== rowKey)
+}
+
+function setAllIncluded(included: boolean) {
+  for (const row of form.value.rows) row.included = included
+}
+
+function stopOptionsForOrigin(row: ManifestRow): Array<{ title: string; value: number }> {
+  // Origin can be any stop EXCEPT the last (it has nowhere to drop).
+  return form.value.stops
+    .map((_, i) => ({ title: stopLabel(i), value: i }))
+    .filter(opt => opt.value < row.destinationStopIndex)
+}
+
+function stopOptionsForDestination(row: ManifestRow): Array<{ title: string; value: number }> {
+  return form.value.stops
+    .map((_, i) => ({ title: stopLabel(i), value: i }))
+    .filter(opt => opt.value > row.originStopIndex)
+}
+
+const includedRows = computed(() => form.value.rows.filter(r => r.included))
+
+const includedLines = computed<ShipmentLineInput[]>(() =>
+  includedRows.value.map(r => ({
+    originStopIndex: r.originStopIndex,
+    destinationStopIndex: r.destinationStopIndex,
+    flowId: r.flowId,
+    commodityTicker: r.commodityTicker.toUpperCase(),
+    amount: Math.floor(r.amount),
+  }))
+)
+
+const includedCount = computed(() => includedRows.value.length)
+
+// ==================== Capacity ====================
+
+function rowWeight(row: ManifestRow): number {
+  if (!row.commodityTicker || !row.amount) return 0
+  const w = commodityService.getCommodityWeight(row.commodityTicker.toUpperCase()) ?? 0
+  return w * row.amount
+}
+
+function rowVolume(row: ManifestRow): number {
+  if (!row.commodityTicker || !row.amount) return 0
+  const v = commodityService.getCommodityVolume(row.commodityTicker.toUpperCase()) ?? 0
+  return v * row.amount
+}
+
+function formatCargo(row: ManifestRow): string {
+  const w = Math.round(rowWeight(row))
+  const v = Math.round(rowVolume(row))
+  if (w === 0 && v === 0) return '—'
+  return `${w.toLocaleString()}t / ${v.toLocaleString()}m³`
+}
+
+const selectedShip = computed<UserShip | null>(() => {
+  if (form.value.shipDbId == null) return null
+  return props.ships.find(s => s.id === form.value.shipDbId) ?? null
 })
 
-const manifestVolume = computed(() => {
-  let total = 0
-  for (const line of form.value.lines) {
-    if (!line.commodityTicker || !line.amount) continue
-    const v = commodityService.getCommodityVolume(line.commodityTicker.toUpperCase()) ?? 0
-    total += v * line.amount
-  }
-  return total
+const shipWeightCap = computed(() => selectedShip.value?.cargo.weightCapacity ?? 0)
+const shipVolumeCap = computed(() => selectedShip.value?.cargo.volumeCapacity ?? 0)
+
+const shipCapLabel = computed(() => {
+  const s = selectedShip.value
+  if (!s) return ''
+  return `(${s.name ?? s.registration} · ${Math.round(shipWeightCap.value).toLocaleString()}t / ${Math.round(
+    shipVolumeCap.value
+  ).toLocaleString()}m³)`
 })
+
+interface SegmentLoadRow {
+  segmentIndex: number
+  weight: number
+  volume: number
+  overWeight: boolean
+  overVolume: boolean
+}
+
+const segmentLoads = computed<SegmentLoadRow[]>(() => {
+  const stopCount = form.value.stops.length
+  const segCount = Math.max(0, stopCount - 1)
+  const out: SegmentLoadRow[] = []
+  for (let i = 0; i < segCount; i++) {
+    out.push({ segmentIndex: i, weight: 0, volume: 0, overWeight: false, overVolume: false })
+  }
+  for (const row of includedRows.value) {
+    const w = rowWeight(row)
+    const v = rowVolume(row)
+    for (let s = row.originStopIndex; s < row.destinationStopIndex; s++) {
+      const seg = out[s]
+      if (!seg) continue
+      seg.weight += w
+      seg.volume += v
+    }
+  }
+  for (const seg of out) {
+    if (shipWeightCap.value > 0 && seg.weight > shipWeightCap.value + 1e-6) {
+      seg.overWeight = true
+    }
+    if (shipVolumeCap.value > 0 && seg.volume > shipVolumeCap.value + 1e-6) {
+      seg.overVolume = true
+    }
+  }
+  return out
+})
+
+const capacityViolations = computed(() => {
+  if (form.value.shipDbId == null) return []
+  return segmentLoads.value.filter(s => s.overWeight || s.overVolume)
+})
+
+function pctOf(value: number, cap: number): number {
+  if (cap <= 0) return 0
+  return Math.min(100, (value / cap) * 100)
+}
+
+// ==================== Ship picker ====================
 
 interface ShipPickerItem {
   title: string
@@ -399,34 +829,58 @@ interface ShipPickerItem {
 }
 
 const shipPickerHint = computed(() => {
-  if (manifestWeight.value <= 0 && manifestVolume.value <= 0) {
-    return 'Auto-assign deferred to Stage C; pick manually if you want.'
-  }
-  const w = Math.round(manifestWeight.value)
-  const v = Math.round(manifestVolume.value)
+  const w = peakSegmentWeight.value
+  const v = peakSegmentVolume.value
+  if (w <= 0 && v <= 0) return 'Pick a ship to see capacity per segment.'
   const fitting = shipItems.value.filter(s => s.fits).length
   if (fitting === 0) {
-    return `Manifest: ${w.toLocaleString()}t / ${v.toLocaleString()}m³ — no ship at the source can carry this in one trip. Pick anyway and split, or shrink the manifest.`
+    return `Peak load: ${Math.round(w).toLocaleString()}t / ${Math.round(v).toLocaleString()}m³ — no ship in the fleet can carry this in one trip.`
   }
-  return `Manifest: ${w.toLocaleString()}t / ${v.toLocaleString()}m³ — ${fitting} ship${fitting === 1 ? '' : 's'} can carry this. Smallest viable shown first.`
+  return `Peak load: ${Math.round(w).toLocaleString()}t / ${Math.round(v).toLocaleString()}m³ — ${fitting} ship${fitting === 1 ? '' : 's'} can carry this. Smallest viable shown first.`
 })
 
-// Ship picker: filter to ships at the source (or with unknown location), then
-// sort by "fits the manifest first, smallest viable first" so the natural
-// default is the smallest ship that can carry the load. Each label shows
-// capacity + a check or warning icon.
+const peakSegmentWeight = computed(() => {
+  let max = 0
+  const stopCount = form.value.stops.length
+  const segCount = Math.max(0, stopCount - 1)
+  const seg = new Array<number>(segCount).fill(0)
+  for (const row of includedRows.value) {
+    const w = rowWeight(row)
+    for (let s = row.originStopIndex; s < row.destinationStopIndex; s++) {
+      seg[s] = (seg[s] ?? 0) + w
+      if (seg[s] > max) max = seg[s]
+    }
+  }
+  return max
+})
+
+const peakSegmentVolume = computed(() => {
+  let max = 0
+  const stopCount = form.value.stops.length
+  const segCount = Math.max(0, stopCount - 1)
+  const seg = new Array<number>(segCount).fill(0)
+  for (const row of includedRows.value) {
+    const v = rowVolume(row)
+    for (let s = row.originStopIndex; s < row.destinationStopIndex; s++) {
+      seg[s] = (seg[s] ?? 0) + v
+      if (seg[s] > max) max = seg[s]
+    }
+  }
+  return max
+})
+
+// Filter the ship picker to ships at the trip's first-stop location (or with
+// unknown location) and sort by "fits the peak segment first, smallest first."
 const shipItems = computed<ShipPickerItem[]>(() => {
-  const w = manifestWeight.value
-  const v = manifestVolume.value
+  const w = peakSegmentWeight.value
+  const v = peakSegmentVolume.value
+  const firstLocation = form.value.stops[0]?.locationId
   const candidates = props.ships.filter(
-    s =>
-      !form.value.fromLocationId ||
-      !s.locationNaturalId ||
-      s.locationNaturalId === form.value.fromLocationId
+    s => !firstLocation || !s.locationNaturalId || s.locationNaturalId === firstLocation
   )
   const items = candidates.map(s => {
     const fits = s.cargo.weightCapacity >= w && s.cargo.volumeCapacity >= v
-    const capParts = []
+    const capParts: string[] = []
     if (s.cargo.weightCapacity > 0) {
       capParts.push(`${Math.round(s.cargo.weightCapacity).toLocaleString()}t`)
     }
@@ -442,8 +896,6 @@ const shipItems = computed<ShipPickerItem[]>(() => {
       capacity: s.cargo.weightCapacity,
     }
   })
-  // Sort: fitting ships first; within each group, smallest capacity first
-  // (so the picker defaults visually to the most efficient choice).
   items.sort((a, b) => {
     if (a.fits !== b.fits) return a.fits ? -1 : 1
     return a.capacity - b.capacity
@@ -451,55 +903,44 @@ const shipItems = computed<ShipPickerItem[]>(() => {
   return items
 })
 
-// When opening the dialog, snapshot the shipment (or reset).
+// ==================== Open / save / delete ====================
+
 watch(
   () => [props.modelValue, props.shipment] as const,
   ([open, shipment]) => {
     if (!open) return
     error.value = ''
+    notice.value = ''
+    adhocCounter = 0
     if (shipment) {
+      // Map the line origin/destination IDs back to stop indices.
+      const stopIdToIndex = new Map(shipment.stops.map((s, i) => [s.id, i]))
+      const rows: ManifestRow[] = shipment.lines.map(l => ({
+        key: l.flowId !== null ? `flow:${l.flowId}` : `adhoc:${++adhocCounter}`,
+        flowId: l.flowId,
+        commodityTicker: l.commodityTicker,
+        originStopIndex: stopIdToIndex.get(l.originStopId) ?? 0,
+        destinationStopIndex: stopIdToIndex.get(l.destinationStopId) ?? 0,
+        amount: l.amount,
+        included: true,
+      }))
       form.value = {
-        fromLocationId: shipment.fromLocationId,
-        toLocationId: shipment.toLocationId,
         shipDbId: shipment.shipDbId,
-        plannedLoadAt: shipment.plannedLoadAt.slice(0, 10),
-        plannedArrivalAt: shipment.plannedArrivalAt.slice(0, 10),
         notes: shipment.notes ?? '',
-        lines: shipment.lines.map(l => ({
-          flowId: l.flowId,
-          commodityTicker: l.commodityTicker,
-          amount: l.amount,
+        stops: shipment.stops.map(s => ({
+          locationId: s.locationId,
+          plannedArriveAt: isoToLocalInput(s.plannedArriveAt),
         })),
+        rows,
       }
     } else {
       form.value = emptyForm()
     }
+    // Populate flow rows from current eligibility (adds unchecked rows for
+    // matching flows not already on the manifest).
+    syncFlowRows()
   },
   { immediate: true }
-)
-
-// On create, when the user picks a route, auto-fill manifest from eligible flows
-// and auto-bump the planned arrival date by the max transit days. The user can
-// still add/remove lines or override the date afterward.
-watch(
-  () => [form.value.fromLocationId, form.value.toLocationId] as const,
-  ([from, to], [oldFrom, oldTo]) => {
-    if (editing.value) return
-    if (!from || !to) return
-    if (from === oldFrom && to === oldTo) return
-    // Replace lines with the eligible-flow autofill
-    form.value.lines = eligibleFlows.value.map(e => ({
-      flowId: e.id,
-      commodityTicker: e.commodityTicker,
-      amount: Math.max(1, Math.round(e.perShipmentAmount)),
-    }))
-    // Bump arrival = load + max transit
-    if (form.value.plannedLoadAt) {
-      const load = new Date(form.value.plannedLoadAt + 'T00:00:00Z')
-      const arrive = new Date(load.getTime() + maxTransitForRoute.value * 86_400_000)
-      form.value.plannedArrivalAt = arrive.toISOString().slice(0, 10)
-    }
-  }
 )
 
 function onDialogUpdate(v: boolean) {
@@ -510,55 +951,68 @@ function close() {
   emit('update:modelValue', false)
 }
 
-function toIsoMidnight(yyyymmdd: string): string {
-  // Treat the date as midnight UTC to keep server-side comparisons stable.
-  return new Date(yyyymmdd + 'T00:00:00Z').toISOString()
+function localInputToIso(s: string): string {
+  // datetime-local is in local time without a zone — interpret it that way.
+  return new Date(s).toISOString()
 }
 
 async function handleSave() {
   saving.value = true
   error.value = ''
   try {
-    if (!form.value.fromLocationId || !form.value.toLocationId) {
-      throw new Error('Origin and destination are required')
-    }
-    if (form.value.fromLocationId === form.value.toLocationId) {
-      throw new Error('Origin and destination must differ')
-    }
-    if (form.value.lines.length === 0) {
-      throw new Error('At least one manifest line is required')
-    }
-    for (const l of form.value.lines) {
-      if (!l.commodityTicker) throw new Error('Every line needs a ticker')
-      if (!Number.isFinite(l.amount) || l.amount <= 0) {
-        throw new Error(`Line for ${l.commodityTicker || 'ad-hoc'}: amount must be > 0`)
+    if (form.value.stops.length < 2) throw new Error('A trip needs at least 2 stops')
+    for (let i = 0; i < form.value.stops.length; i++) {
+      const s = form.value.stops[i]
+      if (!s.locationId) throw new Error(`Stop ${i + 1}: pick a location`)
+      if (!s.plannedArriveAt) throw new Error(`Stop ${i + 1}: pick a planned arrival time`)
+      if (i > 0 && s.locationId === form.value.stops[i - 1].locationId) {
+        throw new Error(
+          `Stops ${i} and ${i + 1} are at the same location — pick a different one or remove the duplicate stop`
+        )
       }
     }
+    const included = includedRows.value
+    if (included.length === 0) {
+      throw new Error('Check at least one manifest row to include in the trip')
+    }
+    for (let i = 0; i < included.length; i++) {
+      const r = included[i]
+      if (!r.commodityTicker) throw new Error(`Row ${i + 1}: ticker is required`)
+      if (!Number.isFinite(r.amount) || r.amount <= 0) {
+        throw new Error(`Row ${i + 1} (${r.commodityTicker}): amount must be > 0`)
+      }
+      if (r.originStopIndex >= r.destinationStopIndex) {
+        throw new Error(
+          `Row ${i + 1} (${r.commodityTicker}): cargo must be loaded before it's dropped`
+        )
+      }
+    }
+    if (capacityViolations.value.length > 0) {
+      throw new Error(
+        'One or more segments exceed ship capacity. Reduce a line or pick a larger ship.'
+      )
+    }
 
-    const lines = form.value.lines.map(l => ({
-      flowId: l.flowId,
-      commodityTicker: l.commodityTicker.toUpperCase(),
-      amount: Math.floor(l.amount),
+    const stopsBody: ShipmentStopInput[] = form.value.stops.map(s => ({
+      locationId: s.locationId,
+      plannedArriveAt: localInputToIso(s.plannedArriveAt),
     }))
+    const linesBody: ShipmentLineInput[] = includedLines.value
 
     if (editing.value && props.shipment) {
       const body: UpdateShipmentRequest = {
         shipDbId: form.value.shipDbId,
-        plannedLoadAt: toIsoMidnight(form.value.plannedLoadAt),
-        plannedArrivalAt: toIsoMidnight(form.value.plannedArrivalAt),
         notes: form.value.notes.trim() || null,
-        lines,
+        stops: stopsBody,
+        lines: linesBody,
       }
       await api.logistics.updateShipment(props.shipment.id, body)
     } else {
       const body: CreateShipmentRequest = {
-        fromLocationId: form.value.fromLocationId,
-        toLocationId: form.value.toLocationId,
         shipDbId: form.value.shipDbId,
-        plannedLoadAt: toIsoMidnight(form.value.plannedLoadAt),
-        plannedArrivalAt: toIsoMidnight(form.value.plannedArrivalAt),
-        notes: form.value.notes.trim() || undefined,
-        lines,
+        notes: form.value.notes.trim() || null,
+        stops: stopsBody,
+        lines: linesBody,
       }
       await api.logistics.createShipment(body)
     }
@@ -588,12 +1042,27 @@ async function handleDelete() {
 </script>
 
 <style scoped>
-.manifest-table {
+.stops-empty {
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.stops-table,
+.manifest-table,
+.capacity-table {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
 }
 
+.row-excluded {
+  opacity: 0.55;
+}
+
 .ad-hoc-ticker :deep(input) {
   text-transform: uppercase;
+}
+
+.cursor-pointer {
+  cursor: pointer;
 }
 </style>

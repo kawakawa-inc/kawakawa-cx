@@ -148,13 +148,11 @@
           class="action-row clickable"
           @click="$emit('edit-shipment', a.shipment)"
         >
-          <td :class="urgencyClass(a.shipment.plannedLoadAt)">
-            {{ formatDate(a.shipment.plannedLoadAt) }}
+          <td :class="urgencyClass(a.loadAt)">
+            {{ formatDate(a.loadAt) }}
           </td>
-          <td class="text-caption">
-            <strong>{{ locationDisplay(a.shipment.fromLocationId) }}</strong>
-            →
-            <strong>{{ locationDisplay(a.shipment.toLocationId) }}</strong>
+          <td class="text-caption" :title="fullRouteTitle(a.shipment)">
+            {{ routeDisplay(a.shipment) }}
           </td>
           <td class="text-caption text-medium-emphasis">{{ shipName(a.shipment.shipDbId) }}</td>
           <td class="text-end text-caption text-medium-emphasis">
@@ -197,7 +195,10 @@ async function load() {
   }
 }
 
-defineExpose({ reload: load, contractActionsForLocation: (id: string) => contractActionsForLocation(id) })
+defineExpose({
+  reload: load,
+  contractActionsForLocation: (id: string) => contractActionsForLocation(id),
+})
 onMounted(load)
 
 const MS_PER_DAY = 86_400_000
@@ -221,6 +222,8 @@ interface ContractAction {
 
 interface DispatchAction {
   shipment: Shipment
+  /** First stop's plannedArriveAt — "when the ship loads at the origin." */
+  loadAt: string
 }
 
 /** Round a millisecond timestamp to the start of the local day. */
@@ -378,20 +381,37 @@ function contractActionsForLocation(locationId: string): ContractAction[] {
 }
 
 /**
- * Planned shipments whose load date falls within the look-ahead window.
- * Already-dispatched shipments aren't here — they show on the Shipments tab.
+ * Planned shipments whose load date (first stop's planned arrival) falls
+ * within the look-ahead window. Already-dispatched shipments aren't here —
+ * they show on the Shipments tab.
  */
 const dispatchActions = computed<DispatchAction[]>(() => {
   const cutoff = lookaheadCutoff.value
   const out: DispatchAction[] = []
   for (const s of shipments.value) {
     if (s.status !== 'planned') continue
-    if (new Date(s.plannedLoadAt).getTime() > cutoff) continue
-    out.push({ shipment: s })
+    const loadAt = s.stops[0]?.plannedArriveAt
+    if (!loadAt) continue
+    if (new Date(loadAt).getTime() > cutoff) continue
+    out.push({ shipment: s, loadAt })
   }
-  out.sort((a, b) => a.shipment.plannedLoadAt.localeCompare(b.shipment.plannedLoadAt))
+  out.sort((a, b) => a.loadAt.localeCompare(b.loadAt))
   return out
 })
+
+/** Compact route label — same approach as ShipmentList. */
+function routeDisplay(s: Shipment): string {
+  if (s.stops.length === 0) return '—'
+  const first = locationDisplay(s.stops[0].locationId)
+  const last = locationDisplay(s.stops[s.stops.length - 1].locationId)
+  if (s.stops.length === 1) return first
+  if (s.stops.length === 2) return `${first} → ${last}`
+  return `${first} → … → ${last} (${s.stops.length} stops)`
+}
+
+function fullRouteTitle(s: Shipment): string {
+  return s.stops.map(stop => locationDisplay(stop.locationId)).join(' → ')
+}
 
 /**
  * Walk the chainSource for `(startLocId, ticker)` upstream until we hit a

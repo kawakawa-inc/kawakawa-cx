@@ -474,68 +474,141 @@ export interface UpdateLocationDemandClaimRequest {
 /** Lifecycle status of a planned shipment. */
 export type ShipmentStatus = 'planned' | 'dispatched' | 'delivered' | 'cancelled'
 
-/** One material line in a shipment's manifest. */
+/**
+ * One stop on a trip. The ship arrives at `locationId` at `plannedArriveAt`
+ * and may drop or pick up cargo there. The first stop (sequence 0) is the
+ * trip's origin — its plannedArriveAt is also the load/dispatch time. Stops
+ * are returned ordered by sequence.
+ */
+export interface ShipmentStop {
+  id: number
+  sequence: number
+  locationId: string
+  plannedArriveAt: string
+  notes: string | null
+}
+
+/**
+ * A cargo segment: `amount` units of `commodityTicker` are loaded at
+ * `originStopId` and delivered to `destinationStopId`. The two stops belong
+ * to the same shipment, with origin's sequence strictly less than
+ * destination's. Lines with `flowId` fulfill a flow's per-cadence quota;
+ * `flowId = null` is ad-hoc.
+ */
 export interface ShipmentLine {
   id: number
-  /** Set when this line fulfills a recurring flow's per-cadence quota. Null for ad-hoc lines. */
+  originStopId: number
+  destinationStopId: number
   flowId: number | null
   commodityTicker: string
   amount: number
 }
 
 /**
- * A planned ship trip from one location to another, carrying one-or-more
- * material lines. Created manually in Stage B; auto-generated in Stage C;
- * matched to FIO flights in Stage D.
+ * A planned ship trip — an ordered list of stops and a manifest of cargo
+ * segments between those stops. Single-stop trips are not allowed (a trip
+ * must have ≥ 2 stops).
  */
 export interface Shipment {
   id: number
-  fromLocationId: string
-  toLocationId: string
   /** Optional ship assignment (DB id of a fio_user_ships row). */
   shipDbId: number | null
-  /** When the ship loads at the source. ISO string. */
-  plannedLoadAt: string
-  /** When the shipment is expected to arrive at the destination. ISO string. */
-  plannedArrivalAt: string
   status: ShipmentStatus
   /** Stamped by the server when status → 'dispatched'. */
   actualDispatchAt: string | null
   /** Stamped by the server when status → 'delivered'. */
   actualArrivalAt: string | null
   notes: string | null
+  /** Ordered by sequence ascending. Always ≥ 2 entries. */
+  stops: ShipmentStop[]
   lines: ShipmentLine[]
   createdAt: string
   updatedAt: string
 }
 
+/**
+ * Input for one stop when creating or replacing a shipment's structure.
+ * Stops are passed as an ordered array; the request's array index becomes
+ * the stop's sequence on the server. Lines reference stops by index into
+ * this same array.
+ */
+export interface ShipmentStopInput {
+  locationId: string
+  plannedArriveAt: string
+  notes?: string | null
+}
+
+/**
+ * Input for one manifest line. `originStopIndex` and `destinationStopIndex`
+ * point into the request's `stops` array. Both must be valid indices and
+ * `originStopIndex < destinationStopIndex`.
+ */
 export interface ShipmentLineInput {
+  originStopIndex: number
+  destinationStopIndex: number
   flowId?: number | null
   commodityTicker: string
   amount: number
 }
 
 export interface CreateShipmentRequest {
-  fromLocationId: string
-  toLocationId: string
   shipDbId?: number | null
-  plannedLoadAt: string
-  plannedArrivalAt: string
-  notes?: string
+  notes?: string | null
+  /** ≥ 2 entries, ordered by intended sequence. */
+  stops: ShipmentStopInput[]
+  /** ≥ 1 entry. Indices reference `stops`. */
   lines: ShipmentLineInput[]
 }
 
+/**
+ * All structural updates (stops + lines) are atomic — when either is
+ * provided, the other must be too, since lines reference stops by index.
+ * Non-structural fields (shipDbId, notes) can be updated independently.
+ */
 export interface UpdateShipmentRequest {
   shipDbId?: number | null
-  plannedLoadAt?: string
-  plannedArrivalAt?: string
   notes?: string | null
-  /** When supplied, replaces the entire manifest. */
+  stops?: ShipmentStopInput[]
   lines?: ShipmentLineInput[]
 }
 
 export interface UpdateShipmentStatusRequest {
   status: ShipmentStatus
+}
+
+/**
+ * Repeat (clone) a past shipment. Server clones stops + lines, refreshes
+ * each flow-linked line's amount from the current solver `perShipmentAmount`,
+ * and shifts the stop timestamps forward so the first stop lands at
+ * `firstStopAt` (defaults to "now"). Returns the new draft shipment.
+ */
+export interface RepeatShipmentRequest {
+  /** ISO timestamp for the new trip's first stop. Defaults to now if omitted. */
+  firstStopAt?: string
+}
+
+/**
+ * Ask the server to estimate stop arrival times for a planned route. Tier-1
+ * heuristic: per-jump time × FIO jump count + a small same-system constant,
+ * scaled by cargo-load fraction when a ship is assigned. The first stop's
+ * arrival is taken from `startAt`; subsequent stops are accumulated.
+ */
+export interface SuggestStopTimesRequest {
+  /** ISO timestamp for the first stop. */
+  startAt: string
+  /** Ordered locations the trip will visit. */
+  stops: Array<{ locationId: string }>
+  /** Optional ship — used to compute the load-factor (full ship is slower). */
+  shipDbId?: number | null
+  /** Manifest lines, used to compute per-segment cargo mass. */
+  lines: ShipmentLineInput[]
+}
+
+export interface SuggestStopTimesResponse {
+  /** One entry per stop in the request. `stops[0].plannedArriveAt === startAt`. */
+  stops: Array<{ plannedArriveAt: string }>
+  /** Caveats — unknown jump counts, missing locations, etc. */
+  warnings: string[]
 }
 
 /** Per-ticker breakdown of why a node consumes what it consumes */

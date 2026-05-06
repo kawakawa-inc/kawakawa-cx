@@ -47,15 +47,13 @@
                 {{ s.status }}
               </v-chip>
             </td>
-            <td class="text-caption">
-              <strong>{{ locationDisplay(s.fromLocationId) }}</strong>
-              →
-              <strong>{{ locationDisplay(s.toLocationId) }}</strong>
+            <td class="text-caption route-cell" :title="fullRouteTitle(s)">
+              {{ routeDisplay(s) }}
             </td>
             <td class="text-caption text-medium-emphasis">{{ shipName(s.shipDbId) }}</td>
             <td class="text-caption">
-              Load <strong>{{ dateOnly(s.plannedLoadAt) }}</strong> · arrive
-              <strong>{{ dateOnly(s.plannedArrivalAt) }}</strong>
+              Load <strong>{{ dateOnly(loadAt(s)) }}</strong> · arrive
+              <strong>{{ dateOnly(arriveAt(s)) }}</strong>
             </td>
             <td class="text-caption text-medium-emphasis">
               {{ s.lines.length }} line{{ s.lines.length === 1 ? '' : 's' }}
@@ -103,15 +101,13 @@
                 {{ s.status }}
               </v-chip>
             </td>
-            <td class="text-caption">
-              <strong>{{ locationDisplay(s.fromLocationId) }}</strong>
-              →
-              <strong>{{ locationDisplay(s.toLocationId) }}</strong>
+            <td class="text-caption route-cell" :title="fullRouteTitle(s)">
+              {{ routeDisplay(s) }}
             </td>
             <td class="text-caption text-medium-emphasis">{{ shipName(s.shipDbId) }}</td>
             <td class="text-caption">
-              Load <strong>{{ dateOnly(s.plannedLoadAt) }}</strong> · arrive
-              <strong>{{ dateOnly(s.plannedArrivalAt) }}</strong>
+              Load <strong>{{ dateOnly(loadAt(s)) }}</strong> · arrive
+              <strong>{{ dateOnly(arriveAt(s)) }}</strong>
             </td>
             <td class="text-caption text-medium-emphasis">
               {{ s.lines.length }} line{{ s.lines.length === 1 ? '' : 's' }}
@@ -122,6 +118,15 @@
               </v-btn>
               <v-btn size="x-small" variant="text" color="warning" @click="onCancel(s)">
                 Cancel
+              </v-btn>
+              <v-btn
+                size="x-small"
+                variant="text"
+                color="primary"
+                prepend-icon="mdi-repeat"
+                @click="onRepeat(s)"
+              >
+                Repeat
               </v-btn>
             </td>
           </tr>
@@ -157,20 +162,28 @@
                 {{ s.status }}
               </v-chip>
             </td>
-            <td class="text-caption">
-              <strong>{{ locationDisplay(s.fromLocationId) }}</strong>
-              →
-              <strong>{{ locationDisplay(s.toLocationId) }}</strong>
+            <td class="text-caption route-cell" :title="fullRouteTitle(s)">
+              {{ routeDisplay(s) }}
             </td>
             <td class="text-caption text-medium-emphasis">{{ shipName(s.shipDbId) }}</td>
             <td class="text-caption">
-              Load <strong>{{ dateOnly(s.plannedLoadAt) }}</strong> · arrive
-              <strong>{{ dateOnly(s.plannedArrivalAt) }}</strong>
+              Load <strong>{{ dateOnly(loadAt(s)) }}</strong> · arrive
+              <strong>{{ dateOnly(arriveAt(s)) }}</strong>
             </td>
             <td class="text-caption text-medium-emphasis">
               {{ s.lines.length }} line{{ s.lines.length === 1 ? '' : 's' }}
             </td>
-            <td class="text-end">
+            <td class="text-end" @click.stop>
+              <v-btn
+                size="x-small"
+                variant="flat"
+                color="primary"
+                prepend-icon="mdi-repeat"
+                :loading="repeatingId === s.id"
+                @click="onRepeat(s)"
+              >
+                Repeat
+              </v-btn>
               <v-btn
                 v-if="s.status === 'cancelled'"
                 size="x-small"
@@ -208,6 +221,7 @@ const emit = defineEmits<{
 const userStore = useUserStore()
 const shipments = ref<Shipment[]>([])
 const loading = ref(false)
+const repeatingId = ref<number | null>(null)
 
 const plannedOpen = ref(true)
 const activeOpen = ref(true)
@@ -237,7 +251,7 @@ const grouped = computed(() => {
     else if (s.status === 'dispatched') dispatched.push(s)
     else history.push(s) // delivered + cancelled
   }
-  history.sort((a, b) => b.plannedArrivalAt.localeCompare(a.plannedArrivalAt))
+  history.sort((a, b) => arriveAt(b).localeCompare(arriveAt(a)))
   return { planned, dispatched, history: history.slice(0, 20) }
 })
 
@@ -245,9 +259,32 @@ function locationDisplay(naturalId: string): string {
   return locationService.getLocationDisplay(naturalId, userStore.getLocationDisplayMode())
 }
 
+/** Compact route label: "A → B" for 2 stops, "A → … → Z (n stops)" for more. */
+function routeDisplay(s: Shipment): string {
+  if (s.stops.length === 0) return '—'
+  const first = locationDisplay(s.stops[0].locationId)
+  const last = locationDisplay(s.stops[s.stops.length - 1].locationId)
+  if (s.stops.length === 1) return first
+  if (s.stops.length === 2) return `${first} → ${last}`
+  return `${first} → … → ${last} (${s.stops.length} stops)`
+}
+
+/** Full route, used as a hover title so the user can see all stops. */
+function fullRouteTitle(s: Shipment): string {
+  return s.stops.map(stop => locationDisplay(stop.locationId)).join(' → ')
+}
+
+function loadAt(s: Shipment): string {
+  return s.stops[0]?.plannedArriveAt ?? ''
+}
+
+function arriveAt(s: Shipment): string {
+  return s.stops[s.stops.length - 1]?.plannedArriveAt ?? ''
+}
+
 const shipById = computed(() => {
   const map = new Map<number, UserShip>()
-  for (const s of props.ships) map.set(s.id, s)
+  for (const ship of props.ships) map.set(ship.id, ship)
   return map
 })
 
@@ -263,6 +300,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 })
 
 function dateOnly(iso: string): string {
+  if (!iso) return '—'
   return dateFormatter.format(new Date(iso))
 }
 
@@ -286,7 +324,7 @@ function onEdit(shipment: Shipment) {
 }
 
 async function onCancel(shipment: Shipment) {
-  if (!confirm(`Cancel shipment to ${locationDisplay(shipment.toLocationId)}?`)) return
+  if (!confirm(`Cancel this shipment?`)) return
   try {
     await api.logistics.setShipmentStatus(shipment.id, 'cancelled')
     await load()
@@ -310,11 +348,7 @@ async function onDelete(shipment: Shipment) {
 }
 
 async function onDispatch(shipment: Shipment) {
-  if (
-    !confirm(
-      `Mark shipment to ${locationDisplay(shipment.toLocationId)} as dispatched? actualDispatchAt will be stamped to now.`
-    )
-  ) {
+  if (!confirm('Mark this shipment as dispatched? actualDispatchAt will be stamped to now.')) {
     return
   }
   try {
@@ -328,11 +362,7 @@ async function onDispatch(shipment: Shipment) {
 }
 
 async function onDeliver(shipment: Shipment) {
-  if (
-    !confirm(
-      `Mark shipment to ${locationDisplay(shipment.toLocationId)} as delivered? actualArrivalAt will be stamped to now.`
-    )
-  ) {
+  if (!confirm('Mark this shipment as delivered? actualArrivalAt will be stamped to now.')) {
     return
   }
   try {
@@ -342,6 +372,27 @@ async function onDeliver(shipment: Shipment) {
   } catch (e) {
     console.error('Failed to deliver', e)
     window.alert(e instanceof Error ? e.message : 'Failed to deliver shipment')
+  }
+}
+
+/**
+ * Clone the trip as a new draft. Server refreshes flow-linked line amounts
+ * from the current solver and shifts stop times forward to start "now". The
+ * new draft lands in Planned for review, where the user can adjust.
+ */
+async function onRepeat(shipment: Shipment) {
+  repeatingId.value = shipment.id
+  try {
+    const next = await api.logistics.repeatShipment(shipment.id, {})
+    await load()
+    emit('changed')
+    // Open the new draft for review.
+    emit('edit', next)
+  } catch (e) {
+    console.error('Failed to repeat', e)
+    window.alert(e instanceof Error ? e.message : 'Failed to repeat shipment')
+  } finally {
+    repeatingId.value = null
   }
 }
 </script>
@@ -366,6 +417,13 @@ async function onDeliver(shipment: Shipment) {
 
 .shipment-row.clickable:hover {
   background: rgba(255, 255, 255, 0.04);
+}
+
+.route-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
 }
 
 /* Stripe alternating rows for readability. Cell-level !important is needed

@@ -71,6 +71,9 @@ import type {
   ShipmentStatus,
   CreateShipmentRequest,
   UpdateShipmentRequest,
+  RepeatShipmentRequest,
+  SuggestStopTimesRequest,
+  SuggestStopTimesResponse,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -5178,6 +5181,34 @@ const realApi = {
     return response.json()
   },
 
+  repeatShipment: async (id: number, body: RepeatShipmentRequest): Promise<Shipment> => {
+    const response = await fetchWithLogging(`/api/logistics/shipments/${id}/repeat`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to repeat shipment')
+    }
+    return response.json()
+  },
+
+  suggestStopTimes: async (body: SuggestStopTimesRequest): Promise<SuggestStopTimesResponse> => {
+    const response = await fetchWithLogging('/api/logistics/shipments/suggest-times', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to suggest stop times')
+    }
+    return response.json()
+  },
+
   getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
     const response = await fetchWithLogging('/api/supply-planning/planets', {
       method: 'GET',
@@ -5618,6 +5649,9 @@ export const api = {
     setShipmentStatus: (id: number, status: ShipmentStatus) =>
       realApi.setShipmentStatus(id, status),
     deleteShipment: (id: number) => realApi.deleteShipment(id),
+    repeatShipment: (id: number, body: RepeatShipmentRequest = {}) =>
+      realApi.repeatShipment(id, body),
+    suggestStopTimes: (body: SuggestStopTimesRequest) => realApi.suggestStopTimes(body),
   },
 }
 

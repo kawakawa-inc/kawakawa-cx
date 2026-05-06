@@ -776,11 +776,14 @@ export const locationDemandClaims = pgTable(
   })
 )
 
-// ==================== SHIPMENTS (planned units of work) ====================
-// A shipment is a planned ship trip from one location to another, carrying
-// one-or-more lines. Lines reference a logistics_flow when the user is filling
-// the flow's per-cadence quota; ad-hoc lines (flowId = null) are one-off
-// material deliveries that don't have a recurring flow.
+// ==================== SHIPMENTS (planned ship trips) ====================
+// A shipment is one ship's planned trip — an ordered sequence of stops
+// (`shipment_stops`) and a manifest of cargo segments (`shipment_lines`).
+// Each line is loaded at one stop and dropped at a later stop on the same
+// trip, so multi-stop runs (drop H2O at A and B) and pickup-and-deliver
+// runs (drop X at A, pick up Y at A, deliver Y at B) both fall out of the
+// same model. Lines with `flowId` fulfill a recurring flow's per-cadence
+// quota; ad-hoc lines (`flowId = null`) are one-offs.
 export const shipments = pgTable(
   'shipments',
   {
@@ -788,13 +791,9 @@ export const shipments = pgTable(
     userId: integer('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    fromLocationId: varchar('from_location_id', { length: 20 }).notNull(),
-    toLocationId: varchar('to_location_id', { length: 20 }).notNull(),
-    // Optional ship assignment. Stage C will auto-assign; for now the user
-    // picks from their fleet or leaves blank.
+    // Optional ship assignment. The user picks from their fleet or leaves
+    // blank; auto-assignment is a future stage.
     shipDbId: integer('ship_db_id'),
-    plannedLoadAt: timestamp('planned_load_at').notNull(),
-    plannedArrivalAt: timestamp('planned_arrival_at').notNull(),
     status: logisticsShipmentStatusEnum('status').notNull().default('planned'),
     actualDispatchAt: timestamp('actual_dispatch_at'),
     actualArrivalAt: timestamp('actual_arrival_at'),
@@ -804,17 +803,7 @@ export const shipments = pgTable(
   },
   table => ({
     userIdx: index('shipments_user_idx').on(table.userId),
-    activeIdx: index('shipments_active_idx').on(table.userId, table.status, table.plannedArrivalAt),
-    fromLocationFk: foreignKey({
-      name: 'shipments_from_location_fk',
-      columns: [table.fromLocationId],
-      foreignColumns: [fioLocations.naturalId],
-    }),
-    toLocationFk: foreignKey({
-      name: 'shipments_to_location_fk',
-      columns: [table.toLocationId],
-      foreignColumns: [fioLocations.naturalId],
-    }),
+    statusIdx: index('shipments_status_idx').on(table.userId, table.status),
     shipFk: foreignKey({
       name: 'shipments_ship_fk',
       columns: [table.shipDbId],
@@ -823,6 +812,36 @@ export const shipments = pgTable(
   })
 )
 
+// Ordered stops on a trip. `sequence` is 0-indexed, monotonically increasing.
+// `plannedArriveAt` on the FIRST stop is also the trip's "load by / dispatch"
+// time — when the ship is at the origin loading initial cargo.
+export const shipmentStops = pgTable(
+  'shipment_stops',
+  {
+    id: serial('id').primaryKey(),
+    shipmentId: integer('shipment_id')
+      .notNull()
+      .references(() => shipments.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    plannedArriveAt: timestamp('planned_arrive_at').notNull(),
+    notes: text('notes'),
+  },
+  table => ({
+    shipmentIdx: index('shipment_stops_shipment_idx').on(table.shipmentId),
+    seqUniq: uniqueIndex('shipment_stops_seq_uniq').on(table.shipmentId, table.sequence),
+    locationFk: foreignKey({
+      name: 'shipment_stops_location_fk',
+      columns: [table.locationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// Cargo segment: a quantity of `commodityTicker` loaded at `originStopId` and
+// dropped at `destinationStopId`. Both stops must belong to the same shipment;
+// `originStopId.sequence < destinationStopId.sequence`. `shipmentId` is kept
+// for query convenience (one-join to fetch a trip's manifest).
 export const shipmentLines = pgTable(
   'shipment_lines',
   {
@@ -830,7 +849,12 @@ export const shipmentLines = pgTable(
     shipmentId: integer('shipment_id')
       .notNull()
       .references(() => shipments.id, { onDelete: 'cascade' }),
-    // Null for ad-hoc lines (one-off materials not tied to a recurring flow).
+    originStopId: integer('origin_stop_id')
+      .notNull()
+      .references(() => shipmentStops.id, { onDelete: 'cascade' }),
+    destinationStopId: integer('destination_stop_id')
+      .notNull()
+      .references(() => shipmentStops.id, { onDelete: 'cascade' }),
     flowId: integer('flow_id'),
     commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
     amount: integer('amount').notNull(),
@@ -838,6 +862,8 @@ export const shipmentLines = pgTable(
   },
   table => ({
     shipmentIdx: index('shipment_lines_shipment_idx').on(table.shipmentId),
+    originStopIdx: index('shipment_lines_origin_stop_idx').on(table.originStopId),
+    destStopIdx: index('shipment_lines_dest_stop_idx').on(table.destinationStopId),
     flowIdx: index('shipment_lines_flow_idx').on(table.flowId),
     commodityFk: foreignKey({
       name: 'shipment_lines_commodity_fk',

@@ -18,6 +18,7 @@ import {
   fioInventory,
   fioLocations,
   shipments,
+  shipmentStops,
   shipmentLines,
 } from '@kawakawa/db'
 import { eq, and, inArray } from 'drizzle-orm'
@@ -481,15 +482,18 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
 
   // ---- Load active shipments to anchor per-flow nextArrivalAt ----
   // A shipment is "active" while it's planned or dispatched; once delivered
-  // or cancelled it falls out of the projection. Joining lines with their
-  // parent shipment lets us project the soonest planned arrival per flow.
+  // or cancelled it falls out of the projection. Each line is delivered at
+  // its destination_stop, so we join lines → destination stop to get the
+  // line-specific arrival time (multi-stop trips drop different cargo at
+  // different times).
   const shipmentRows = await db
     .select({
       flowId: shipmentLines.flowId,
-      plannedArrivalAt: shipments.plannedArrivalAt,
+      plannedArrivalAt: shipmentStops.plannedArriveAt,
     })
     .from(shipmentLines)
     .innerJoin(shipments, eq(shipmentLines.shipmentId, shipments.id))
+    .innerJoin(shipmentStops, eq(shipmentLines.destinationStopId, shipmentStops.id))
     .where(and(eq(shipments.userId, userId), inArray(shipments.status, ['planned', 'dispatched'])))
 
   const soonestArrivalByFlowId = new Map<number, number>()
@@ -509,16 +513,18 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   // already cover an upcoming repair. The per-edge cadence math subtracts
   // these from the repair contribution so a single planned shipment carrying
   // 10 FLP doesn't get re-projected onto every subsequent shipment for the
-  // same building/cycle.
+  // same building/cycle. The line's destination location/time comes from its
+  // destination_stop.
   const coverRows = await db
     .select({
-      toLocationId: shipments.toLocationId,
-      plannedArrivalAt: shipments.plannedArrivalAt,
+      toLocationId: shipmentStops.locationId,
+      plannedArrivalAt: shipmentStops.plannedArriveAt,
       commodityTicker: shipmentLines.commodityTicker,
       amount: shipmentLines.amount,
     })
     .from(shipmentLines)
     .innerJoin(shipments, eq(shipmentLines.shipmentId, shipments.id))
+    .innerJoin(shipmentStops, eq(shipmentLines.destinationStopId, shipmentStops.id))
     .where(
       and(
         eq(shipments.userId, userId),
@@ -526,10 +532,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
       )
     )
 
-  const coverByLocTicker = new Map<
-    string,
-    Array<{ plannedArrivalMs: number; amount: number }>
-  >()
+  const coverByLocTicker = new Map<string, Array<{ plannedArrivalMs: number; amount: number }>>()
   for (const row of coverRows) {
     const key = `${row.toLocationId}|${row.commodityTicker}`
     const list = coverByLocTicker.get(key) ?? []
@@ -781,10 +784,7 @@ export function applyTimingFields(
     if (totalRepairNeed > 0) {
       const covers = coverByLocTicker.get(`${edge.toLocationId}|${edge.commodityTicker}`) ?? []
       for (const c of covers) {
-        if (
-          c.plannedArrivalMs >= earliestCycleStartMs &&
-          c.plannedArrivalMs <= latestCycleEndMs
-        ) {
+        if (c.plannedArrivalMs >= earliestCycleStartMs && c.plannedArrivalMs <= latestCycleEndMs) {
           totalCovered += c.amount
         }
       }

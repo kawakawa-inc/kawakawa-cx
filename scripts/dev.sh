@@ -71,7 +71,18 @@ read_pid() {
     local pid
     pid=$(cat "$pidfile")
     if kill -0 "$pid" 2>/dev/null; then
-      echo "$pid"
+      # `kill -0` succeeds on zombies too — they have a PID but are already
+      # dead, just unreaped. Treat them as not running so we don't waste the
+      # 5s wait + SIGKILL (both no-ops on a zombie). A real init as PID 1
+      # would reap them; without one, they linger until the container exits.
+      local state
+      state=$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ')
+      if [[ "$state" == Z* ]]; then
+        rm -f "$pidfile"
+        echo ""
+      else
+        echo "$pid"
+      fi
     else
       # Stale PID file
       rm -f "$pidfile"

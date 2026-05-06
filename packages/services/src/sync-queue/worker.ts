@@ -17,6 +17,7 @@ const RETRY_BASE_MS = 10_000 // base * 2^(attempts-1): 10s, 20s, 40s
 
 let running = false
 let wakeUpResolver: (() => void) | null = null
+let loopPromise: Promise<void> | null = null
 
 /** Poke the worker so it picks up a new job immediately. */
 export function wakeWorker(): void {
@@ -26,9 +27,15 @@ export function wakeWorker(): void {
   }
 }
 
-export function stopWorker(): void {
+/**
+ * Stop the worker. Returns a promise that resolves once the loop has fully
+ * exited — immediately if the queue is idle, or after the in-flight job
+ * completes if one is running.
+ */
+export function stopWorker(): Promise<void> {
   running = false
   wakeWorker()
+  return loopPromise ?? Promise.resolve()
 }
 
 /** Start the worker loop. Call once on API boot. */
@@ -39,7 +46,7 @@ export function startWorker(): void {
   }
   running = true
   log.info('Sync queue worker started')
-  void loop()
+  loopPromise = loop()
 }
 
 async function loop(): Promise<void> {

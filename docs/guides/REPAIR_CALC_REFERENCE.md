@@ -190,12 +190,19 @@ When NOT repairing, use `DurationMs` as-is for current efficiency.
 Use `RepairMaterials` directly from the `/sites/` endpoint. These are exact
 game values — no calculation needed.
 
-### Approach for "Repair in N Days"
+### Approach for "Repair on an N-Day Cycle"
 
-1. Get `BuildingLastRepair` (or `BuildingCreated` if null) timestamp
-2. Calculate current days since repair: `(now - reference) / 86400000`
-3. Add target days: `days_at_repair = days_since + N`
-4. For each material: `repair = construction_cost - floor(construction_cost * (180 - min(days_at_repair, 180)) / 180)`
+For ongoing-maintenance planning we use `N` as the **cycle length**, not a
+delay added to the building's current age. The building's actual `BuildingCreated`
+/ `BuildingLastRepair` is irrelevant once `N > 0` — we want the recurring cost
+of one repair every N days, assuming the building is kept current.
+
+1. For each material: `construction_cost = RepairMaterials[m] + ReclaimableMaterials[m]`
+2. `repair = construction_cost - floor(construction_cost * (180 - min(N, 180)) / 180)`
+
+(If you need the cost to repair *right now* — including catching up an
+overdue building — pass `N=0` and use `RepairMaterials` directly, which is
+what FIO returns for the building's current state.)
 
 ### Workforce Burn
 

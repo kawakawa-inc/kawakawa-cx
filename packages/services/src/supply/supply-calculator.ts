@@ -12,7 +12,6 @@ import type {
   MaterialNeed,
 } from '@kawakawa/types'
 
-const MS_PER_DAY = 86_400_000
 const MS_PER_HOUR = 3_600_000
 
 // Condition formula constants
@@ -60,17 +59,20 @@ export function calculateRepairCost(
  * Calculate repair needs for a single building.
  *
  * - repairDays = 0: use RepairMaterials directly (exact game values)
- * - repairDays > 0: project future repair cost using the formula
+ * - repairDays > 0: cost of one repair on a `repairDays`-day cycle, i.e. the
+ *   repair cost at D = repairDays starting from a freshly-repaired building.
+ *   The building's actual current age is intentionally ignored — this is for
+ *   ongoing-maintenance planning, not for catching up an overdue building.
  *
  * @param building - Building data from database
- * @param repairDays - Days in the future to project (0 = repair now)
- * @param now - Current time (for calculating days since repair)
+ * @param repairDays - Repair cycle length in days (0 = repair now)
+ * @param _now - Currently unused; kept for API compatibility
  * @returns Array of material needs for this building's repair
  */
 export function calculateBuildingRepairNeeds(
   building: BuildingData,
   repairDays: number,
-  now: Date
+  _now: Date
 ): { ticker: string; amount: number }[] {
   if (repairDays === 0) {
     // Use exact game values
@@ -78,11 +80,6 @@ export function calculateBuildingRepairNeeds(
       .filter(m => m.amount > 0)
       .map(m => ({ ticker: m.ticker, amount: m.amount }))
   }
-
-  // Project future repair cost
-  const referenceDate = building.buildingLastRepair ?? building.buildingCreated
-  const daysSinceRepair = (now.getTime() - referenceDate.getTime()) / MS_PER_DAY
-  const daysAtRepair = daysSinceRepair + repairDays
 
   // Build construction cost map: repair + reclaimable per material
   const constructionCosts = new Map<string, number>()
@@ -95,7 +92,7 @@ export function calculateBuildingRepairNeeds(
 
   const needs: { ticker: string; amount: number }[] = []
   for (const [ticker, cost] of constructionCosts) {
-    const { repairCost } = calculateRepairCost(cost, daysAtRepair)
+    const { repairCost } = calculateRepairCost(cost, repairDays)
     if (repairCost > 0) {
       needs.push({ ticker, amount: repairCost })
     }

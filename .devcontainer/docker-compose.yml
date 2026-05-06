@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
+    init: true
     volumes:
       - ..:/workspace:rw
       - node-home:/home/node:rw

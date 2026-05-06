@@ -189,18 +189,36 @@ describe('calculateBuildingRepairNeeds', () => {
     ])
   })
 
-  it('should project future repair cost when repairDays > 0', () => {
-    // Building repaired on March 1, now is April 1 = 31 days since repair
-    // repairDays = 30 means repair at day 61
+  it('should project repair cost on a repairDays-day cycle', () => {
+    // repairDays = 30 → cost of one repair on a 30-day cycle.
+    // Building's actual age is irrelevant — this is ongoing-maintenance planning.
     // constructionCost BBH = 2 + 4 = 6
-    // reclaimable = floor(6 * (180 - 61) / 180) = floor(6 * 119 / 180) = floor(3.966) = 3
-    // repairCost = 6 - 3 = 3
+    // reclaimable = floor(6 * (180 - 30) / 180) = floor(6 * 150 / 180) = floor(5) = 5
+    // repairCost = 6 - 5 = 1
     const building = makeBuilding()
     const needs = calculateBuildingRepairNeeds(building, 30, NOW)
 
     const bbh = needs.find(n => n.ticker === 'BBH')
     expect(bbh).toBeDefined()
-    expect(bbh!.amount).toBe(3)
+    expect(bbh!.amount).toBe(1)
+  })
+
+  it('should ignore actual building age when repairDays > 0', () => {
+    // Same construction cost as above, but with very different ages — the
+    // result must be identical because repairDays defines the cycle, not
+    // a delay-from-now.
+    const fresh = makeBuilding({
+      buildingCreated: new Date('2026-03-25T00:00:00Z'),
+      buildingLastRepair: new Date('2026-03-30T00:00:00Z'),
+    })
+    const ancient = makeBuilding({
+      buildingCreated: new Date('2025-01-01T00:00:00Z'),
+      buildingLastRepair: null,
+    })
+
+    expect(calculateBuildingRepairNeeds(fresh, 30, NOW)).toEqual(
+      calculateBuildingRepairNeeds(ancient, 30, NOW)
+    )
   })
 
   it('should use buildingCreated when never repaired', () => {
@@ -216,18 +234,18 @@ describe('calculateBuildingRepairNeeds', () => {
     ])
   })
 
-  it('should use buildingCreated for projection when never repaired', () => {
-    // Created Jan 1, now April 1 = 90 days since creation
-    // repairDays = 10 means repair at day 100
+  it('should ignore buildingCreated for projection when never repaired', () => {
+    // repairDays defines a cycle; the actual age (90 days since creation) is
+    // not used.
     // constructionCost BBH = 2 + 4 = 6
-    // reclaimable = floor(6 * (180 - 100) / 180) = floor(6 * 80 / 180) = floor(2.666) = 2
-    // repairCost = 6 - 2 = 4
+    // reclaimable = floor(6 * (180 - 10) / 180) = floor(5.666) = 5
+    // repairCost = 6 - 5 = 1
     const building = makeBuilding({ buildingLastRepair: null })
     const needs = calculateBuildingRepairNeeds(building, 10, NOW)
 
     const bbh = needs.find(n => n.ticker === 'BBH')
     expect(bbh).toBeDefined()
-    expect(bbh!.amount).toBe(4)
+    expect(bbh!.amount).toBe(1)
   })
 
   it('should filter out materials with 0 amount', () => {

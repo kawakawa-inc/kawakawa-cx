@@ -30,16 +30,16 @@
         <div class="d-flex flex-wrap ga-3 align-center">
           <span class="text-caption text-medium-emphasis">Settings:</span>
           <v-text-field
-            v-model.number="contractLeadDaysInput"
+            v-model.number="tripLeadDaysInput"
             type="number"
             min="0"
-            label="Contract lead time (days)"
-            hint="Days a KAWA contract takes to fulfill"
+            label="Trip lead time (days)"
+            hint="Both look-ahead window and contract-by deadline"
             persistent-hint
             density="compact"
             variant="outlined"
             style="max-width: 240px"
-            @update:model-value="onContractLeadDaysChanged"
+            @update:model-value="onTripLeadDaysChanged"
           />
           <v-text-field
             v-model.number="targetRepairAgeInput"
@@ -115,9 +115,9 @@
               <v-icon start>mdi-clipboard-list</v-icon>
               Inspector
             </v-tab>
-            <v-tab value="shipments">
-              <v-icon start>mdi-package-variant-closed</v-icon>
-              Shipments
+            <v-tab value="trips">
+              <v-icon start>mdi-truck-fast</v-icon>
+              Trips
             </v-tab>
             <v-tab value="graph">
               <v-icon start>mdi-graph-outline</v-icon>
@@ -133,8 +133,9 @@
                 :graph="graph"
                 :ships="ships"
                 @navigate-to-node="onNavigateToNode"
-                @edit-shipment="openEditShipment"
+                @edit-trip="openEditTrip"
                 @send-to-market="handleSendToMarket"
+                @add-shipments-to-trip="openTripWithShipments"
               />
             </v-tabs-window-item>
 
@@ -538,13 +539,13 @@
               </v-card-text>
             </v-tabs-window-item>
 
-            <!-- ==================== Shipments tab ==================== -->
-            <v-tabs-window-item value="shipments">
-              <ShipmentList
-                ref="shipmentListRef"
+            <!-- ==================== Trips tab ==================== -->
+            <v-tabs-window-item value="trips">
+              <TripList
+                ref="tripListRef"
                 :ships="ships"
-                @new="openCreateShipment"
-                @edit="openEditShipment"
+                @new="openCreateTrip"
+                @edit="openEditTrip"
                 @changed="loadGraph"
               />
             </v-tabs-window-item>
@@ -592,13 +593,13 @@
       @saved="handleClaimSaved"
     />
 
-    <ShipmentEditDialog
-      v-model="shipmentDialog.open"
-      :shipment="shipmentDialog.shipment"
+    <TripEditDialog
+      v-model="tripDialog.open"
+      :trip="tripDialog.trip"
+      :preset-shipments="tripDialog.presetShipments"
       :location-items="locationItems"
-      :graph="graph"
       :ships="ships"
-      @saved="handleShipmentSaved"
+      @saved="handleTripSaved"
     />
   </v-container>
 </template>
@@ -618,9 +619,9 @@ import FlowEditDialog from '../components/logistics/FlowEditDialog.vue'
 import BulkFlowDialog from '../components/logistics/BulkFlowDialog.vue'
 import ClaimEditDialog from '../components/logistics/ClaimEditDialog.vue'
 import ShipRosterPanel from '../components/logistics/ShipRosterPanel.vue'
-import ShipmentList from '../components/logistics/ShipmentList.vue'
-import ShipmentEditDialog from '../components/logistics/ShipmentEditDialog.vue'
-import PlanView from '../components/logistics/PlanView.vue'
+import TripList from '../components/logistics/TripList.vue'
+import TripEditDialog from '../components/logistics/TripEditDialog.vue'
+import PlanView, { type ShipmentPreset } from '../components/logistics/PlanView.vue'
 
 // Dynamically imported: the graph map pulls in cytoscape + dagre (~550 kB
 // minified). Users who only use the Inspector tab never pay that cost —
@@ -659,7 +660,7 @@ import type {
   LogisticsFlow,
   LocationDemandClaim,
   ClaimCategory,
-  Shipment,
+  Trip,
   UserShip,
 } from '@kawakawa/types'
 import type { KeyValueItem } from '../components/KeyValueAutocomplete.vue'
@@ -671,16 +672,16 @@ const settingsStore = useSettingsStore()
 
 // Local mirror of the user setting so we can debounce-on-blur without re-rendering
 // every keystroke through the API.
-const contractLeadDaysInput = ref<number>(settingsStore.logisticsContractLeadDays.value ?? 3)
+const tripLeadDaysInput = ref<number>(settingsStore.logisticsTripLeadDays.value ?? 7)
 const targetRepairAgeInput = ref<number>(settingsStore.logisticsTargetRepairAge.value ?? 45)
 
-let contractLeadDaysSaveTimer: ReturnType<typeof setTimeout> | null = null
-function onContractLeadDaysChanged() {
-  if (contractLeadDaysSaveTimer) clearTimeout(contractLeadDaysSaveTimer)
-  contractLeadDaysSaveTimer = setTimeout(async () => {
-    const n = Math.max(0, Math.floor(Number(contractLeadDaysInput.value) || 0))
-    if (n !== settingsStore.logisticsContractLeadDays.value) {
-      settingsStore.logisticsContractLeadDays.value = n
+let tripLeadDaysSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onTripLeadDaysChanged() {
+  if (tripLeadDaysSaveTimer) clearTimeout(tripLeadDaysSaveTimer)
+  tripLeadDaysSaveTimer = setTimeout(async () => {
+    const n = Math.max(0, Math.floor(Number(tripLeadDaysInput.value) || 0))
+    if (n !== settingsStore.logisticsTripLeadDays.value) {
+      settingsStore.logisticsTripLeadDays.value = n
       // Reload the graph so timing fields recompute server-side with the new value.
       await loadGraph()
     }
@@ -703,7 +704,7 @@ const graph = ref<LogisticsGraph | null>(null)
 const loading = ref(false)
 const selectedLocationId = ref<string>('')
 const snackbar = ref({ show: false, color: 'info', message: '' })
-const mainTab = ref<'plan' | 'inspector' | 'shipments' | 'graph'>('plan')
+const mainTab = ref<'plan' | 'inspector' | 'trips' | 'graph'>('plan')
 const planViewRef = ref<InstanceType<typeof PlanView> | null>(null)
 
 function onNavigateToNode(locationId: string) {
@@ -757,14 +758,21 @@ const claimDialog = reactive<{
   claim: null,
   initialLocationId: '',
 })
-const shipmentDialog = reactive<{
+const tripDialog = reactive<{
   open: boolean
-  shipment: Shipment | null
+  trip: Trip | null
+  /**
+   * When non-empty on a fresh-create dialog, these presets are pre-assigned
+   * and stops are auto-seeded at the union of their origins + destinations.
+   * Drafts (predicted shipments) get materialized when the trip itself saves.
+   */
+  presetShipments: ShipmentPreset[]
 }>({
   open: false,
-  shipment: null,
+  trip: null,
+  presetShipments: [],
 })
-const shipmentListRef = ref<InstanceType<typeof ShipmentList> | null>(null)
+const tripListRef = ref<InstanceType<typeof TripList> | null>(null)
 const ships = ref<UserShip[]>([])
 
 async function loadShipsForDialog() {
@@ -840,21 +848,39 @@ async function loadClaims() {
   }
 }
 
-function openCreateShipment() {
-  shipmentDialog.shipment = null
-  shipmentDialog.open = true
+function openCreateTrip() {
+  tripDialog.trip = null
+  tripDialog.presetShipments = []
+  tripDialog.open = true
   // Refresh ships in case the roster changed since the last load.
   void loadShipsForDialog()
 }
 
-function openEditShipment(shipment: Shipment) {
-  shipmentDialog.shipment = shipment
-  shipmentDialog.open = true
+function openEditTrip(trip: Trip) {
+  tripDialog.trip = trip
+  tripDialog.presetShipments = []
+  tripDialog.open = true
   void loadShipsForDialog()
 }
 
-async function handleShipmentSaved() {
-  await Promise.all([shipmentListRef.value?.reload(), planViewRef.value?.reload(), loadGraph()])
+/**
+ * Opens a fresh Trip dialog with these shipments pre-assigned. The dialog
+ * auto-seeds stops at the union of origin and destination locations
+ * (origins first, in input order; destinations after, deduped against
+ * origins) and binds each shipment to its matching pair.
+ */
+function openTripWithShipments(presets: ShipmentPreset[], trip: Trip | null) {
+  // trip !== null → add presets to that planned trip (TripEditDialog is
+  // additive in edit mode); trip === null → open a fresh-create dialog with
+  // these presets pre-assigned.
+  tripDialog.trip = trip
+  tripDialog.presetShipments = [...presets]
+  tripDialog.open = true
+  void loadShipsForDialog()
+}
+
+async function handleTripSaved() {
+  await Promise.all([tripListRef.value?.reload(), planViewRef.value?.reload(), loadGraph()])
 }
 
 async function loadCommodityItems() {
@@ -900,8 +926,8 @@ async function loadGraph() {
     const result = await api.logistics.graph()
     graph.value = result
     // Sync the input controls with whatever the server actually used.
-    if (typeof result.settings?.contractLeadDays === 'number') {
-      contractLeadDaysInput.value = result.settings.contractLeadDays
+    if (typeof result.settings?.tripLeadDays === 'number') {
+      tripLeadDaysInput.value = result.settings.tripLeadDays
     }
     if (typeof result.settings?.repairDays === 'number' && result.settings.repairDays > 0) {
       targetRepairAgeInput.value = result.settings.repairDays
@@ -949,7 +975,7 @@ async function refreshAll() {
     loadClaims(),
     loadGraph(),
     loadShipsForDialog(),
-    shipmentListRef.value?.reload(),
+    tripListRef.value?.reload(),
     planViewRef.value?.reload(),
   ])
 }

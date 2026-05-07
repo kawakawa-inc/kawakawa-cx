@@ -9,5 +9,7 @@ RUN DOCTL_VERSION=$(curl -s https://api.github.com/repos/digitalocean/doctl/rele
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
     && apt-get install -y postgresql-client-18
 
+RUN ln -s /workspace/scripts/dev.sh /usr/local/bin/dev
+
 # Enable corepack and prepare pnpm (requires root)
 RUN corepack enable && corepack prepare pnpm@9.14.2 --activate

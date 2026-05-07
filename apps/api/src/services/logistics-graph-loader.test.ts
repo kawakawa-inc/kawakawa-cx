@@ -75,7 +75,7 @@ function makeGraph(nodes: NodeState[], edges: EdgeState[] = []): LogisticsGraph 
       repairDays: 0,
       conditionMode: 'max',
       stockMode: 'included',
-      contractLeadDays: 3,
+      tripLeadDays: 7,
     },
     nodes,
     edges,

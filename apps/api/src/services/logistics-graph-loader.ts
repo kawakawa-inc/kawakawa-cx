@@ -17,8 +17,9 @@ import {
   fioUserStorage,
   fioInventory,
   fioLocations,
+  trips,
+  tripStops,
   shipments,
-  shipmentStops,
   shipmentLines,
 } from '@kawakawa/db'
 import { eq, and, inArray } from 'drizzle-orm'
@@ -181,8 +182,11 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     ((await userSettingsService.getSetting(userId, 'burnRepair.stockMode')) as
       | 'included'
       | 'ignored') ?? 'included'
+  // "Trip lead time" — single knob driving both the Plan-tab look-ahead and
+  // the contract-by deadline computation. Stored as `logistics.tripLeadDays`,
+  // default 7. (Replaces the older `logistics.contractLeadDays` setting.)
   const contractLeadDays =
-    ((await userSettingsService.getSetting(userId, 'logistics.contractLeadDays')) as number) ?? 3
+    ((await userSettingsService.getSetting(userId, 'logistics.tripLeadDays')) as number) ?? 7
   const settings: SolverSettings = { burnDays, repairDays, conditionMode, stockMode }
 
   // ---- Load flows ----
@@ -480,21 +484,20 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
     getJumpDistance: makeJumpDistance(),
   })
 
-  // ---- Load active shipments to anchor per-flow nextArrivalAt ----
-  // A shipment is "active" while it's planned or dispatched; once delivered
-  // or cancelled it falls out of the projection. Each line is delivered at
-  // its destination_stop, so we join lines → destination stop to get the
-  // line-specific arrival time (multi-stop trips drop different cargo at
-  // different times).
+  // ---- Load shipment lines on active trips to anchor per-flow nextArrivalAt ----
+  // A trip is "active" while it's planned or dispatched. Lines are joined
+  // through their parcel (shipments) → trip → trip_stops via destStopId to
+  // get the line-specific drop-off time.
   const shipmentRows = await db
     .select({
       flowId: shipmentLines.flowId,
-      plannedArrivalAt: shipmentStops.plannedArriveAt,
+      plannedArrivalAt: tripStops.plannedArriveAt,
     })
     .from(shipmentLines)
     .innerJoin(shipments, eq(shipmentLines.shipmentId, shipments.id))
-    .innerJoin(shipmentStops, eq(shipmentLines.destinationStopId, shipmentStops.id))
-    .where(and(eq(shipments.userId, userId), inArray(shipments.status, ['planned', 'dispatched'])))
+    .innerJoin(trips, eq(shipments.tripId, trips.id))
+    .innerJoin(tripStops, eq(shipments.destStopId, tripStops.id))
+    .where(and(eq(trips.userId, userId), inArray(trips.status, ['planned', 'dispatched'])))
 
   const soonestArrivalByFlowId = new Map<number, number>()
   const nowMsLocal = now.getTime()
@@ -512,24 +515,21 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   // Per (toLocation, ticker), every active+delivered shipment line that could
   // already cover an upcoming repair. The per-edge cadence math subtracts
   // these from the repair contribution so a single planned shipment carrying
-  // 10 FLP doesn't get re-projected onto every subsequent shipment for the
-  // same building/cycle. The line's destination location/time comes from its
-  // destination_stop.
+  // 10 FLP doesn't get re-projected onto every subsequent shipment. The
+  // line's destination location/time comes from its parcel's destStop.
   const coverRows = await db
     .select({
-      toLocationId: shipmentStops.locationId,
-      plannedArrivalAt: shipmentStops.plannedArriveAt,
+      toLocationId: tripStops.locationId,
+      plannedArrivalAt: tripStops.plannedArriveAt,
       commodityTicker: shipmentLines.commodityTicker,
       amount: shipmentLines.amount,
     })
     .from(shipmentLines)
     .innerJoin(shipments, eq(shipmentLines.shipmentId, shipments.id))
-    .innerJoin(shipmentStops, eq(shipmentLines.destinationStopId, shipmentStops.id))
+    .innerJoin(trips, eq(shipments.tripId, trips.id))
+    .innerJoin(tripStops, eq(shipments.destStopId, tripStops.id))
     .where(
-      and(
-        eq(shipments.userId, userId),
-        inArray(shipments.status, ['planned', 'dispatched', 'delivered'])
-      )
+      and(eq(trips.userId, userId), inArray(trips.status, ['planned', 'dispatched', 'delivered']))
     )
 
   const coverByLocTicker = new Map<string, Array<{ plannedArrivalMs: number; amount: number }>>()
@@ -592,7 +592,7 @@ export async function buildAndSolveGraph(userId: number): Promise<LogisticsGraph
   // Per (loc, ticker): days-of-stock and run-out date based on net daily
   // consumption. Per demand edge: cadence-based next-arrival/load/contract
   // dates, anchored to a planned shipment when one exists for that flow.
-  graph.settings.contractLeadDays = contractLeadDays
+  graph.settings.tripLeadDays = contractLeadDays
   applyTimingFields(
     graph,
     dailyConsumptionByLoc,

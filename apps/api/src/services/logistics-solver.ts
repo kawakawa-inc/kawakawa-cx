@@ -287,8 +287,8 @@ export function solve(input: SolverInput): LogisticsGraph {
       repairDays: settings.repairDays,
       conditionMode: settings.conditionMode,
       stockMode: settings.stockMode,
-      // Loader overwrites this with the user's setting; default to PRUN's 3.
-      contractLeadDays: 3,
+      // Loader overwrites this with the user's setting; default to 7 days.
+      tripLeadDays: 7,
     },
     nodes: nodeStates,
     edges: edgeStates,

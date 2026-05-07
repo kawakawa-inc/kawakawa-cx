@@ -316,14 +316,14 @@ export const SETTING_DEFINITIONS = {
       'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and burnRepair.excludedPlanets (supply page).',
   } satisfies SettingDef<string[], 'string[]'>,
 
-  'logistics.contractLeadDays': {
-    key: 'logistics.contractLeadDays',
+  'logistics.tripLeadDays': {
+    key: 'logistics.tripLeadDays',
     type: 'number',
-    defaultValue: 3,
+    defaultValue: 7,
     category: SETTING_CATEGORIES.BURN_REPAIR,
-    label: 'Contract Lead Days',
+    label: 'Trip Lead Time (days)',
     description:
-      'Lead time (days) you give a KAWA partner when placing a contract. Used to compute "contract by" deadlines per base in the logistics view. PRUN default is 3.',
+      'Single knob: how far in advance trips need to be planned. Drives both the Plan-tab look-ahead window and the contract-by deadline (so an order placed today arrives before the trip ships). Default 7.',
   } satisfies SettingDef<number, 'number'>,
 
   'burnRepair.includeProduction': {

@@ -200,7 +200,7 @@ of one repair every N days, assuming the building is kept current.
 1. For each material: `construction_cost = RepairMaterials[m] + ReclaimableMaterials[m]`
 2. `repair = construction_cost - floor(construction_cost * (180 - min(N, 180)) / 180)`
 
-(If you need the cost to repair *right now* — including catching up an
+(If you need the cost to repair _right now_ — including catching up an
 overdue building — pass `N=0` and use `RepairMaterials` directly, which is
 what FIO returns for the building's current state.)
 

@@ -246,9 +246,12 @@ export const useSettingsStore = () => {
     set: (value: string[]) => updateSetting('logistics.excludedPlanets', value),
   })
 
-  const logisticsContractLeadDays = computed({
-    get: () => (settingsValues.value['logistics.contractLeadDays'] as number) ?? 3,
-    set: (value: number) => updateSetting('logistics.contractLeadDays', value),
+  // Trip Lead Time — single knob driving both the "look-ahead" window on the
+  // Plan tab AND the contract-by deadline (max time from contract → on-ship).
+  // Stored as `logistics.tripLeadDays`; default 7 days.
+  const logisticsTripLeadDays = computed({
+    get: () => (settingsValues.value['logistics.tripLeadDays'] as number) ?? 7,
+    set: (value: number) => updateSetting('logistics.tripLeadDays', value),
   })
 
   // Target repair age — building age (days) the user wants to repair at. Same
@@ -340,7 +343,7 @@ export const useSettingsStore = () => {
 
     // Typed computed properties - Logistics
     logisticsExcludedPlanets,
-    logisticsContractLeadDays,
+    logisticsTripLeadDays,
     logisticsTargetRepairAge,
 
     // Typed computed properties - Discord

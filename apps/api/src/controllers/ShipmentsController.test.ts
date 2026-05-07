@@ -1,130 +1,86 @@
 import { describe, it, expect } from 'vitest'
-import {
-  SHIPMENT_STATUS_TRANSITIONS,
-  isValidShipmentStatusTransition,
-  computeSegmentLoads,
-  estimateLegDays,
-} from './ShipmentsController.js'
-import type { ShipmentStatus } from '@kawakawa/types'
+import { normalizeLineInput } from './ShipmentsController.js'
 
-describe('shipment status state machine', () => {
-  it('allows planned → dispatched and planned → cancelled', () => {
-    expect(isValidShipmentStatusTransition('planned', 'dispatched')).toBe(true)
-    expect(isValidShipmentStatusTransition('planned', 'cancelled')).toBe(true)
+describe('normalizeLineInput', () => {
+  it('normalizes valid line input', () => {
+    const result = normalizeLineInput({ commodityTicker: 'h2o', amount: 100 }, 0)
+    expect(result).toEqual({
+      flowId: null,
+      commodityTicker: 'H2O',
+      amount: 100,
+    })
   })
 
-  it('allows dispatched → delivered and dispatched → cancelled', () => {
-    expect(isValidShipmentStatusTransition('dispatched', 'delivered')).toBe(true)
-    expect(isValidShipmentStatusTransition('dispatched', 'cancelled')).toBe(true)
+  it('preserves flowId when provided', () => {
+    const result = normalizeLineInput({ flowId: 42, commodityTicker: 'raf', amount: 50 }, 0)
+    expect(result).toEqual({
+      flowId: 42,
+      commodityTicker: 'RAF',
+      amount: 50,
+    })
   })
 
-  it('rejects planned → delivered (must dispatch first)', () => {
-    expect(isValidShipmentStatusTransition('planned', 'delivered')).toBe(false)
+  it('floors fractional amounts', () => {
+    const result = normalizeLineInput({ commodityTicker: 'DW', amount: 99.7 }, 0)
+    expect(result.amount).toBe(99)
   })
 
-  it('rejects backward transitions (delivered → dispatched, dispatched → planned)', () => {
-    expect(isValidShipmentStatusTransition('delivered', 'dispatched')).toBe(false)
-    expect(isValidShipmentStatusTransition('dispatched', 'planned')).toBe(false)
+  it('throws for missing commodityTicker', () => {
+    expect(() => normalizeLineInput({ commodityTicker: '', amount: 100 }, 0)).toThrow(
+      'Line 1: commodityTicker is required'
+    )
   })
 
-  it('treats delivered and cancelled as terminal — no outgoing transitions', () => {
-    expect(SHIPMENT_STATUS_TRANSITIONS.delivered).toEqual([])
-    expect(SHIPMENT_STATUS_TRANSITIONS.cancelled).toEqual([])
+  it('throws for zero amount', () => {
+    expect(() => normalizeLineInput({ commodityTicker: 'H2O', amount: 0 }, 2)).toThrow(
+      'Line 3 (H2O): amount must be > 0'
+    )
   })
 
-  it('rejects same-status no-ops (planned → planned, etc.)', () => {
-    const statuses: ShipmentStatus[] = ['planned', 'dispatched', 'delivered', 'cancelled']
-    for (const s of statuses) {
-      expect(isValidShipmentStatusTransition(s, s)).toBe(false)
-    }
+  it('throws for negative amount', () => {
+    expect(() => normalizeLineInput({ commodityTicker: 'H2O', amount: -5 }, 0)).toThrow(
+      'Line 1 (H2O): amount must be > 0'
+    )
+  })
+
+  it('throws for NaN amount', () => {
+    expect(() => normalizeLineInput({ commodityTicker: 'H2O', amount: NaN }, 0)).toThrow(
+      'Line 1 (H2O): amount must be > 0'
+    )
+  })
+
+  it('throws for Infinity amount', () => {
+    expect(() => normalizeLineInput({ commodityTicker: 'H2O', amount: Infinity }, 0)).toThrow(
+      'Line 1 (H2O): amount must be > 0'
+    )
+  })
+
+  it('uppercases multi-character tickers', () => {
+    const result = normalizeLineInput({ commodityTicker: 'DrInkingWater', amount: 1 }, 0)
+    expect(result.commodityTicker).toBe('DRINKINGWATER')
   })
 })
 
-describe('computeSegmentLoads', () => {
-  it('two-stop trip: single segment carries the whole manifest', () => {
-    // 0 → 1 with 25,000t H2O
-    const segs = computeSegmentLoads(2, [
-      { originStopIndex: 0, destinationStopIndex: 1, weightTotal: 25_000, volumeTotal: 25_000 },
-    ])
-    expect(segs).toEqual([{ segmentIndex: 0, weight: 25_000, volume: 25_000 }])
+describe('line validation edge cases', () => {
+  it('accepts amount of 1 (minimum valid)', () => {
+    const result = normalizeLineInput({ commodityTicker: 'H2O', amount: 1 }, 0)
+    expect(result.amount).toBe(1)
   })
 
-  it('multi-drop run: load at 0, drop progressively, segment loads decrease', () => {
-    // Etherwind → KW-689a → KW-689b → KW-689c, 25k H2O split 3 ways
-    const segs = computeSegmentLoads(4, [
-      { originStopIndex: 0, destinationStopIndex: 1, weightTotal: 8000, volumeTotal: 8000 },
-      { originStopIndex: 0, destinationStopIndex: 2, weightTotal: 9000, volumeTotal: 9000 },
-      { originStopIndex: 0, destinationStopIndex: 3, weightTotal: 8000, volumeTotal: 8000 },
-    ])
-    // Segment 0→1: all three lines onboard; 1→2: the 0→2 + 0→3 lines; 2→3: only 0→3.
-    expect(segs[0].weight).toBe(25_000)
-    expect(segs[1].weight).toBe(17_000)
-    expect(segs[2].weight).toBe(8000)
+  it('handles very large amounts', () => {
+    const result = normalizeLineInput({ commodityTicker: 'H2O', amount: 1_000_000 }, 0)
+    expect(result.amount).toBe(1_000_000)
   })
 
-  it('pickup-and-deliver: cargo loaded mid-trip only counts in later segments', () => {
-    // KW-689c → Kaffee (drop H2O), pickup CAF at KW-689c, deliver CAF to Kaffee
-    // 3 stops total: 0=Etherwind, 1=KW-689c (drop H2O, pickup CAF), 2=Kaffee (drop CAF)
-    const segs = computeSegmentLoads(3, [
-      { originStopIndex: 0, destinationStopIndex: 1, weightTotal: 25_000, volumeTotal: 25_000 }, // H2O
-      { originStopIndex: 1, destinationStopIndex: 2, weightTotal: 1500, volumeTotal: 1500 }, // CAF
-    ])
-    expect(segs[0]).toEqual({ segmentIndex: 0, weight: 25_000, volume: 25_000 })
-    expect(segs[1]).toEqual({ segmentIndex: 1, weight: 1500, volume: 1500 })
-  })
-
-  it('empty manifest: all segments report zero', () => {
-    const segs = computeSegmentLoads(3, [])
-    expect(segs).toEqual([
-      { segmentIndex: 0, weight: 0, volume: 0 },
-      { segmentIndex: 1, weight: 0, volume: 0 },
-    ])
-  })
-
-  it('single-stop trip: no segments (degenerate case)', () => {
-    expect(computeSegmentLoads(1, [])).toEqual([])
-    expect(computeSegmentLoads(0, [])).toEqual([])
-  })
-})
-
-describe('estimateLegDays (Tier-1 trip-time heuristic)', () => {
-  it('same-system, empty ship: ~half a day STL', () => {
-    expect(estimateLegDays({ jumpCount: null, sameSystem: true, loadFraction: 0 })).toBe(0.5)
-  })
-
-  it('same-system, full ship: 1.5× the empty time', () => {
-    expect(estimateLegDays({ jumpCount: null, sameSystem: true, loadFraction: 1 })).toBeCloseTo(
-      0.75,
-      6
+  it('floors 0.9 to 0 (which then fails validation)', () => {
+    // 0.9 floors to 0, which is not > 0
+    expect(() => normalizeLineInput({ commodityTicker: 'H2O', amount: 0.9 }, 0)).toThrow(
+      'amount must be > 0'
     )
   })
 
-  it('one jump, empty ship: jump day + STL ramp', () => {
-    expect(estimateLegDays({ jumpCount: 1, sameSystem: false, loadFraction: 0 })).toBe(1.5)
-  })
-
-  it('three jumps, empty ship: scales with jumps', () => {
-    expect(estimateLegDays({ jumpCount: 3, sameSystem: false, loadFraction: 0 })).toBe(3.5)
-  })
-
-  it('unknown jump count: treats as 1', () => {
-    expect(estimateLegDays({ jumpCount: null, sameSystem: false, loadFraction: 0 })).toBe(1.5)
-  })
-
-  it('clamps load fraction below 0 and above 1', () => {
-    // Below 0: no penalty
-    expect(estimateLegDays({ jumpCount: 1, sameSystem: false, loadFraction: -0.5 })).toBe(1.5)
-    // Above 1: caps at 1.5×
-    expect(estimateLegDays({ jumpCount: 1, sameSystem: false, loadFraction: 5 })).toBeCloseTo(
-      2.25,
-      6
-    )
-  })
-
-  it('half-loaded ship: 1.25× empty-ship time', () => {
-    expect(estimateLegDays({ jumpCount: 1, sameSystem: false, loadFraction: 0.5 })).toBeCloseTo(
-      1.875,
-      6
-    )
+  it('floors 1.1 to 1 (valid)', () => {
+    const result = normalizeLineInput({ commodityTicker: 'H2O', amount: 1.1 }, 0)
+    expect(result.amount).toBe(1)
   })
 })

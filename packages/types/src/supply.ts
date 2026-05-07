@@ -471,16 +471,75 @@ export interface UpdateLocationDemandClaimRequest {
   note?: string | null
 }
 
-/** Lifecycle status of a planned shipment. */
-export type ShipmentStatus = 'planned' | 'dispatched' | 'delivered' | 'cancelled'
+/**
+ * "Incoming" inventory delta from a user's pending or recently-fulfilled
+ * BUY invoices, used by the Plan tab to net out contract amounts. Mirrors
+ * the market view's FIO-aware logic: fulfilled reservations stop counting
+ * once FIO has synced after them.
+ */
+export interface ContractCoverageEntry {
+  locationId: string
+  commodityTicker: string
+  incomingQuantity: number
+}
 
 /**
- * One stop on a trip. The ship arrives at `locationId` at `plannedArriveAt`
- * and may drop or pick up cargo there. The first stop (sequence 0) is the
- * trip's origin — its plannedArriveAt is also the load/dispatch time. Stops
- * are returned ordered by sequence.
+ * "I handle this locally" entry — hides a (location, ticker) combo from
+ * contract suggestions on the Plan tab. Used when production isn't reflected
+ * in FIO (e.g., expert juggling). Treated as if the location produced the
+ * ticker for the purposes of the contract walk.
  */
-export interface ShipmentStop {
+export interface SelfSuppliedEntry {
+  id: number
+  locationId: string
+  commodityTicker: string
+  note: string | null
+  createdAt: string
+}
+
+export interface CreateSelfSuppliedRequest {
+  locationId: string
+  commodityTicker: string
+  note?: string | null
+}
+
+/** Lifecycle status of a planned trip. */
+export type TripStatus = 'planned' | 'dispatched' | 'delivered' | 'cancelled'
+
+/**
+ * One material in a shipment's manifest. `flowId` links the line to a
+ * recurring flow; `flowId = null` is an ad-hoc one-off.
+ */
+export interface ShipmentLine {
+  id: number
+  flowId: number | null
+  commodityTicker: string
+  amount: number
+}
+
+/**
+ * A shipment is a parcel: materials moving from `originLocationId` to
+ * `destLocationId`. A shipment in the queue (no `tripId`) hasn't been
+ * bundled onto a ship yet — the Plan tab surfaces it for assignment. Once
+ * assigned, the system links it to the trip's stops via `originStopId` /
+ * `destStopId`.
+ */
+export interface Shipment {
+  id: number
+  /** Null when the shipment is queued (not yet assigned to a trip). */
+  tripId: number | null
+  originLocationId: string
+  destLocationId: string
+  originStopId: number | null
+  destStopId: number | null
+  notes: string | null
+  lines: ShipmentLine[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** One stop on a trip. */
+export interface TripStop {
   id: number
   sequence: number
   locationId: string
@@ -489,101 +548,108 @@ export interface ShipmentStop {
 }
 
 /**
- * A cargo segment: `amount` units of `commodityTicker` are loaded at
- * `originStopId` and delivered to `destinationStopId`. The two stops belong
- * to the same shipment, with origin's sequence strictly less than
- * destination's. Lines with `flowId` fulfill a flow's per-cadence quota;
- * `flowId = null` is ad-hoc.
+ * A trip = one ship's run. Owns the status state machine. `stops` is ordered
+ * by sequence; `shipments` is the set of parcels assigned to this trip.
  */
-export interface ShipmentLine {
+export interface Trip {
   id: number
-  originStopId: number
-  destinationStopId: number
-  flowId: number | null
-  commodityTicker: string
-  amount: number
-}
-
-/**
- * A planned ship trip — an ordered list of stops and a manifest of cargo
- * segments between those stops. Single-stop trips are not allowed (a trip
- * must have ≥ 2 stops).
- */
-export interface Shipment {
-  id: number
-  /** Optional ship assignment (DB id of a fio_user_ships row). */
   shipDbId: number | null
-  status: ShipmentStatus
+  status: TripStatus
   /** Stamped by the server when status → 'dispatched'. */
   actualDispatchAt: string | null
   /** Stamped by the server when status → 'delivered'. */
   actualArrivalAt: string | null
   notes: string | null
-  /** Ordered by sequence ascending. Always ≥ 2 entries. */
-  stops: ShipmentStop[]
-  lines: ShipmentLine[]
+  stops: TripStop[]
+  shipments: Shipment[]
   createdAt: string
   updatedAt: string
 }
 
-/**
- * Input for one stop when creating or replacing a shipment's structure.
- * Stops are passed as an ordered array; the request's array index becomes
- * the stop's sequence on the server. Lines reference stops by index into
- * this same array.
- */
-export interface ShipmentStopInput {
-  locationId: string
-  plannedArriveAt: string
-  notes?: string | null
-}
+// ==================== Shipment requests (parcel CRUD) ====================
 
-/**
- * Input for one manifest line. `originStopIndex` and `destinationStopIndex`
- * point into the request's `stops` array. Both must be valid indices and
- * `originStopIndex < destinationStopIndex`.
- */
 export interface ShipmentLineInput {
-  originStopIndex: number
-  destinationStopIndex: number
   flowId?: number | null
   commodityTicker: string
   amount: number
 }
 
 export interface CreateShipmentRequest {
-  shipDbId?: number | null
+  originLocationId: string
+  destLocationId: string
   notes?: string | null
-  /** ≥ 2 entries, ordered by intended sequence. */
-  stops: ShipmentStopInput[]
-  /** ≥ 1 entry. Indices reference `stops`. */
   lines: ShipmentLineInput[]
 }
 
 /**
- * All structural updates (stops + lines) are atomic — when either is
- * provided, the other must be too, since lines reference stops by index.
- * Non-structural fields (shipDbId, notes) can be updated independently.
+ * Update an existing shipment. When `lines` is provided, the manifest is
+ * fully replaced. Origin/destination can only be edited while the shipment
+ * is queued (no trip assigned).
  */
 export interface UpdateShipmentRequest {
-  shipDbId?: number | null
+  originLocationId?: string
+  destLocationId?: string
   notes?: string | null
-  stops?: ShipmentStopInput[]
   lines?: ShipmentLineInput[]
 }
 
-export interface UpdateShipmentStatusRequest {
-  status: ShipmentStatus
+/**
+ * Repeat a shipment back into the queue with refreshed amounts. Currently
+ * has no parameters; reserved for future shaping (target trip, override
+ * amounts, etc.).
+ */
+export interface RepeatShipmentRequest {
+  /** Optional notes override for the cloned shipment. */
+  notes?: string | null
+}
+
+// ==================== Trip requests ====================
+
+/** Input stop entry; index into the request's `stops` array becomes its sequence. */
+export interface TripStopInput {
+  locationId: string
+  plannedArriveAt: string
+  notes?: string | null
 }
 
 /**
- * Repeat (clone) a past shipment. Server clones stops + lines, refreshes
- * each flow-linked line's amount from the current solver `perShipmentAmount`,
- * and shifts the stop timestamps forward so the first stop lands at
- * `firstStopAt` (defaults to "now"). Returns the new draft shipment.
+ * Per-shipment routing on a trip — origin/dest are indices into the trip's
+ * `stops` array, matching `TripStopInput[]`.
  */
-export interface RepeatShipmentRequest {
-  /** ISO timestamp for the new trip's first stop. Defaults to now if omitted. */
+export interface TripShipmentAssignment {
+  shipmentId: number
+  originStopIndex: number
+  destStopIndex: number
+}
+
+export interface CreateTripRequest {
+  shipDbId?: number | null
+  notes?: string | null
+  /** ≥ 2 entries, in intended visit order. */
+  stops: TripStopInput[]
+  /** Queued shipments to bind to this trip. May be empty for a shell trip. */
+  shipments: TripShipmentAssignment[]
+}
+
+/**
+ * Replace the trip's stops + shipment assignments atomically. Shipments that
+ * were on the trip but aren't in the new `shipments` list are returned to
+ * the queue (trip_id = null).
+ */
+export interface UpdateTripRequest {
+  shipDbId?: number | null
+  notes?: string | null
+  stops?: TripStopInput[]
+  shipments?: TripShipmentAssignment[]
+}
+
+export interface UpdateTripStatusRequest {
+  status: TripStatus
+}
+
+/** Repeat (clone) a trip — clones the trip plus its shipments, with stop times shifted. */
+export interface RepeatTripRequest {
+  /** ISO timestamp for the new trip's first stop. Defaults to now. */
   firstStopAt?: string
 }
 
@@ -600,8 +666,15 @@ export interface SuggestStopTimesRequest {
   stops: Array<{ locationId: string }>
   /** Optional ship — used to compute the load-factor (full ship is slower). */
   shipDbId?: number | null
-  /** Manifest lines, used to compute per-segment cargo mass. */
-  lines: ShipmentLineInput[]
+  /**
+   * Shipments routed against the trip's stops. Used to compute per-segment
+   * cargo mass for the load factor.
+   */
+  shipments: Array<{
+    originStopIndex: number
+    destStopIndex: number
+    lines: Array<{ commodityTicker: string; amount: number }>
+  }>
 }
 
 export interface SuggestStopTimesResponse {
@@ -794,11 +867,12 @@ export interface LogisticsGraph {
     conditionMode: 'actual' | 'max'
     stockMode: 'included' | 'ignored'
     /**
-     * Lead time (days) the user expects to give a KAWA partner when placing
-     * a contract. Used to compute `latestContractAt` per node/ticker.
-     * Default 3 (PRUN default). Stored as a user setting.
+     * Trip lead time in days. Drives both the Plan-tab look-ahead window
+     * AND the contract-by deadline (so an order placed today arrives before
+     * the trip ships). Stored as the user setting `logistics.tripLeadDays`.
+     * Default 7.
      */
-    contractLeadDays: number
+    tripLeadDays: number
   }
   nodes: NodeState[]
   edges: EdgeState[]

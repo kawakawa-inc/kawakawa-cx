@@ -6,8 +6,16 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
     init: true
+    # Map container UID/GID 1000 (the `node` user) back to the host user
+    # under rootless podman. Without this, files created in the container
+    # appear as a subordinate UID on the host, and host-created files appear
+    # as `nobody` inside the container, breaking `pnpm install` on the bind
+    # mount. Docker ignores this key, so it's safe for mixed-runtime users.
+    userns_mode: keep-id:uid=1000,gid=1000
     volumes:
-      - ..:/workspace:rw
+      # `:Z` requests SELinux relabeling — required on Bazzite/Silverblue/any
+      # Fedora-based host with enforcing SELinux. Harmless on non-SELinux hosts.
+      - ..:/workspace:rw,Z
       - node-home:/home/node:rw
     command: sleep infinity
     network_mode: host
@@ -19,7 +27,7 @@ services:
     image: postgres:18-alpine
     restart: unless-stopped
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
     environment:
       - POSTGRES_USER=kawa
       - POSTGRES_PASSWORD=kawa_dev_password

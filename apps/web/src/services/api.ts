@@ -67,8 +67,15 @@ import type {
   BurnRepairShoppingListRequest,
   BurnRepairShoppingListResponse,
   UserShip,
+  Trip,
+  TripStatus,
+  CreateTripRequest,
+  UpdateTripRequest,
+  RepeatTripRequest,
+  SelfSuppliedEntry,
+  CreateSelfSuppliedRequest,
+  ContractCoverageEntry,
   Shipment,
-  ShipmentStatus,
   CreateShipmentRequest,
   UpdateShipmentRequest,
   RepeatShipmentRequest,
@@ -5098,6 +5105,54 @@ const realApi = {
     return response.json()
   },
 
+  // ==================== CONTRACT COVERAGE (buy-invoice incoming) ====================
+  listContractCoverage: async (): Promise<ContractCoverageEntry[]> => {
+    const response = await fetchWithLogging('/api/logistics/contract-coverage', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      throw new Error(`Failed to list contract coverage: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  // ==================== SELF-SUPPLIED (hide-from-contracts) ====================
+  listSelfSupplied: async (): Promise<SelfSuppliedEntry[]> => {
+    const response = await fetchWithLogging('/api/logistics/self-supplied', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list self-supplied: ${response.statusText}`)
+    return response.json()
+  },
+
+  createSelfSupplied: async (body: CreateSelfSuppliedRequest): Promise<SelfSuppliedEntry> => {
+    const response = await fetchWithLogging('/api/logistics/self-supplied', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to mark self-supplied')
+    }
+    return response.json()
+  },
+
+  deleteSelfSupplied: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/self-supplied/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to remove self-supplied: ${response.statusText}`)
+    return response.json()
+  },
+
   listShips: async (): Promise<UserShip[]> => {
     const response = await fetchWithLogging('/api/ships', {
       method: 'GET',
@@ -5108,9 +5163,111 @@ const realApi = {
     return response.json()
   },
 
-  // ==================== SHIPMENTS ====================
-  listShipments: async (): Promise<Shipment[]> => {
-    const response = await fetchWithLogging('/api/logistics/shipments', {
+  // ==================== TRIPS (the ship's run) ====================
+  listTrips: async (): Promise<Trip[]> => {
+    const response = await fetchWithLogging('/api/logistics/trips', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to list trips: ${response.statusText}`)
+    return response.json()
+  },
+
+  getTrip: async (id: number): Promise<Trip> => {
+    const response = await fetchWithLogging(`/api/logistics/trips/${id}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to get trip: ${response.statusText}`)
+    return response.json()
+  },
+
+  createTrip: async (body: CreateTripRequest): Promise<Trip> => {
+    const response = await fetchWithLogging('/api/logistics/trips', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create trip')
+    }
+    return response.json()
+  },
+
+  updateTrip: async (id: number, body: UpdateTripRequest): Promise<Trip> => {
+    const response = await fetchWithLogging(`/api/logistics/trips/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update trip')
+    }
+    return response.json()
+  },
+
+  setTripStatus: async (id: number, status: TripStatus): Promise<Trip> => {
+    const response = await fetchWithLogging(`/api/logistics/trips/${id}/status`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ status }),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update trip status')
+    }
+    return response.json()
+  },
+
+  deleteTrip: async (id: number): Promise<{ success: boolean }> => {
+    const response = await fetchWithLogging(`/api/logistics/trips/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) throw new Error(`Failed to delete trip: ${response.statusText}`)
+    return response.json()
+  },
+
+  repeatTrip: async (id: number, body: RepeatTripRequest): Promise<Trip> => {
+    const response = await fetchWithLogging(`/api/logistics/trips/${id}/repeat`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to repeat trip')
+    }
+    return response.json()
+  },
+
+  suggestStopTimes: async (body: SuggestStopTimesRequest): Promise<SuggestStopTimesResponse> => {
+    const response = await fetchWithLogging('/api/logistics/trips/suggest-times', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    })
+    handleRefreshedToken(response)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to suggest stop times')
+    }
+    return response.json()
+  },
+
+  // ==================== SHIPMENTS (parcels — queued + assigned) ====================
+  listShipments: async (queued?: boolean): Promise<Shipment[]> => {
+    const url = queued ? '/api/logistics/shipments?queued=true' : '/api/logistics/shipments'
+    const response = await fetchWithLogging(url, {
       method: 'GET',
       headers: getAuthHeaders(),
     })
@@ -5157,20 +5314,6 @@ const realApi = {
     return response.json()
   },
 
-  setShipmentStatus: async (id: number, status: ShipmentStatus): Promise<Shipment> => {
-    const response = await fetchWithLogging(`/api/logistics/shipments/${id}/status`, {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ status }),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to update shipment status')
-    }
-    return response.json()
-  },
-
   deleteShipment: async (id: number): Promise<{ success: boolean }> => {
     const response = await fetchWithLogging(`/api/logistics/shipments/${id}`, {
       method: 'DELETE',
@@ -5191,20 +5334,6 @@ const realApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to repeat shipment')
-    }
-    return response.json()
-  },
-
-  suggestStopTimes: async (body: SuggestStopTimesRequest): Promise<SuggestStopTimesResponse> => {
-    const response = await fetchWithLogging('/api/logistics/shipments/suggest-times', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to suggest stop times')
     }
     return response.json()
   },
@@ -5641,17 +5770,35 @@ export const api = {
     updateClaim: (id: number, body: UpdateLocationDemandClaimRequest) =>
       realApi.updateLogisticsClaim(id, body),
     deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
+
+    // Contract coverage (buy-invoice incoming offsets)
+    listContractCoverage: () => realApi.listContractCoverage(),
+
+    // Self-supplied (hide-from-contracts)
+    listSelfSupplied: () => realApi.listSelfSupplied(),
+    createSelfSupplied: (body: CreateSelfSuppliedRequest) => realApi.createSelfSupplied(body),
+    deleteSelfSupplied: (id: number) => realApi.deleteSelfSupplied(id),
+
     listShips: () => realApi.listShips(),
-    listShipments: () => realApi.listShipments(),
+
+    // Trips (the ship's run — owns status, stops, assigned shipments)
+    listTrips: () => realApi.listTrips(),
+    getTrip: (id: number) => realApi.getTrip(id),
+    createTrip: (body: CreateTripRequest) => realApi.createTrip(body),
+    updateTrip: (id: number, body: UpdateTripRequest) => realApi.updateTrip(id, body),
+    setTripStatus: (id: number, status: TripStatus) => realApi.setTripStatus(id, status),
+    deleteTrip: (id: number) => realApi.deleteTrip(id),
+    repeatTrip: (id: number, body: RepeatTripRequest = {}) => realApi.repeatTrip(id, body),
+    suggestStopTimes: (body: SuggestStopTimesRequest) => realApi.suggestStopTimes(body),
+
+    // Shipments (parcels — queued or assigned to a trip)
+    listShipments: (queued?: boolean) => realApi.listShipments(queued),
     getShipment: (id: number) => realApi.getShipment(id),
     createShipment: (body: CreateShipmentRequest) => realApi.createShipment(body),
     updateShipment: (id: number, body: UpdateShipmentRequest) => realApi.updateShipment(id, body),
-    setShipmentStatus: (id: number, status: ShipmentStatus) =>
-      realApi.setShipmentStatus(id, status),
     deleteShipment: (id: number) => realApi.deleteShipment(id),
     repeatShipment: (id: number, body: RepeatShipmentRequest = {}) =>
       realApi.repeatShipment(id, body),
-    suggestStopTimes: (body: SuggestStopTimesRequest) => realApi.suggestStopTimes(body),
   },
 }
 

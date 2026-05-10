@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "generate": "openapi-typescript-codegen --input ../../../apps/api/src/generated/swagger.json --output ./src --client fetch --useOptions",
+    "generate": "openapi --input ../../apps/api/src/generated/swagger.json --output ./src --client fetch --useOptions",
     "build": "tsc",
     "dev": "tsc --watch"
   },

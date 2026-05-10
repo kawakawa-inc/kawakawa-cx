@@ -5,16 +5,8 @@ import {
   calculateBuildingRepairNeeds,
   calculateWorkforceBurn,
   calculateProductionNeeds,
-  calculatePlanetSupply,
-  calculateSupply,
 } from './supply-calculator.js'
-import type {
-  BuildingData,
-  WorkforceData,
-  ProductionData,
-  PlanetSupplyInput,
-  SupplyCalculationOptions,
-} from '@kawakawa/types'
+import type { BuildingData, WorkforceData, ProductionData } from '@kawakawa/types'
 
 // Fixed "now" for deterministic tests
 const NOW = new Date('2026-04-01T00:00:00Z')
@@ -66,28 +58,6 @@ function makeProduction(overrides: Partial<ProductionData> = {}): ProductionData
         outputs: [{ ticker: 'NA', amount: 2 }],
       },
     ],
-    ...overrides,
-  }
-}
-
-function makePlanet(overrides: Partial<PlanetSupplyInput> = {}): PlanetSupplyInput {
-  return {
-    planetId: 'UV-351a',
-    planetName: 'Katoa',
-    buildings: [makeBuilding()],
-    workforce: [makeWorkforce()],
-    production: [makeProduction()],
-    ...overrides,
-  }
-}
-
-function makeOptions(overrides: Partial<SupplyCalculationOptions> = {}): SupplyCalculationOptions {
-  return {
-    repairDays: 0,
-    burnDays: 7,
-    includeProduction: false,
-    planetOverrides: {},
-    now: NOW,
     ...overrides,
   }
 }
@@ -396,142 +366,5 @@ describe('calculateProductionNeeds', () => {
     const needs = calculateProductionNeeds(production, 7, false)
     const h2o = needs.find(n => n.ticker === 'H2O')
     expect(h2o).toEqual({ ticker: 'H2O', amount: 56 })
-  })
-})
-
-describe('calculatePlanetSupply', () => {
-  const repairableTickers = new Set(['CHP', 'FRM', 'SME'])
-
-  it('should calculate repair and burn needs for a planet', () => {
-    const planet = makePlanet()
-    const options = makeOptions()
-    const result = calculatePlanetSupply(planet, options, repairableTickers)
-
-    expect(result.planetId).toBe('UV-351a')
-    expect(result.buildingCount).toBe(1)
-    expect(result.repairableBuildingCount).toBe(1)
-    expect(result.repairNeeds.length).toBeGreaterThan(0)
-    expect(result.burnNeeds.length).toBeGreaterThan(0)
-    expect(result.productionNeeds).toEqual([])
-    expect(result.options).toEqual({
-      repairDays: 0,
-      burnDays: 7,
-      includeProduction: false,
-    })
-  })
-
-  it('should include production needs when enabled', () => {
-    const planet = makePlanet()
-    const options = makeOptions({ includeProduction: true })
-    const result = calculatePlanetSupply(planet, options, repairableTickers)
-
-    expect(result.productionNeeds.length).toBeGreaterThan(0)
-  })
-
-  it('should skip non-repairable buildings', () => {
-    const planet = makePlanet({
-      buildings: [
-        makeBuilding({ buildingTicker: 'CHP' }), // repairable
-        makeBuilding({ buildingTicker: 'STO' }), // not repairable
-      ],
-    })
-    const result = calculatePlanetSupply(planet, makeOptions(), repairableTickers)
-
-    expect(result.buildingCount).toBe(2)
-    expect(result.repairableBuildingCount).toBe(1)
-  })
-
-  it('should apply per-planet overrides', () => {
-    const planet = makePlanet()
-    const options = makeOptions({
-      burnDays: 7,
-      planetOverrides: {
-        'UV-351a': { burnDays: 30 },
-      },
-    })
-    const result = calculatePlanetSupply(planet, options, repairableTickers)
-
-    expect(result.options.burnDays).toBe(30)
-    // Burn should be higher with 30 days vs 7
-    const rat = result.burnNeeds.find(n => n.ticker === 'RAT')
-    expect(rat).toBeDefined()
-    // ceil(6.0 * 30) = 180
-    expect(rat!.quantity).toBe(180)
-  })
-
-  it('should use global defaults when no per-planet override exists', () => {
-    const planet = makePlanet()
-    const options = makeOptions({
-      burnDays: 14,
-      planetOverrides: {
-        'SOME-OTHER-PLANET': { burnDays: 30 },
-      },
-    })
-    const result = calculatePlanetSupply(planet, options, repairableTickers)
-
-    expect(result.options.burnDays).toBe(14)
-  })
-
-  it('should tag all needs with the planet ID', () => {
-    const planet = makePlanet()
-    const result = calculatePlanetSupply(planet, makeOptions(), repairableTickers)
-
-    for (const need of [...result.repairNeeds, ...result.burnNeeds]) {
-      expect(need.planetId).toBe('UV-351a')
-    }
-  })
-})
-
-describe('calculateSupply', () => {
-  const repairableTickers = new Set(['CHP', 'FRM'])
-
-  it('should aggregate across multiple planets', () => {
-    const planets = [
-      makePlanet({ planetId: 'UV-351a', planetName: 'Katoa' }),
-      makePlanet({ planetId: 'KW-688c', planetName: 'Promitor' }),
-    ]
-    const result = calculateSupply(planets, makeOptions(), repairableTickers)
-
-    expect(result.planets).toHaveLength(2)
-    // Each planet contributes 2 repair materials (BBH, INS) and 2 burn materials (RAT, DW)
-    expect(Object.keys(result.aggregatedMaterials).length).toBeGreaterThan(0)
-
-    // Repair materials should be doubled (2 planets with same buildings)
-    expect(result.repairMaterials['BBH']).toBe(4) // 2 per planet * 2 planets
-    expect(result.repairMaterials['INS']).toBe(20) // 10 per planet * 2 planets
-
-    // Burn materials should be doubled
-    expect(result.burnMaterials['RAT']).toBe(84) // ceil(6.0 * 7) * 2 = 42 * 2
-    expect(result.burnMaterials['DW']).toBe(42) // ceil(3.0 * 7) * 2 = 21 * 2
-  })
-
-  it('should return empty results for no planets', () => {
-    const result = calculateSupply([], makeOptions(), repairableTickers)
-
-    expect(result.planets).toEqual([])
-    expect(result.aggregatedMaterials).toEqual({})
-    expect(result.repairMaterials).toEqual({})
-    expect(result.burnMaterials).toEqual({})
-    expect(result.productionMaterials).toEqual({})
-  })
-
-  it('should separate repair, burn, and production in aggregation', () => {
-    const planet = makePlanet()
-    const options = makeOptions({ includeProduction: true })
-    const result = calculateSupply([planet], options, repairableTickers)
-
-    // Aggregated should contain all three
-    expect(Object.keys(result.repairMaterials).length).toBeGreaterThan(0)
-    expect(Object.keys(result.burnMaterials).length).toBeGreaterThan(0)
-    expect(Object.keys(result.productionMaterials).length).toBeGreaterThan(0)
-
-    // Aggregated total should be the sum of all three
-    for (const ticker of Object.keys(result.aggregatedMaterials)) {
-      const expected =
-        (result.repairMaterials[ticker] ?? 0) +
-        (result.burnMaterials[ticker] ?? 0) +
-        (result.productionMaterials[ticker] ?? 0)
-      expect(result.aggregatedMaterials[ticker]).toBe(expected)
-    }
   })
 })

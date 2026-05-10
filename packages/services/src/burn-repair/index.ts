@@ -1,4 +1,4 @@
-// Supply service exports
+// Burn & Repair service exports
 export {
   calculateCondition,
   calculateRepairCost,
@@ -6,8 +6,6 @@ export {
   calculateWorkforceBurn,
   calculateProductionNeeds,
   calculateProductionOutputs,
-  calculatePlanetSupply,
-  calculateSupply,
 } from './supply-calculator.js'
 export { computeBurnRepairCache } from './burn-repair-cache.js'
 export {

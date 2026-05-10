@@ -16,7 +16,7 @@ import {
   getRepairableTickers,
   resolveActiveMembers,
   resolveDisplayUsernames,
-} from '@kawakawa/services/supply'
+} from '@kawakawa/services/burn-repair'
 import type {
   BurnRepairMyBasesResponse,
   BurnRepairPlanetSummary,
@@ -488,7 +488,7 @@ export class BurnRepairController extends Controller {
   }
 
   // Active-member resolution + FIO stock aggregation moved to the shared
-  // services in `@kawakawa/services/supply` so the scheduled snapshot cron
+  // services in `@kawakawa/services/burn-repair` so the scheduled snapshot cron
   // uses the same logic. See `resolveActiveMembers` and `computeCorpStock`.
 
   /**

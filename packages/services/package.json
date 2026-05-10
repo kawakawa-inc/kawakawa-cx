@@ -30,9 +30,9 @@
       "types": "./dist/fio/index.d.ts",
       "import": "./dist/fio/index.js"
     },
-    "./supply": {
-      "types": "./dist/supply/index.d.ts",
-      "import": "./dist/supply/index.js"
+    "./burn-repair": {
+      "types": "./dist/burn-repair/index.d.ts",
+      "import": "./dist/burn-repair/index.js"
     },
     "./sync-queue": {
       "types": "./dist/sync-queue/index.d.ts",

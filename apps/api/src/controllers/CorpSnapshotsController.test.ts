@@ -18,13 +18,13 @@ vi.mock('../db/index.js', () => ({
   },
 }))
 
-vi.mock('@kawakawa/services/supply', () => ({
+vi.mock('@kawakawa/services/burn-repair', () => ({
   resolveActiveMembers: vi.fn(),
   resolveDisplayUsernames: vi.fn(),
 }))
 
 import { db } from '../db/index.js'
-import { resolveActiveMembers, resolveDisplayUsernames } from '@kawakawa/services/supply'
+import { resolveActiveMembers, resolveDisplayUsernames } from '@kawakawa/services/burn-repair'
 import { CorpSnapshotsController } from './CorpSnapshotsController.js'
 
 const mockRequest = { user: { userId: 1, username: 'alice', roles: ['member'] } }

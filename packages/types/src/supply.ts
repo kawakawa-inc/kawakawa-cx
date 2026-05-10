@@ -3,32 +3,11 @@
 /** Buy order source mode: manual (fixed qty) or demand (auto-calculated) */
 export type BuyOrderSourceMode = 'manual' | 'demand'
 
-/** Reserve source for sell orders: manual (fixed) or demand (auto-calculated from burn) */
-export type ReserveSource = 'manual' | 'demand'
-
 /** Demand source: burn (rate * days) or repair (absolute cost) */
 export type DemandSource = 'burn' | 'repair'
 
 /** Whether a fixed demand amount is a total or daily rate */
 export type DemandRate = 'total' | 'daily'
-
-/** Linked planet info for demand orders/reserves */
-export interface LinkedPlanetInfo {
-  userPlanetId: number
-  planetNaturalId: string
-  planetName: string
-}
-
-/** Source of a material need (repair, burn, or production) */
-export type MaterialNeedSource = 'repair' | 'burn' | 'production'
-
-/** A single material need with quantity and source */
-export interface MaterialNeed {
-  ticker: string
-  quantity: number
-  source: MaterialNeedSource
-  planetId: string
-}
 
 /** Per-planet override settings */
 export interface PlanetOverride {
@@ -39,15 +18,6 @@ export interface PlanetOverride {
 
 /** Map of planet NaturalId to override settings */
 export type PlanetOverrides = Record<string, PlanetOverride>
-
-/** Options for supply calculation */
-export interface SupplyCalculationOptions {
-  repairDays: number
-  burnDays: number
-  includeProduction: boolean
-  planetOverrides: PlanetOverrides
-  now?: Date // for testing
-}
 
 /** Building data as stored in the database */
 export interface BuildingData {
@@ -88,35 +58,6 @@ export interface PlanetSupplyInput {
   buildings: BuildingData[]
   workforce: WorkforceData[]
   production: ProductionData[]
-}
-
-/** Supply calculation result for a single planet */
-export interface PlanetSupplyResult {
-  planetId: string
-  planetName: string
-  repairNeeds: MaterialNeed[]
-  burnNeeds: MaterialNeed[]
-  productionNeeds: MaterialNeed[]
-  buildingCount: number
-  repairableBuildingCount: number
-  options: {
-    repairDays: number
-    burnDays: number
-    includeProduction: boolean
-  }
-}
-
-/** Aggregated supply calculation result across all planets */
-export interface SupplyCalculationResult {
-  planets: PlanetSupplyResult[]
-  /** Aggregated material quantities by ticker (all sources) */
-  aggregatedMaterials: Record<string, number>
-  /** Aggregated repair materials by ticker */
-  repairMaterials: Record<string, number>
-  /** Aggregated burn materials by ticker */
-  burnMaterials: Record<string, number>
-  /** Aggregated production materials by ticker */
-  productionMaterials: Record<string, number>
 }
 
 // ==================== Burn & Repair (corp-wide cache) ====================

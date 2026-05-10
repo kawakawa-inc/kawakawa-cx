@@ -47,6 +47,7 @@
           </template>
           Calculator
         </v-tooltip>
+        <!-- Logistics — hidden until feature is ready to ship
         <v-tooltip location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" to="/logistics" icon size="small" class="mx-1">
@@ -55,6 +56,7 @@
           </template>
           Logistics
         </v-tooltip>
+        -->
         <v-tooltip location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" to="/burn-repair" icon size="small" class="mx-1">

@@ -14,6 +14,8 @@ export default tseslint.config(
       '**/coverage/**',
       '**/generated/**',
       '**/*.d.ts',
+      // Auto-generated typed client (openapi-typescript-codegen output)
+      'packages/client/src/**',
     ],
   },
 

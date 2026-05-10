@@ -389,6 +389,58 @@ export interface UpdateLogisticsFlowRequest {
 /** FIO-detection buckets used by the bulk-create endpoint */
 export type BulkDetectionCategory = 'consumables' | 'inputs' | 'repair' | 'production_output'
 
+/**
+ * Granular demand/supply categories surfaced in the Add Hub review step.
+ * Each maps to a specific data source:
+ *  - burn: workforce consumables (fio_planet_workforce.needs)
+ *  - production_input: recurring production order inputs
+ *  - repair: building repair materials
+ *  - government: manual demand claims (category=government)
+ *  - contract: manual demand claims (category=contract)
+ *  - reserve: manual demand claims (category=reserve)
+ *  - production_output: recurring production order outputs (surplus)
+ */
+export type BulkFlowCategory =
+  | 'burn'
+  | 'production_input'
+  | 'repair'
+  | 'government'
+  | 'contract'
+  | 'reserve'
+  | 'production_output'
+
+/** A single detected material in a bulk preview, before flow creation. */
+export interface BulkPreviewItem {
+  ticker: string
+  category: BulkFlowCategory
+  kind: 'demand' | 'surplus'
+}
+
+/** Preview request — same shape as the create request. */
+export interface BulkMultiPreviewRequest {
+  hubLocationId: string
+  planetLocationIds: string[]
+  hubStorageTypes: string[]
+  planetStorageTypes: string[]
+  categories: BulkFlowCategory[]
+}
+
+/** Per-planet preview result (no DB writes). */
+export interface BulkPlanetPreview {
+  planetLocationId: string
+  items: BulkPreviewItem[]
+  skippedDuplicates: Array<{ category: BulkFlowCategory; ticker: string }>
+  skippedCycles: Array<{ category: BulkFlowCategory; ticker: string }>
+  /** Set when the planet wasn't found in fio_user_planets. */
+  error?: string
+}
+
+/** Aggregate preview response across all selected planets. */
+export interface BulkMultiPreviewResponse {
+  perPlanet: BulkPlanetPreview[]
+  totals: { items: number; duplicates: number; cycles: number }
+}
+
 export interface BulkCreateLogisticsFlowsRequest {
   fromLocationId: string
   toLocationId: string
@@ -418,7 +470,13 @@ export interface BulkMultiCreateLogisticsFlowsRequest {
   planetLocationIds: string[]
   hubStorageTypes: string[]
   planetStorageTypes: string[]
-  categories: BulkDetectionCategory[]
+  categories: BulkFlowCategory[]
+  /**
+   * Per-planet tickers to exclude from creation, keyed by category.
+   * Outer key is planetLocationId, inner key is BulkFlowCategory.
+   * Used by the Add Hub review step to honor user deselections.
+   */
+  exclusions?: Record<string, Record<string, string[]>>
 }
 
 export interface BulkMultiPlanetResult {

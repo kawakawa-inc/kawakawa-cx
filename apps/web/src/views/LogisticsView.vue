@@ -10,6 +10,9 @@
         Logistics
         <v-chip size="small" color="warning" variant="tonal">Experimental</v-chip>
         <v-spacer />
+        <v-btn variant="text" size="small" prepend-icon="mdi-cog" @click="openSettings">
+          Settings
+        </v-btn>
         <v-btn
           variant="text"
           size="small"
@@ -27,33 +30,6 @@
           building's next repair falls within the cadence window. The Plan tab is your action
           surface; the Inspector is for diagnosing per-base state.
         </div>
-        <div class="d-flex flex-wrap ga-3 align-center">
-          <span class="text-caption text-medium-emphasis">Settings:</span>
-          <v-text-field
-            v-model.number="tripLeadDaysInput"
-            type="number"
-            min="0"
-            label="Trip lead time (days)"
-            hint="Both look-ahead window and contract-by deadline"
-            persistent-hint
-            density="compact"
-            variant="outlined"
-            style="max-width: 240px"
-            @update:model-value="onTripLeadDaysChanged"
-          />
-          <v-text-field
-            v-model.number="targetRepairAgeInput"
-            type="number"
-            min="1"
-            label="Target repair age (days)"
-            hint="Building age you target for repair (was repairDays)"
-            persistent-hint
-            density="compact"
-            variant="outlined"
-            style="max-width: 260px"
-            @update:model-value="onTargetRepairAgeChanged"
-          />
-        </div>
       </v-card-text>
     </v-card>
 
@@ -70,10 +46,21 @@
     </v-alert>
 
     <v-row v-if="graph && !loading">
-      <!-- Left: node list + ship roster -->
-      <v-col cols="12" md="3">
+      <!-- Left sidebar: Nodes (Inspector) or Ship Roster (other tabs) -->
+      <v-col v-if="mainTab === 'inspector'" cols="12" md="3">
         <v-card class="mb-4">
-          <v-card-title class="text-subtitle-1">Nodes</v-card-title>
+          <v-card-title class="d-flex align-center text-subtitle-1">
+            Nodes
+            <v-spacer />
+            <v-btn
+              size="x-small"
+              variant="outlined"
+              prepend-icon="mdi-auto-fix"
+              @click="openAddHub"
+            >
+              Add Hub
+            </v-btn>
+          </v-card-title>
           <v-list density="compact" nav>
             <v-list-item
               v-for="node in graph.nodes"
@@ -99,7 +86,8 @@
             </v-list-item>
           </v-list>
         </v-card>
-
+      </v-col>
+      <v-col v-else cols="12" md="3">
         <ShipRosterPanel />
       </v-col>
 
@@ -162,14 +150,6 @@
                   <v-btn
                     size="small"
                     variant="outlined"
-                    prepend-icon="mdi-auto-fix"
-                    @click="openBulkFlow"
-                  >
-                    Bulk Add
-                  </v-btn>
-                  <v-btn
-                    size="small"
-                    variant="outlined"
                     color="primary"
                     prepend-icon="mdi-plus"
                     @click="openCreateFlow"
@@ -186,9 +166,8 @@
                   <v-data-table
                     :headers="balanceHeaders"
                     :items="balanceRows(selectedNode)"
-                    :items-per-page="-1"
+                    :items-per-page="15"
                     density="compact"
-                    hide-default-footer
                     class="elevation-0 striped-table"
                     item-value="ticker"
                   >
@@ -333,9 +312,8 @@
                   <v-data-table
                     :headers="repairHeaders"
                     :items="repairsForNode(selectedNode.locationId)"
-                    :items-per-page="-1"
+                    :items-per-page="10"
                     density="compact"
-                    hide-default-footer
                     class="elevation-0 striped-table"
                   >
                     <template #item.buildingTicker="{ item }">
@@ -392,9 +370,8 @@
                   <v-data-table
                     :headers="claimHeaders"
                     :items="claimsByLocation.get(selectedNode.locationId) ?? []"
-                    :items-per-page="-1"
+                    :items-per-page="10"
                     density="compact"
-                    hide-default-footer
                     class="elevation-0 striped-table"
                   >
                     <template #item.category="{ item }">
@@ -433,13 +410,28 @@
 
                 <!-- Edges touching this node -->
                 <v-card-text>
-                  <div class="text-subtitle-2 mb-2">Flows touching this node</div>
+                  <div class="d-flex align-center mb-2">
+                    <span class="text-subtitle-2">Flows touching this node</span>
+                    <v-spacer />
+                    <v-btn
+                      v-if="selectedFlowIds.length > 0"
+                      size="x-small"
+                      color="error"
+                      variant="tonal"
+                      prepend-icon="mdi-delete"
+                      @click="deleteSelectedFlows"
+                    >
+                      Delete ({{ selectedFlowIds.length }})
+                    </v-btn>
+                  </div>
                   <v-data-table
+                    v-model="selectedFlowIds"
                     :headers="edgeHeaders"
                     :items="edgesForNode(selectedNode.locationId)"
-                    :items-per-page="-1"
+                    :items-per-page="15"
+                    show-select
+                    item-value="id"
                     density="compact"
-                    hide-default-footer
                     class="elevation-0 striped-table"
                   >
                     <template #item.direction="{ item }">
@@ -515,17 +507,6 @@
                       </span>
                       <span v-else class="text-disabled">–</span>
                     </template>
-                    <template #item.actions="{ item }">
-                      <v-btn
-                        size="x-small"
-                        icon
-                        variant="text"
-                        :disabled="!flowsById.get(item.id)"
-                        @click="openEditFlow(item.id)"
-                      >
-                        <v-icon size="small">mdi-pencil</v-icon>
-                      </v-btn>
-                    </template>
                     <template #no-data>
                       <div class="text-center py-4 text-medium-emphasis">
                         No flows on this node yet.
@@ -578,9 +559,9 @@
     />
 
     <BulkFlowDialog
-      v-model="bulkDialog.open"
+      v-model="addHubDialog.open"
       :location-items="locationItems"
-      :initial-hub-location-id="bulkDialog.hubLocationId"
+      :initial-hub-location-id="addHubDialog.hubLocationId"
       @saved="handleFlowSaved"
     />
 
@@ -601,11 +582,53 @@
       :ships="ships"
       @saved="handleTripSaved"
     />
+
+    <!-- Settings dialog -->
+    <v-dialog v-model="settingsDialog.open" max-width="420" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon start>mdi-cog</v-icon>
+          Logistics Settings
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <v-text-field
+            v-model.number="settingsDialog.tripLeadDays"
+            type="number"
+            min="0"
+            label="Trip lead time (days)"
+            hint="Both look-ahead window and contract-by deadline"
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+          />
+          <v-text-field
+            v-model.number="settingsDialog.targetRepairAge"
+            type="number"
+            min="1"
+            label="Target repair age (days)"
+            hint="Building age you target for repair"
+            persistent-hint
+            density="compact"
+            variant="outlined"
+          />
+        </v-card-text>
+        <v-divider />
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="settingsDialog.open = false">Cancel</v-btn>
+          <v-btn color="primary" :loading="settingsDialog.saving" @click="saveSettings">
+            Save
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive, defineAsyncComponent, h } from 'vue'
+import { ref, computed, onMounted, reactive, watch, defineAsyncComponent, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../services/api'
 import { useShoppingListStore } from '../stores/shoppingList'
@@ -670,39 +693,50 @@ const shoppingList = useShoppingListStore()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 
-// Local mirror of the user setting so we can debounce-on-blur without re-rendering
-// every keystroke through the API.
-const tripLeadDaysInput = ref<number>(settingsStore.logisticsTripLeadDays.value ?? 7)
-const targetRepairAgeInput = ref<number>(settingsStore.logisticsTargetRepairAge.value ?? 45)
+// Settings dialog state
+const settingsDialog = reactive<{
+  open: boolean
+  tripLeadDays: number
+  targetRepairAge: number
+  saving: boolean
+}>({
+  open: false,
+  tripLeadDays: 7,
+  targetRepairAge: 45,
+  saving: false,
+})
 
-let tripLeadDaysSaveTimer: ReturnType<typeof setTimeout> | null = null
-function onTripLeadDaysChanged() {
-  if (tripLeadDaysSaveTimer) clearTimeout(tripLeadDaysSaveTimer)
-  tripLeadDaysSaveTimer = setTimeout(async () => {
-    const n = Math.max(0, Math.floor(Number(tripLeadDaysInput.value) || 0))
-    if (n !== settingsStore.logisticsTripLeadDays.value) {
-      settingsStore.logisticsTripLeadDays.value = n
-      // Reload the graph so timing fields recompute server-side with the new value.
-      await loadGraph()
-    }
-  }, 600)
+function openSettings() {
+  settingsDialog.tripLeadDays = settingsStore.logisticsTripLeadDays.value ?? 7
+  settingsDialog.targetRepairAge = settingsStore.logisticsTargetRepairAge.value ?? 45
+  settingsDialog.open = true
 }
 
-let targetRepairAgeSaveTimer: ReturnType<typeof setTimeout> | null = null
-function onTargetRepairAgeChanged() {
-  if (targetRepairAgeSaveTimer) clearTimeout(targetRepairAgeSaveTimer)
-  targetRepairAgeSaveTimer = setTimeout(async () => {
-    const n = Math.max(1, Math.floor(Number(targetRepairAgeInput.value) || 45))
-    if (n !== settingsStore.logisticsTargetRepairAge.value) {
-      settingsStore.logisticsTargetRepairAge.value = n
-      await loadGraph()
+async function saveSettings() {
+  settingsDialog.saving = true
+  try {
+    const leadDays = Math.max(0, Math.floor(Number(settingsDialog.tripLeadDays) || 0))
+    const repairAge = Math.max(1, Math.floor(Number(settingsDialog.targetRepairAge) || 45))
+    let changed = false
+    if (leadDays !== settingsStore.logisticsTripLeadDays.value) {
+      settingsStore.logisticsTripLeadDays.value = leadDays
+      changed = true
     }
-  }, 600)
+    if (repairAge !== settingsStore.logisticsTargetRepairAge.value) {
+      settingsStore.logisticsTargetRepairAge.value = repairAge
+      changed = true
+    }
+    settingsDialog.open = false
+    if (changed) await loadGraph()
+  } finally {
+    settingsDialog.saving = false
+  }
 }
 
 const graph = ref<LogisticsGraph | null>(null)
 const loading = ref(false)
 const selectedLocationId = ref<string>('')
+const selectedFlowIds = ref<number[]>([])
 const snackbar = ref({ show: false, color: 'info', message: '' })
 const mainTab = ref<'plan' | 'inspector' | 'trips' | 'graph'>('plan')
 const planViewRef = ref<InstanceType<typeof PlanView> | null>(null)
@@ -742,7 +776,7 @@ const flowDialog = reactive<{
   flow: null,
   initialFromLocationId: '',
 })
-const bulkDialog = reactive<{
+const addHubDialog = reactive<{
   open: boolean
   hubLocationId: string
 }>({
@@ -792,14 +826,14 @@ function openCreateFlow() {
   flowDialog.open = true
 }
 
-function openBulkFlow() {
+function openAddHub() {
   // Pre-fill the hub with the currently-inspected node if it's a station.
   // Planets don't make sense as hubs, so leave blank in that case and let
   // the user pick.
   const sel = selectedLocationId.value
   const selType = locationItems.value.find(l => l.key === sel)?.locationType
-  bulkDialog.hubLocationId = selType === 'Station' ? sel : ''
-  bulkDialog.open = true
+  addHubDialog.hubLocationId = selType === 'Station' ? sel : ''
+  addHubDialog.open = true
 }
 
 function openEditFlow(flowId: number) {
@@ -920,18 +954,37 @@ const selectedNode = computed<NodeState | null>(() => {
   return graph.value.nodes.find(n => n.locationId === selectedLocationId.value) ?? null
 })
 
+// Clear flow selection when node changes
+watch(selectedLocationId, () => {
+  selectedFlowIds.value = []
+})
+
+async function deleteSelectedFlows() {
+  const ids = [...selectedFlowIds.value]
+  if (ids.length === 0) return
+  try {
+    await Promise.all(ids.map(id => api.logistics.deleteFlow(id)))
+    selectedFlowIds.value = []
+    await handleFlowSaved()
+    snackbar.value = {
+      show: true,
+      color: 'success',
+      message: `Deleted ${ids.length} flow${ids.length === 1 ? '' : 's'}`,
+    }
+  } catch (e) {
+    snackbar.value = {
+      show: true,
+      color: 'error',
+      message: e instanceof Error ? e.message : 'Failed to delete flows',
+    }
+  }
+}
+
 async function loadGraph() {
   loading.value = true
   try {
     const result = await api.logistics.graph()
     graph.value = result
-    // Sync the input controls with whatever the server actually used.
-    if (typeof result.settings?.tripLeadDays === 'number') {
-      tripLeadDaysInput.value = result.settings.tripLeadDays
-    }
-    if (typeof result.settings?.repairDays === 'number' && result.settings.repairDays > 0) {
-      targetRepairAgeInput.value = result.settings.repairDays
-    }
     // Auto-select first node if none chosen
     if (!selectedLocationId.value && result.nodes.length > 0) {
       selectedLocationId.value = result.nodes[0].locationId
@@ -1073,7 +1126,6 @@ const edgeHeaders = [
   { title: 'Next arrival', key: 'nextArrivalAt', sortable: true, align: 'end' as const },
   { title: 'Ship by', key: 'shipBy', sortable: true, align: 'end' as const },
   { title: 'Contract by', key: 'contractBy', sortable: true, align: 'end' as const },
-  { title: '', key: 'actions', sortable: false, width: '48px', align: 'end' as const },
 ]
 
 const claimHeaders = [

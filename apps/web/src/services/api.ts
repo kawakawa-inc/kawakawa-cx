@@ -942,6 +942,31 @@ function ensureOk(response: Response, context: string): void {
   }
 }
 
+// ── Typed convenience wrappers ────────────────────────────────────────────
+// Collapse the authenticatedFetch → ensureOk → response.json() pattern
+// that ~90% of methods follow into one-liners.
+
+async function apiGet<T>(url: string): Promise<T> {
+  const response = await authenticatedFetch(url)
+  ensureOk(response, `GET ${url}`)
+  return response.json()
+}
+
+async function apiPut<T>(url: string, body?: unknown): Promise<T> {
+  const response = await authenticatedFetch(url, {
+    method: 'PUT',
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+  ensureOk(response, `PUT ${url}`)
+  return response.json()
+}
+
+async function apiDelete<T = void>(url: string): Promise<T> {
+  const response = await authenticatedFetch(url, { method: 'DELETE' })
+  ensureOk(response, `DELETE ${url}`)
+  return response.json() as T
+}
+
 // Real API calls (to be used when backend is ready)
 const realApi = {
   login: async (request: LoginRequest): Promise<Response> => {
@@ -971,26 +996,9 @@ const realApi = {
     })
   },
 
-  getProfile: async (): Promise<User> => {
-    const response = await authenticatedFetch('/api/account', {
-      method: 'GET',
-    })
+  getProfile: () => apiGet<User>('/api/account'),
 
-    ensureOk(response, 'Failed to get profile')
-
-    return response.json()
-  },
-
-  updateProfile: async (updates: UpdateProfileRequest): Promise<User> => {
-    const response = await authenticatedFetch('/api/account', {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    })
-
-    ensureOk(response, 'Failed to update profile')
-
-    return response.json()
-  },
+  updateProfile: (updates: UpdateProfileRequest) => apiPut<User>('/api/account', updates),
 
   changePassword: async (request: ChangePasswordRequest): Promise<void> => {
     const response = await authenticatedFetch('/api/account/password', {
@@ -1367,25 +1375,9 @@ const realApi = {
   },
 
   // Permission management
-  listPermissions: async (): Promise<Permission[]> => {
-    const response = await authenticatedFetch('/api/admin/permissions', {
-      method: 'GET',
-    })
+  listPermissions: () => apiGet<Permission[]>('/api/admin/permissions'),
 
-    ensureOk(response, 'Failed to list permissions')
-
-    return response.json()
-  },
-
-  listRolePermissions: async (): Promise<RolePermissionWithDetails[]> => {
-    const response = await authenticatedFetch('/api/admin/role-permissions', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to list role permissions')
-
-    return response.json()
-  },
+  listRolePermissions: () => apiGet<RolePermissionWithDetails[]>('/api/admin/role-permissions'),
 
   setRolePermission: async (request: SetRolePermissionRequest): Promise<RolePermission> => {
     const response = await authenticatedFetch('/api/admin/role-permissions', {
@@ -1418,66 +1410,18 @@ const realApi = {
   },
 
   // FIO Inventory methods
-  getFioInventory: async (): Promise<FioInventoryItem[]> => {
-    const response = await authenticatedFetch('/api/fio/inventory', {
-      method: 'GET',
-    })
+  getFioInventory: () => apiGet<FioInventoryItem[]>('/api/fio/inventory'),
 
-    ensureOk(response, 'Failed to get FIO inventory')
+  getFioLastSync: () => apiGet<FioLastSyncResponse>('/api/fio/inventory/last-sync'),
 
-    return response.json()
-  },
+  getFioStats: () => apiGet<FioStatsResponse>('/api/fio/inventory/stats'),
 
-  getFioLastSync: async (): Promise<FioLastSyncResponse> => {
-    const response = await authenticatedFetch('/api/fio/inventory/last-sync', {
-      method: 'GET',
-    })
+  getFioStorageLocations: () => apiGet<{ locationIds: string[] }>('/api/fio/inventory/locations'),
 
-    ensureOk(response, 'Failed to get last sync time')
-
-    return response.json()
-  },
-
-  getFioStats: async (): Promise<FioStatsResponse> => {
-    const response = await authenticatedFetch('/api/fio/inventory/stats', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get FIO stats')
-
-    return response.json()
-  },
-
-  getFioStorageLocations: async (): Promise<{ locationIds: string[] }> => {
-    const response = await authenticatedFetch('/api/fio/inventory/locations', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get FIO storage locations')
-
-    return response.json()
-  },
-
-  clearFioInventory: async (): Promise<FioClearResponse> => {
-    const response = await authenticatedFetch('/api/fio/inventory', {
-      method: 'DELETE',
-    })
-
-    ensureOk(response, 'Failed to clear FIO inventory')
-
-    return response.json()
-  },
+  clearFioInventory: () => apiDelete<FioClearResponse>('/api/fio/inventory'),
 
   // Sell Orders methods
-  getSellOrders: async (): Promise<SellOrderResponse[]> => {
-    const response = await authenticatedFetch('/api/sell-orders', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get sell orders')
-
-    return response.json()
-  },
+  getSellOrders: () => apiGet<SellOrderResponse[]>('/api/sell-orders'),
 
   getSellOrder: async (id: number): Promise<SellOrderResponse> => {
     const response = await authenticatedFetch(`/api/sell-orders/${id}`, {
@@ -1609,15 +1553,7 @@ const realApi = {
   },
 
   // Buy Orders methods
-  getBuyOrders: async (): Promise<BuyOrderResponse[]> => {
-    const response = await authenticatedFetch('/api/buy-orders', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get buy orders')
-
-    return response.json()
-  },
+  getBuyOrders: () => apiGet<BuyOrderResponse[]>('/api/buy-orders'),
 
   getBuyOrder: async (id: number): Promise<BuyOrderResponse> => {
     const response = await authenticatedFetch(`/api/buy-orders/${id}`, {
@@ -1964,15 +1900,7 @@ const realApi = {
   },
 
   // User Discord methods
-  getDiscordAuthUrl: async (): Promise<{ url: string; state: string }> => {
-    const response = await authenticatedFetch('/api/discord/auth-url', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get Discord auth URL')
-
-    return response.json()
-  },
+  getDiscordAuthUrl: () => apiGet<{ url: string; state: string }>('/api/discord/auth-url'),
 
   handleDiscordCallback: async (
     request: DiscordCallbackRequest
@@ -2022,15 +1950,7 @@ const realApi = {
     return response.json()
   },
 
-  getDiscordStatus: async (): Promise<DiscordConnectionStatus> => {
-    const response = await authenticatedFetch('/api/discord/status', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get Discord status')
-
-    return response.json()
-  },
+  getDiscordStatus: () => apiGet<DiscordConnectionStatus>('/api/discord/status'),
 
   // Discord auth (unauthenticated - for login/register)
   getDiscordLoginAuthUrl: async (prompt?: 'none' | 'consent'): Promise<DiscordAuthUrlResponse> => {
@@ -2127,15 +2047,7 @@ const realApi = {
     }
   },
 
-  markAllNotificationsAsRead: async (): Promise<{ count: number }> => {
-    const response = await authenticatedFetch('/api/notifications/read-all', {
-      method: 'PUT',
-    })
-
-    ensureOk(response, 'Failed to mark all as read')
-
-    return response.json()
-  },
+  markAllNotificationsAsRead: () => apiPut<{ count: number }>('/api/notifications/read-all'),
 
   deleteNotification: async (id: number): Promise<void> => {
     const response = await authenticatedFetch(`/api/notifications/${id}`, {
@@ -2554,15 +2466,7 @@ const realApi = {
   },
 
   // FIO Exchanges methods
-  getFioExchanges: async (): Promise<FioExchangeResponse[]> => {
-    const response = await authenticatedFetch('/api/fio-exchanges', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get FIO exchanges')
-
-    return response.json()
-  },
+  getFioExchanges: () => apiGet<FioExchangeResponse[]>('/api/fio-exchanges'),
 
   syncFioPrices: async (
     exchangeCode?: string,
@@ -2754,22 +2658,10 @@ const realApi = {
     }
   },
 
-  diffPriceListVersions: async (
-    code: string,
-    version: number,
-    otherVersion: number
-  ): Promise<VersionDiff> => {
-    const response = await authenticatedFetch(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`,
-      {
-        method: 'GET',
-      }
-    )
-
-    ensureOk(response, 'Failed to diff versions')
-
-    return response.json()
-  },
+  diffPriceListVersions: (code: string, version: number, otherVersion: number) =>
+    apiGet<VersionDiff>(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`
+    ),
 
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
@@ -3232,15 +3124,7 @@ const realApi = {
   },
 
   // Shopping Lists API
-  getShoppingLists: async (): Promise<ShoppingListSummary[]> => {
-    const response = await authenticatedFetch('/api/lists', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get shopping lists')
-
-    return response.json()
-  },
+  getShoppingLists: () => apiGet<ShoppingListSummary[]>('/api/lists'),
 
   getShoppingList: async (id: number): Promise<SavedShoppingList> => {
     const response = await authenticatedFetch(`/api/lists/${id}`, {
@@ -3320,25 +3204,9 @@ const realApi = {
   },
 
   // Saved Market Filters API
-  getSavedFilters: async (): Promise<SavedMarketFilter[]> => {
-    const response = await authenticatedFetch('/api/saved-filters', {
-      method: 'GET',
-    })
+  getSavedFilters: () => apiGet<SavedMarketFilter[]>('/api/saved-filters'),
 
-    ensureOk(response, 'Failed to get saved filters')
-
-    return response.json()
-  },
-
-  getPinnedFilters: async (): Promise<SavedMarketFilter[]> => {
-    const response = await authenticatedFetch('/api/saved-filters/pinned', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get pinned filters')
-
-    return response.json()
-  },
+  getPinnedFilters: () => apiGet<SavedMarketFilter[]>('/api/saved-filters/pinned'),
 
   browsePublicFilters: async (search?: string, page?: number): Promise<SavedMarketFilter[]> => {
     const params = new URLSearchParams()
@@ -3790,14 +3658,7 @@ const realApi = {
   },
 
   // ==================== CONTRACT COVERAGE (buy-invoice incoming) ====================
-  listContractCoverage: async (): Promise<ContractCoverageEntry[]> => {
-    const response = await authenticatedFetch('/api/logistics/contract-coverage', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to list contract coverage')
-    return response.json()
-  },
+  listContractCoverage: () => apiGet<ContractCoverageEntry[]>('/api/logistics/contract-coverage'),
 
   // ==================== SELF-SUPPLIED (hide-from-contracts) ====================
   listSelfSupplied: async (): Promise<SelfSuppliedEntry[]> => {

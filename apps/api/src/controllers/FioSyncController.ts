@@ -1,23 +1,11 @@
-import { Controller, Get, Post, Path, Route, Security, Tags, Request, SuccessResponse } from 'tsoa'
+import { Controller, Post, Route, Security, Tags, Request, SuccessResponse } from 'tsoa'
 import type { JwtPayload } from '../utils/jwt.js'
-import { BadRequest, NotFound } from '../utils/errors.js'
-import { db, syncJobs } from '../db/index.js'
-import { eq } from 'drizzle-orm'
+import { BadRequest } from '../utils/errors.js'
 import * as userSettingsService from '@kawakawa/services/user-settings'
 import { enqueueUserFullSync } from '@kawakawa/services/sync-queue'
 
 interface SyncJobStartResponse {
   jobIds: { inventory: number; planets: number }
-}
-
-interface SyncJobStatusResponse {
-  jobId: number
-  jobType: string
-  status: 'pending' | 'running' | 'done' | 'failed'
-  attempts: number
-  startedAt: string | null
-  finishedAt: string | null
-  error: string | null
 }
 
 @Route('fio/sync-all')
@@ -51,27 +39,5 @@ export class FioSyncController extends Controller {
 
     this.setStatus(202)
     return { jobIds: { inventory: inventoryJobId, planets: planetsJobId } }
-  }
-
-  /**
-   * Poll the status of a sync job.
-   */
-  @Get('{jobId}')
-  public async getSyncStatus(@Path() jobId: number): Promise<SyncJobStatusResponse> {
-    const [job] = await db.select().from(syncJobs).where(eq(syncJobs.id, jobId))
-    if (!job) {
-      this.setStatus(404)
-      throw NotFound('Sync job not found')
-    }
-
-    return {
-      jobId: job.id,
-      jobType: job.jobType,
-      status: job.status,
-      attempts: job.attempts,
-      startedAt: job.startedAt?.toISOString() ?? null,
-      finishedAt: job.finishedAt?.toISOString() ?? null,
-      error: job.error,
-    }
   }
 }

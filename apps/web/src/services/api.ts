@@ -20,7 +20,6 @@ import type {
   DiscordConnectionStatus,
   DiscordCallbackRequest,
   UserDiscordProfile,
-  SettingHistoryEntry,
   DiscordAuthUrlResponse,
   DiscordAuthResult,
   DiscordRegisterRequest,
@@ -53,8 +52,6 @@ import type {
   LogisticsFlow,
   CreateLogisticsFlowRequest,
   UpdateLogisticsFlowRequest,
-  BulkCreateLogisticsFlowsRequest,
-  BulkCreateLogisticsFlowsResponse,
   BulkMultiCreateLogisticsFlowsRequest,
   BulkMultiCreateLogisticsFlowsResponse,
   BulkMultiPreviewRequest,
@@ -80,8 +77,6 @@ import type {
   ContractCoverageEntry,
   Shipment,
   CreateShipmentRequest,
-  UpdateShipmentRequest,
-  RepeatShipmentRequest,
   SuggestStopTimesRequest,
   SuggestStopTimesResponse,
 } from '@kawakawa/types'
@@ -397,47 +392,11 @@ interface CsvRowError {
   message: string
 }
 
-interface ParsedPriceRow {
-  rowNumber: number
-  ticker: string
-  location: string
-  price: number
-  currency: Currency
-  raw: Record<string, string>
-}
-
 interface CsvImportResult {
   imported: number
   updated: number
   skipped: number
   errors: CsvRowError[]
-}
-
-interface CsvPreviewResult {
-  headers: string[]
-  sampleRows: ParsedPriceRow[]
-  parseErrors: CsvRowError[]
-  validationErrors: CsvRowError[]
-  delimiter: string
-  totalRows: number
-  validRows: number
-}
-
-interface CsvImportRequest {
-  exchangeCode: string
-  mapping: CsvFieldMapping
-  locationDefault?: string
-  currencyDefault?: Currency
-  delimiter?: string
-  hasHeader?: boolean
-}
-
-interface GoogleSheetsImportRequest {
-  url: string
-  exchangeCode: string
-  fieldMapping: CsvFieldMapping
-  locationDefault?: string | null
-  currencyDefault?: Currency | null
 }
 
 // Admin Price Settings types
@@ -458,11 +417,6 @@ interface UpdateFioSettingsRequest {
 
 interface UpdateGoogleSettingsRequest {
   apiKey?: string
-}
-
-interface UpdateKawaSheetRequest {
-  url?: string
-  gid?: number | null
 }
 
 // Price List types
@@ -592,13 +546,6 @@ interface PivotImportResult {
 }
 
 // FIO Price Sync types
-interface ExchangeSyncStatus {
-  exchangeCode: string
-  locationId: string | null
-  lastSyncedAt: string | null
-  priceCount: number
-}
-
 interface ExchangeSyncResultResponse {
   exchangeCode: string
   locationId: string | null
@@ -1905,24 +1852,6 @@ const realApi = {
     }
   },
 
-  getSettingsHistory: async (key: string): Promise<SettingHistoryEntry[]> => {
-    const response = await authenticatedFetch(
-      `/api/admin/discord/settings/history/${encodeURIComponent(key)}`,
-      {
-        method: 'GET',
-      }
-    )
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get settings history: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   // Channel Config methods
   getChannelConfigs: async (): Promise<ChannelConfigMap[]> => {
     const response = await authenticatedFetch('/api/admin/discord/channel-config', {
@@ -1934,24 +1863,6 @@ const realApi = {
         throw new Error('Administrator access required')
       }
       throw new Error(`Failed to get channel configs: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getChannelConfig: async (channelId: string): Promise<ChannelConfigMap> => {
-    const response = await authenticatedFetch(
-      `/api/admin/discord/channel-config/${encodeURIComponent(channelId)}`,
-      {
-        method: 'GET',
-      }
-    )
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get channel config: ${response.statusText}`)
     }
 
     return response.json()
@@ -2047,24 +1958,6 @@ const realApi = {
       }
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to reset global default')
-    }
-
-    return response.json()
-  },
-
-  getGlobalDefaultHistory: async (key: string): Promise<SettingHistoryEntry[]> => {
-    const response = await authenticatedFetch(
-      `/api/admin/global-defaults/history/${encodeURIComponent(key)}`,
-      {
-        method: 'GET',
-      }
-    )
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get global default history: ${response.statusText}`)
     }
 
     return response.json()
@@ -2276,21 +2169,6 @@ const realApi = {
     return response.json()
   },
 
-  getReservation: async (id: number): Promise<ReservationWithDetails> => {
-    const response = await authenticatedFetch(`/api/reservations/${id}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('Reservation not found')
-      }
-      throw new Error(`Failed to get reservation: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   getReservationsForSellOrder: async (
     sellOrderId: number,
     opts?: { all?: boolean }
@@ -2495,65 +2373,6 @@ const realApi = {
     return response.json()
   },
 
-  deleteReservation: async (id: number): Promise<void> => {
-    const response = await authenticatedFetch(`/api/reservations/${id}`, {
-      method: 'DELETE',
-    })
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Cannot delete reservation')
-      }
-      if (response.status === 403) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Permission denied')
-      }
-      if (response.status === 404) {
-        throw new Error('Reservation not found')
-      }
-      throw new Error(`Failed to delete reservation: ${response.statusText}`)
-    }
-  },
-
-  // Location distance
-  getLocationDistance: async (
-    from: string,
-    to: string
-  ): Promise<{ from: string; to: string; jumpCount: number | null }> => {
-    const params = new URLSearchParams({ from, to })
-    const response = await authenticatedFetch(`/api/locations/distance?${params}`, {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get distance')
-
-    return response.json()
-  },
-
-  // Price List methods
-  getPrices: async (
-    exchange?: string,
-    location?: string,
-    commodity?: string,
-    currency?: Currency
-  ): Promise<PriceListResponse[]> => {
-    const params = new URLSearchParams()
-    if (exchange) params.append('exchange', exchange)
-    if (location) params.append('location', location)
-    if (commodity) params.append('commodity', commodity)
-    if (currency) params.append('currency', currency)
-
-    const url = `/api/prices${params.toString() ? '?' + params.toString() : ''}`
-    const response = await authenticatedFetch(url, {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get prices')
-
-    return response.json()
-  },
-
   getPricesByExchange: async (exchange: string, version?: number): Promise<PriceListResponse[]> => {
     const params = version !== undefined ? `?version=${version}` : ''
     const response = await authenticatedFetch(`/api/prices/${exchange}${params}`, {
@@ -2670,21 +2489,6 @@ const realApi = {
     return response.json()
   },
 
-  getPriceAdjustment: async (id: number): Promise<PriceAdjustmentResponse> => {
-    const response = await authenticatedFetch(`/api/price-adjustments/${id}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('Adjustment not found')
-      }
-      throw new Error(`Failed to get adjustment: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   createPriceAdjustment: async (
     request: CreatePriceAdjustmentRequest
   ): Promise<PriceAdjustmentResponse> => {
@@ -2760,17 +2564,6 @@ const realApi = {
     return response.json()
   },
 
-  // FIO Price Sync methods
-  getFioPriceSyncStatus: async (): Promise<ExchangeSyncStatus[]> => {
-    const response = await authenticatedFetch('/api/prices/sync/fio/status', {
-      method: 'GET',
-    })
-
-    ensureOk(response, 'Failed to get sync status')
-
-    return response.json()
-  },
-
   syncFioPrices: async (
     exchangeCode?: string,
     priceField?: string
@@ -2795,96 +2588,6 @@ const realApi = {
     return response.json()
   },
 
-  // CSV Import methods
-  previewCsvImport: async (file: File, config: CsvImportRequest): Promise<CsvPreviewResult> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('config', JSON.stringify(config))
-
-    const response = await authenticatedFormFetch('/api/import-configs/csv/preview', {
-      method: 'POST',
-      body: formData,
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview CSV: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  importCsv: async (file: File, config: CsvImportRequest): Promise<CsvImportResult> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('config', JSON.stringify(config))
-
-    const response = await authenticatedFormFetch('/api/import-configs/csv', {
-      method: 'POST',
-      body: formData,
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to import CSV: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  // Google Sheets Import methods
-  previewGoogleSheetsImport: async (
-    request: GoogleSheetsImportRequest
-  ): Promise<CsvPreviewResult> => {
-    const response = await fetchWithLogging('/api/import-configs/google-sheets/preview', {
-      method: 'POST',
-      headers: {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview Google Sheets: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  importGoogleSheets: async (request: GoogleSheetsImportRequest): Promise<CsvImportResult> => {
-    const response = await fetchWithLogging('/api/import-configs/google-sheets', {
-      method: 'POST',
-      headers: {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(
-        error.message || `Failed to import from Google Sheets: ${response.statusText}`
-      )
-    }
-
-    return response.json()
-  },
-
   // Price Lists methods
   getPriceLists: async (): Promise<PriceListDefinition[]> => {
     const response = await authenticatedFetch('/api/price-lists', {
@@ -2896,21 +2599,6 @@ const realApi = {
         throw new Error('Permission denied')
       }
       throw new Error(`Failed to get price lists: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getPriceList: async (code: string): Promise<PriceListDefinition> => {
-    const response = await authenticatedFetch(`/api/price-lists/${encodeURIComponent(code)}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Price list '${code}' not found`)
-      }
-      throw new Error(`Failed to get price list: ${response.statusText}`)
     }
 
     return response.json()
@@ -3003,24 +2691,6 @@ const realApi = {
     return response.json()
   },
 
-  getPriceListVersion: async (code: string, version: number): Promise<VersionDetail> => {
-    const response = await authenticatedFetch(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
-      {
-        method: 'GET',
-      }
-    )
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Version not found`)
-      }
-      throw new Error(`Failed to get version: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   createPriceListVersion: async (
     code: string,
     request: CreateVersionRequest
@@ -3043,34 +2713,6 @@ const realApi = {
       }
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || `Failed to create version: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updatePriceListVersion: async (
-    code: string,
-    version: number,
-    request: UpdateVersionRequest
-  ): Promise<VersionDetail> => {
-    const response = await fetchWithLogging(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
-      {
-        method: 'PUT',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-      }
-    )
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to update version: ${response.statusText}`)
     }
 
     return response.json()
@@ -3140,21 +2782,6 @@ const realApi = {
         throw new Error('Permission denied')
       }
       throw new Error(`Failed to get import configs: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getImportConfig: async (id: number): Promise<ImportConfigResponse> => {
-    const response = await authenticatedFetch(`/api/import-configs/${id}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Import config not found`)
-      }
-      throw new Error(`Failed to get import config: ${response.statusText}`)
     }
 
     return response.json()
@@ -3278,25 +2905,6 @@ const realApi = {
     return response.json()
   },
 
-  previewImportConfig: async (id: number): Promise<CsvPreviewResult | PivotImportResult> => {
-    const response = await authenticatedFetch(`/api/import-configs/${id}/preview`, {
-      method: 'POST',
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      if (response.status === 404) {
-        throw new Error(`Import config not found`)
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview import config: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   // Admin Price Settings methods
   getPriceSettings: async (): Promise<PriceSettingsResponse> => {
     const response = await authenticatedFetch('/api/admin/price-settings', {
@@ -3346,67 +2954,6 @@ const realApi = {
         throw new Error('Administrator access required')
       }
       throw new Error(`Failed to update Google settings: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updateKawaSheetSettings: async (
-    request: UpdateKawaSheetRequest
-  ): Promise<PriceSettingsResponse> => {
-    const response = await authenticatedFetch('/api/admin/price-settings/kawa-sheet', {
-      method: 'PUT',
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Invalid KAWA sheet settings')
-      }
-      throw new Error(`Failed to update KAWA sheet settings: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  previewKawaSheet: async (): Promise<KawaSheetPreviewResponse> => {
-    const response = await authenticatedFetch('/api/admin/price-settings/kawa-sheet/preview', {
-      method: 'POST',
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Failed to preview KAWA sheet')
-      }
-      throw new Error(`Failed to preview KAWA sheet: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  syncKawaSheet: async (request: KawaSheetSyncRequest): Promise<CsvImportResult> => {
-    const response = await authenticatedFetch('/api/admin/price-settings/kawa-sheet/sync', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Failed to sync KAWA sheet')
-      }
-      throw new Error(`Failed to sync KAWA sheet: ${response.statusText}`)
     }
 
     return response.json()
@@ -3520,52 +3067,6 @@ const realApi = {
         throw new Error('User not found')
       }
       throw new Error(`Failed to get or create invoice: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  createInvoice: async (request: CreateInvoiceRequest): Promise<Invoice> => {
-    const response = await authenticatedFetch('/api/invoices', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Invalid request')
-      }
-      if (response.status === 404) {
-        throw new Error('Counterparty user not found')
-      }
-      throw new Error(`Failed to create invoice: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updateInvoice: async (
-    id: number,
-    request: { name?: string; notes?: string }
-  ): Promise<Invoice> => {
-    const response = await authenticatedFetch(`/api/invoices/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(request),
-    })
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Only draft invoices can be updated')
-      }
-      if (response.status === 403) {
-        throw new Error('You do not have access to this invoice')
-      }
-      if (response.status === 404) {
-        throw new Error('Invoice not found')
-      }
-      throw new Error(`Failed to update invoice: ${response.statusText}`)
     }
 
     return response.json()
@@ -3961,15 +3462,6 @@ const realApi = {
     return response.json()
   },
 
-  getPinnedCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
-    const response = await authenticatedFetch('/api/corp-overview-views/pinned', {
-      method: 'GET',
-    })
-
-    if (!response.ok) throw new Error(`Failed to get pinned views: ${response.statusText}`)
-    return response.json()
-  },
-
   browseCorpOverviewViews: async (search?: string, page?: number): Promise<CorpOverviewView[]> => {
     const params = new URLSearchParams()
     if (search) params.set('search', search)
@@ -4129,18 +3621,6 @@ const realApi = {
     }
   },
 
-  getVisitedCorpOverviewViews: async (page?: number): Promise<CorpOverviewView[]> => {
-    const params = new URLSearchParams()
-    if (page) params.set('page', String(page))
-    const query = params.toString() ? `?${params.toString()}` : ''
-    const response = await authenticatedFetch(`/api/corp-overview-views/visited${query}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) throw new Error(`Failed to list visited views: ${response.statusText}`)
-    return response.json()
-  },
-
   // ==================== CORP SNAPSHOTS (histogram query) ====================
 
   queryCorpSnapshots: async (req: SnapshotQueryRequest): Promise<SnapshotSeriesResponse> => {
@@ -4201,21 +3681,6 @@ const realApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to create logistics flow')
-    }
-    return response.json()
-  },
-
-  bulkCreateLogisticsFlows: async (
-    body: BulkCreateLogisticsFlowsRequest
-  ): Promise<BulkCreateLogisticsFlowsResponse> => {
-    const response = await authenticatedFetch('/api/logistics/flows/bulk', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to bulk create logistics flows')
     }
     return response.json()
   },
@@ -4385,15 +3850,6 @@ const realApi = {
     return response.json()
   },
 
-  getTrip: async (id: number): Promise<Trip> => {
-    const response = await authenticatedFetch(`/api/logistics/trips/${id}`, {
-      method: 'GET',
-    })
-
-    if (!response.ok) throw new Error(`Failed to get trip: ${response.statusText}`)
-    return response.json()
-  },
-
   createTrip: async (body: CreateTripRequest): Promise<Trip> => {
     const response = await authenticatedFetch('/api/logistics/trips', {
       method: 'POST',
@@ -4501,38 +3957,12 @@ const realApi = {
     return response.json()
   },
 
-  updateShipment: async (id: number, body: UpdateShipmentRequest): Promise<Shipment> => {
-    const response = await authenticatedFetch(`/api/logistics/shipments/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to update shipment')
-    }
-    return response.json()
-  },
-
   deleteShipment: async (id: number): Promise<{ success: boolean }> => {
     const response = await authenticatedFetch(`/api/logistics/shipments/${id}`, {
       method: 'DELETE',
     })
 
     if (!response.ok) throw new Error(`Failed to delete shipment: ${response.statusText}`)
-    return response.json()
-  },
-
-  repeatShipment: async (id: number, body: RepeatShipmentRequest): Promise<Shipment> => {
-    const response = await authenticatedFetch(`/api/logistics/shipments/${id}/repeat`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to repeat shipment')
-    }
     return response.json()
   },
 
@@ -4628,21 +4058,6 @@ interface SupplyPlanetSummary {
   lastSyncedAt: string
 }
 
-// Types for KAWA sheet preview and sync
-interface KawaSheetPreviewResponse {
-  headers: string[]
-  rows: string[][]
-}
-
-interface KawaSheetSyncRequest {
-  tickerColumn: string | number
-  priceColumn: string | number
-  locationColumn?: string | number
-  locationDefault?: string
-  currencyColumn?: string | number
-  currencyDefault?: 'ICA' | 'CIS' | 'AIC' | 'NCC'
-}
-
 // Export the API interface that automatically uses mock or real based on configuration
 export const api = {
   auth: {
@@ -4732,9 +4147,7 @@ export const api = {
     updateRoleMapping: (id: number, mapping: DiscordRoleMappingRequest) =>
       realApi.updateDiscordRoleMapping(id, mapping),
     deleteRoleMapping: (id: number) => realApi.deleteDiscordRoleMapping(id),
-    getSettingsHistory: (key: string) => realApi.getSettingsHistory(key),
     getChannelConfigs: () => realApi.getChannelConfigs(),
-    getChannelConfig: (channelId: string) => realApi.getChannelConfig(channelId),
     updateChannelConfig: (channelId: string, data: UpdateChannelConfigRequest) =>
       realApi.updateChannelConfig(channelId, data),
     deleteChannelConfig: (channelId: string) => realApi.deleteChannelConfig(channelId),
@@ -4763,7 +4176,6 @@ export const api = {
   reservations: {
     list: (role?: 'owner' | 'counterparty' | 'all', status?: ReservationStatus) =>
       realApi.getReservations(role, status),
-    get: (id: number) => realApi.getReservation(id),
     createForSellOrder: (request: CreateSellOrderReservationRequest) =>
       realApi.createSellOrderReservation(request),
     createForBuyOrder: (request: CreateBuyOrderReservationRequest) =>
@@ -4778,7 +4190,6 @@ export const api = {
       realApi.cancelReservation(id, request),
     reopen: (id: number, request?: UpdateReservationStatusRequest) =>
       realApi.reopenReservation(id, request),
-    delete: (id: number) => realApi.deleteReservation(id),
     forSellOrder: (sellOrderId: number, opts?: { all?: boolean }) =>
       realApi.getReservationsForSellOrder(sellOrderId, opts),
     forBuyOrder: (buyOrderId: number, opts?: { all?: boolean }) =>
@@ -4791,9 +4202,6 @@ export const api = {
     get: (id: number) => realApi.getInvoice(id),
     getOrCreateForPartner: (counterpartyUserId: number) =>
       realApi.getOrCreateInvoiceForPartner(counterpartyUserId),
-    create: (request: CreateInvoiceRequest) => realApi.createInvoice(request),
-    update: (id: number, request: { name?: string; notes?: string }) =>
-      realApi.updateInvoice(id, request),
     delete: (id: number) => realApi.deleteInvoice(id),
     addLineItem: (invoiceId: number, request: AddLineItemRequest) =>
       realApi.addInvoiceLineItem(invoiceId, request),
@@ -4813,12 +4221,7 @@ export const api = {
       realApi.updateShoppingList(id, request),
     delete: (id: number) => realApi.deleteShoppingList(id),
   },
-  locations: {
-    getDistance: (from: string, to: string) => realApi.getLocationDistance(from, to),
-  },
   prices: {
-    list: (exchange?: string, location?: string, commodity?: string, currency?: Currency) =>
-      realApi.getPrices(exchange, location, commodity, currency),
     getByExchange: (exchange: string, version?: number) =>
       realApi.getPricesByExchange(exchange, version),
     create: (request: CreatePriceRequest) => realApi.createPrice(request),
@@ -4834,7 +4237,6 @@ export const api = {
   priceAdjustments: {
     list: (exchange?: string, location?: string, activeOnly?: boolean) =>
       realApi.getPriceAdjustments(exchange, location, activeOnly),
-    get: (id: number) => realApi.getPriceAdjustment(id),
     create: (request: CreatePriceAdjustmentRequest) => realApi.createPriceAdjustment(request),
     update: (id: number, request: UpdatePriceAdjustmentRequest) =>
       realApi.updatePriceAdjustment(id, request),
@@ -4844,46 +4246,29 @@ export const api = {
     list: () => realApi.getFioExchanges(),
   },
   fioPriceSync: {
-    getStatus: () => realApi.getFioPriceSyncStatus(),
-    syncAll: (priceField?: string) => realApi.syncFioPrices(undefined, priceField),
     syncExchange: (exchangeCode: string, priceField?: string) =>
       realApi.syncFioPrices(exchangeCode, priceField),
-  },
-  priceImport: {
-    previewCsv: (file: File, config: CsvImportRequest) => realApi.previewCsvImport(file, config),
-    importCsv: (file: File, config: CsvImportRequest) => realApi.importCsv(file, config),
-    previewGoogleSheets: (request: GoogleSheetsImportRequest) =>
-      realApi.previewGoogleSheetsImport(request),
-    importGoogleSheets: (request: GoogleSheetsImportRequest) => realApi.importGoogleSheets(request),
   },
   adminPriceSettings: {
     get: () => realApi.getPriceSettings(),
     updateFio: (request: UpdateFioSettingsRequest) => realApi.updateFioSettings(request),
     updateGoogle: (request: UpdateGoogleSettingsRequest) => realApi.updateGoogleSettings(request),
-    updateKawaSheet: (request: UpdateKawaSheetRequest) => realApi.updateKawaSheetSettings(request),
-    previewKawaSheet: () => realApi.previewKawaSheet(),
-    syncKawaSheet: (request: KawaSheetSyncRequest) => realApi.syncKawaSheet(request),
   },
   adminGlobalDefaults: {
     get: () => realApi.getGlobalDefaults(),
     update: (request: UpdateGlobalDefaultsRequest) => realApi.updateGlobalDefaults(request),
     reset: (key: string) => realApi.resetGlobalDefault(key),
-    getHistory: (key: string) => realApi.getGlobalDefaultHistory(key),
   },
   priceLists: {
     list: () => realApi.getPriceLists(),
-    get: (code: string) => realApi.getPriceList(code),
     create: (request: CreatePriceListRequest) => realApi.createPriceList(request),
     update: (code: string, request: UpdatePriceListRequest) =>
       realApi.updatePriceList(code, request),
     delete: (code: string) => realApi.deletePriceList(code),
     versions: {
       list: (code: string) => realApi.getPriceListVersions(code),
-      get: (code: string, version: number) => realApi.getPriceListVersion(code, version),
       create: (code: string, request: CreateVersionRequest) =>
         realApi.createPriceListVersion(code, request),
-      update: (code: string, version: number, request: UpdateVersionRequest) =>
-        realApi.updatePriceListVersion(code, version, request),
       promote: (code: string, version: number) => realApi.promotePriceListVersion(code, version),
       delete: (code: string, version: number) => realApi.deletePriceListVersion(code, version),
       diff: (code: string, version: number, otherVersion: number) =>
@@ -4892,7 +4277,6 @@ export const api = {
   },
   importConfigs: {
     list: () => realApi.getImportConfigs(),
-    get: (id: number) => realApi.getImportConfig(id),
     create: (request: CreateImportConfigRequest) => realApi.createImportConfig(request),
     update: (id: number, request: UpdateImportConfigRequest) =>
       realApi.updateImportConfig(id, request),
@@ -4900,7 +4284,6 @@ export const api = {
     sync: (id: number, version?: number) => realApi.syncImportConfig(id, version),
     syncUpload: (id: number, file: File, version?: number) =>
       realApi.syncImportConfigUpload(id, file, version),
-    preview: (id: number) => realApi.previewImportConfig(id),
   },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
@@ -4920,9 +4303,7 @@ export const api = {
   },
   corpOverviewViews: {
     list: () => realApi.listCorpOverviewViews(),
-    getPinned: () => realApi.getPinnedCorpOverviewViews(),
     browse: (search?: string, page?: number) => realApi.browseCorpOverviewViews(search, page),
-    visited: (page?: number) => realApi.getVisitedCorpOverviewViews(page),
     get: (id: number) => realApi.getCorpOverviewView(id),
     create: (request: CreateCorpOverviewViewRequest) => realApi.createCorpOverviewView(request),
     update: (id: number, request: UpdateCorpOverviewViewRequest) =>
@@ -4954,8 +4335,6 @@ export const api = {
     graph: () => realApi.getLogisticsGraph(),
     listFlows: () => realApi.listLogisticsFlows(),
     createFlow: (body: CreateLogisticsFlowRequest) => realApi.createLogisticsFlow(body),
-    bulkCreateFlows: (body: BulkCreateLogisticsFlowsRequest) =>
-      realApi.bulkCreateLogisticsFlows(body),
     bulkMultiCreateFlows: (body: BulkMultiCreateLogisticsFlowsRequest) =>
       realApi.bulkMultiCreateLogisticsFlows(body),
     previewBulkMultiFlows: (body: BulkMultiPreviewRequest) =>
@@ -4981,7 +4360,6 @@ export const api = {
 
     // Trips (the ship's run — owns status, stops, assigned shipments)
     listTrips: () => realApi.listTrips(),
-    getTrip: (id: number) => realApi.getTrip(id),
     createTrip: (body: CreateTripRequest) => realApi.createTrip(body),
     updateTrip: (id: number, body: UpdateTripRequest) => realApi.updateTrip(id, body),
     setTripStatus: (id: number, status: TripStatus) => realApi.setTripStatus(id, status),
@@ -4993,10 +4371,7 @@ export const api = {
     listShipments: (queued?: boolean) => realApi.listShipments(queued),
     getShipment: (id: number) => realApi.getShipment(id),
     createShipment: (body: CreateShipmentRequest) => realApi.createShipment(body),
-    updateShipment: (id: number, body: UpdateShipmentRequest) => realApi.updateShipment(id, body),
     deleteShipment: (id: number) => realApi.deleteShipment(id),
-    repeatShipment: (id: number, body: RepeatShipmentRequest = {}) =>
-      realApi.repeatShipment(id, body),
   },
 }
 
@@ -5040,22 +4415,16 @@ export type {
   CreatePriceAdjustmentRequest,
   UpdatePriceAdjustmentRequest,
   FioExchangeResponse,
-  ExchangeSyncStatus,
   SyncPricesResponse,
   // Import types
   CsvFieldMapping,
   CsvRowError,
-  ParsedPriceRow,
   CsvImportResult,
-  CsvPreviewResult,
-  CsvImportRequest,
-  GoogleSheetsImportRequest,
   // Admin Price Settings types
   FioPriceField,
   PriceSettingsResponse,
   UpdateFioSettingsRequest,
   UpdateGoogleSettingsRequest,
-  UpdateKawaSheetRequest,
   // Price List types
   PriceListType,
   PriceListDefinition,
@@ -5075,8 +4444,6 @@ export type {
   CreateImportConfigRequest,
   UpdateImportConfigRequest,
   PivotImportResult,
-  KawaSheetPreviewResponse,
-  KawaSheetSyncRequest,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

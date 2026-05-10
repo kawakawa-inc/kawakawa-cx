@@ -42,24 +42,6 @@ export class NotificationsController extends Controller {
   }
 
   /**
-   * Get a specific notification by ID
-   */
-  @Get('{id}')
-  public async getNotification(
-    @Path() id: number,
-    @Request() request: { user: JwtPayload }
-  ): Promise<Notification> {
-    const userId = request.user.userId
-    const notification = await notificationService.getById(id, userId)
-
-    if (!notification) {
-      throw NotFound('Notification not found')
-    }
-
-    return notification
-  }
-
-  /**
    * Mark a notification as read
    */
   @Put('{id}/read')

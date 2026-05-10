@@ -26,7 +26,7 @@ import {
 } from '../db/index.js'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken } from '../utils/jwt.js'
-import { Unauthorized, Forbidden, BadRequest, NotFound, Conflict } from '../utils/errors.js'
+import { Unauthorized, Forbidden, BadRequest, Conflict } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
 import { notificationService } from '@kawakawa/services/notifications'
 
@@ -40,10 +40,6 @@ interface RegisterRequest {
   email?: string
   password: string
   displayName: string
-}
-
-interface RequestPasswordResetRequest {
-  usernameOrEmail: string
 }
 
 interface ResetPasswordRequest {
@@ -267,30 +263,6 @@ export class AuthController extends Controller {
         permissions: permissionIds,
       },
     }
-  }
-
-  @Post('request-password-reset')
-  @SuccessResponse('200', 'Password reset email sent')
-  @Response(404, 'User not found')
-  public async requestPasswordReset(
-    @Body() body: RequestPasswordResetRequest
-  ): Promise<SuccessMessage> {
-    // Find user by username or email
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(
-        body.usernameOrEmail.includes('@')
-          ? eq(users.email, body.usernameOrEmail)
-          : eq(users.username, body.usernameOrEmail)
-      )
-      .limit(1)
-
-    if (!user) {
-      throw NotFound('User not found')
-    }
-
-    throw BadRequest('Password reset is not yet available. Please contact an administrator.')
   }
 
   @Post('reset-password')

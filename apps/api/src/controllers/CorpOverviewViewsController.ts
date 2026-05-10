@@ -26,7 +26,7 @@ import type {
 } from '@kawakawa/types'
 import { isFilterOperator, isMetricFilterable, isMetricValidFor } from '@kawakawa/types'
 import { db, corpOverviewViews, viewOwners, userVisitedViews, users } from '../db/index.js'
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
@@ -489,42 +489,6 @@ export class CorpOverviewViewsController extends Controller {
         )
       )
       .orderBy(corpOverviewViews.name)
-      .limit(pageSize)
-      .offset(offset)
-
-    await ensureCardClientIds(rows)
-    return rows.map(toResponse)
-  }
-
-  /**
-   * The caller's recently-visited unlisted views, paginated, most-recent
-   * first. Soft-deleted views are filtered out automatically. Public views
-   * aren't included even if they were "visited" — Browse covers their
-   * discovery surface and there's nothing to recover by listing them here.
-   *
-   * Declared before `{id}` so TSOA's route table matches `/visited` literally
-   * instead of trying to parse it as a numeric id.
-   */
-  @Get('visited')
-  public async getVisited(
-    @Request() request: { user: JwtPayload },
-    @Query() page?: number
-  ): Promise<CorpOverviewView[]> {
-    const userId = request.user.userId
-    const pageSize = 20
-    const offset = ((page ?? 1) - 1) * pageSize
-
-    const owners = buildOwnersSubquery()
-    const rows = await db
-      .select(buildViewSelect(owners))
-      .from(corpOverviewViews)
-      .innerJoin(
-        userVisitedViews,
-        and(eq(userVisitedViews.viewId, corpOverviewViews.id), eq(userVisitedViews.userId, userId))
-      )
-      .innerJoin(owners, eq(owners.viewId, corpOverviewViews.id))
-      .where(and(ACTIVE, eq(corpOverviewViews.privacy, 'unlisted')))
-      .orderBy(desc(userVisitedViews.lastVisitedAt))
       .limit(pageSize)
       .offset(offset)
 

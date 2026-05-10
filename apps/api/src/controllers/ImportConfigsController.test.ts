@@ -424,45 +424,4 @@ Test,DW,Drinking Water,UnknownPlace
       await expect(controller.syncConfig(1)).rejects.toThrow('No valid price data found')
     })
   })
-
-  describe('preview KAWA format', () => {
-    beforeEach(() => {
-      mockLocationsResult = [{ naturalId: 'MON', name: 'Montem', systemName: 'Moria' }]
-      mockCommoditiesResult = [{ ticker: 'DW' }]
-      mockPriceListsResult = [{ code: 'KAWA' }]
-    })
-
-    it('should preview without writing to database', async () => {
-      mockSheetContent = `,,,Title
-Category,Ticker,Material,Proxion
-Test,DW,Drinking Water,Montem
-,,, 24`
-
-      mockImportConfigsResult = [
-        {
-          id: 1,
-          priceListCode: 'KAWA',
-          name: 'Test',
-          sourceType: 'google_sheets',
-          format: 'kawa',
-          sheetsUrl: 'https://docs.google.com/spreadsheets/d/test',
-          sheetGid: null,
-          config: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ]
-
-      const result = (await controller.previewConfig(1)) as {
-        imported: number
-        updated: number
-        skipped: number
-        errors: string[]
-      }
-
-      expect(result.imported).toBe(1)
-      expect(result.updated).toBe(0)
-      expect(insertCalls).toHaveLength(0) // No actual inserts for preview
-    })
-  })
 })

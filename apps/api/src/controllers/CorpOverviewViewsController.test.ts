@@ -904,38 +904,4 @@ describe('CorpOverviewViewsController', () => {
       expect(onConflictDoUpdate).toHaveBeenCalled()
     })
   })
-
-  describe('getVisited', () => {
-    it('returns the caller’s visited unlisted views', async () => {
-      const visitedRow = {
-        id: 7,
-        ownersJson: JSON.stringify([{ userId: OTHER_ID, username: 'other' }]),
-        name: 'shared',
-        tickers: [],
-        cards: [],
-        excludedUserIds: [],
-        materialsTableColumns: [],
-        materialsTableTickers: [],
-        privacy: 'unlisted',
-        isPinned: false,
-        deletedAt: null,
-        createdAt: new Date('2026-04-22T00:00:00Z'),
-        updatedAt: new Date('2026-04-22T00:00:00Z'),
-      }
-      // subquery scaffold + main fetch
-      queueSelect([], [visitedRow])
-
-      const result = await controller.getVisited(ownerRequest)
-
-      expect(result).toHaveLength(1)
-      expect(result[0].id).toBe(7)
-      expect(result[0].privacy).toBe('unlisted')
-    })
-
-    it('returns an empty array when the caller has no visits', async () => {
-      queueSelect([], [])
-      const result = await controller.getVisited(ownerRequest)
-      expect(result).toEqual([])
-    })
-  })
 })

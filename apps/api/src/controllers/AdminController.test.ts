@@ -270,7 +270,7 @@ describe('AdminController', () => {
         }
       })
 
-      const result = await controller.getUser(5)
+      const result = await controller['getUser'](5)
 
       expect(result.id).toBe(5)
       expect(result.username).toBe('testuser')
@@ -293,7 +293,7 @@ describe('AdminController', () => {
         }
       })
 
-      await expect(controller.getUser(999)).rejects.toThrow('User not found')
+      await expect(controller['getUser'](999)).rejects.toThrow('User not found')
       expect(setStatusSpy).toHaveBeenCalledWith(404)
     })
   })

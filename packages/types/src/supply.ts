@@ -422,10 +422,10 @@ export interface BulkMultiCreateLogisticsFlowsRequest {
 
 export interface BulkMultiPlanetResult {
   planetLocationId: string
-  created: Array<{ category: BulkDetectionCategory; flow: LogisticsFlow }>
-  skippedDuplicates: Array<{ category: BulkDetectionCategory; ticker: string }>
-  skippedCycles: Array<{ category: BulkDetectionCategory; ticker: string }>
-  emptyCategories: BulkDetectionCategory[]
+  created: Array<{ category: BulkFlowCategory; flow: LogisticsFlow }>
+  skippedDuplicates: Array<{ category: BulkFlowCategory; ticker: string }>
+  skippedCycles: Array<{ category: BulkFlowCategory; ticker: string }>
+  emptyCategories: BulkFlowCategory[]
   /** Set when the planet wasn't found in fio_user_planets (not synced, or not owned by user) */
   error?: string
 }

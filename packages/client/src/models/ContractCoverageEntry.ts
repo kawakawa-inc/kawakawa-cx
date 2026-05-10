@@ -9,8 +9,7 @@
  * once FIO has synced after them.
  */
 export type ContractCoverageEntry = {
-    locationId: string;
-    commodityTicker: string;
-    incomingQuantity: number;
-};
-
+  locationId: string
+  commodityTicker: string
+  incomingQuantity: number
+}

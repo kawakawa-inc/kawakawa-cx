@@ -5,4 +5,4 @@
 /**
  * Construct a type with a set of properties K of type T
  */
-export type Record_string_string_or_null_ = Record<string, string>;
+export type Record_string_string_or_null_ = Record<string, string>

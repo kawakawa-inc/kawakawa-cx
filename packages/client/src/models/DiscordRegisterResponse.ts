@@ -2,10 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { DiscordAuthUser } from './DiscordAuthUser';
+import type { DiscordAuthUser } from './DiscordAuthUser'
 export type DiscordRegisterResponse = {
-    token: string;
-    user: DiscordAuthUser;
-    needsProfileCompletion: boolean;
-};
-
+  token: string
+  user: DiscordAuthUser
+  needsProfileCompletion: boolean
+}

@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CreateBuyOrderReservationRequest = {
-    buyOrderId: number;
-    quantity: number;
-    notes?: string;
-    expiresAt?: string;
-};
-
+  buyOrderId: number
+  quantity: number
+  notes?: string
+  expiresAt?: string
+}

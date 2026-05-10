@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum ImportSourceType {
-    CSV = 'csv',
-    GOOGLE_SHEETS = 'google_sheets',
+  CSV = 'csv',
+  GOOGLE_SHEETS = 'google_sheets',
 }

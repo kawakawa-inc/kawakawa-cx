@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UserPlanetSummary = {
-    id: number;
-    planetNaturalId: string;
-    planetName: string;
-    lastSyncedAt: string;
-};
-
+  id: number
+  planetNaturalId: string
+  planetName: string
+  lastSyncedAt: string
+}

@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type ValidateTokenResponse = {
-    valid: boolean;
-    username?: string;
-    expiresAt?: string;
-};
-
+  valid: boolean
+  username?: string
+  expiresAt?: string
+}

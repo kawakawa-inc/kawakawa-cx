@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateInvoiceRequest = {
-    name?: string;
-    notes?: string;
-};
-
+  name?: string
+  notes?: string
+}

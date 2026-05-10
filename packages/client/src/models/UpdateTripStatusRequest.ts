@@ -2,8 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { TripStatus } from './TripStatus';
+import type { TripStatus } from './TripStatus'
 export type UpdateTripStatusRequest = {
-    status: TripStatus;
-};
-
+  status: TripStatus
+}

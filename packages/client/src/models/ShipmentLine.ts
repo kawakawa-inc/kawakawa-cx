@@ -7,9 +7,8 @@
  * recurring flow; `flowId = null` is an ad-hoc one-off.
  */
 export type ShipmentLine = {
-    id: number;
-    flowId: number | null;
-    commodityTicker: string;
-    amount: number;
-};
-
+  id: number
+  flowId: number | null
+  commodityTicker: string
+  amount: number
+}

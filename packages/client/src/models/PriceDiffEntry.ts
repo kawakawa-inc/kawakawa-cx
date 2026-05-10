@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type PriceDiffEntry = {
-    commodityTicker: string;
-    locationId: string;
-    oldPrice: string | null;
-    newPrice: string | null;
-};
-
+  commodityTicker: string
+  locationId: string
+  oldPrice: string | null
+  newPrice: string | null
+}

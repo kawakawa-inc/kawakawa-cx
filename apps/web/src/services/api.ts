@@ -406,8 +406,6 @@ interface PriceSettingsResponse {
   fioBaseUrl: string
   fioPriceField: FioPriceField
   hasGoogleSheetsApiKey: boolean
-  kawaSheetUrl: string | null
-  kawaSheetGid: number | null
 }
 
 interface UpdateFioSettingsRequest {
@@ -504,7 +502,7 @@ interface UpdatePriceListRequest {
 
 // Import Config types
 type ImportSourceType = 'csv' | 'google_sheets'
-type ImportFormat = 'flat' | 'pivot' | 'kawa'
+type ImportFormat = 'flat' | 'pivot'
 
 interface ImportConfigResponse {
   id: number

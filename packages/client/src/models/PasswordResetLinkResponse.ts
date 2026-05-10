@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type PasswordResetLinkResponse = {
-    token: string;
-    expiresAt: string;
-    username: string;
-};
-
+  token: string
+  expiresAt: string
+  username: string
+}

@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CreateSelfSuppliedRequest = {
-    locationId: string;
-    commodityTicker: string;
-    note?: string | null;
-};
-
+  locationId: string
+  commodityTicker: string
+  note?: string | null
+}

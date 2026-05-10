@@ -7,6 +7,5 @@
  * view; the body identifies the user being added.
  */
 export type AddViewOwnerRequest = {
-    userId: number;
-};
-
+  userId: number
+}

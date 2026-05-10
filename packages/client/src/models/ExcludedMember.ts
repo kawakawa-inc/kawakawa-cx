@@ -8,18 +8,17 @@
  * manually unchecked them in the planning dropdown.
  */
 export type ExcludedMember = {
-    userId: number;
-    username: string;
-    /**
-     * ISO timestamp of the user's oldest FIO upload; null if they've never uploaded.
-     */
-    fioDataAge: string | null;
-    reason: ExcludedMember.reason;
-};
-export namespace ExcludedMember {
-    export enum reason {
-        FIO_STALE = 'fio-stale',
-        MANUAL = 'manual',
-    }
+  userId: number
+  username: string
+  /**
+   * ISO timestamp of the user's oldest FIO upload; null if they've never uploaded.
+   */
+  fioDataAge: string | null
+  reason: ExcludedMember.reason
 }
-
+export namespace ExcludedMember {
+  export enum reason {
+    FIO_STALE = 'fio-stale',
+    MANUAL = 'manual',
+  }
+}

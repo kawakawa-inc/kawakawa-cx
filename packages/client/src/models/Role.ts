@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type Role = {
-    id: string;
-    name: string;
-    color: string;
-};
-
+  id: string
+  name: string
+  color: string
+}

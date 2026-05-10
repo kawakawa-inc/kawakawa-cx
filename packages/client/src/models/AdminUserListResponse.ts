@@ -2,11 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { AdminUser } from './AdminUser';
+import type { AdminUser } from './AdminUser'
 export type AdminUserListResponse = {
-    users: Array<AdminUser>;
-    total: number;
-    page: number;
-    pageSize: number;
-};
-
+  users: Array<AdminUser>
+  total: number
+  page: number
+  pageSize: number
+}

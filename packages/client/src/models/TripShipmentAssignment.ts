@@ -7,8 +7,7 @@
  * `stops` array, matching `TripStopInput[]`.
  */
 export type TripShipmentAssignment = {
-    shipmentId: number;
-    originStopIndex: number;
-    destStopIndex: number;
-};
-
+  shipmentId: number
+  originStopIndex: number
+  destStopIndex: number
+}

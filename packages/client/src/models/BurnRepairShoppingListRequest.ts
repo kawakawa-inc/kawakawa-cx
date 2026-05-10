@@ -6,8 +6,7 @@
  * Request body for POST /burn-repair/shopping-list
  */
 export type BurnRepairShoppingListRequest = {
-    originLocationId: string;
-    basePlanetId: string;
-    days: number;
-};
-
+  originLocationId: string
+  basePlanetId: string
+  days: number
+}

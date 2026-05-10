@@ -6,8 +6,7 @@
  * Workforce summary entry
  */
 export type BurnRepairWorkforceEntry = {
-    type: string;
-    totalPopulation: number;
-    totalRequired: number;
-};
-
+  type: string
+  totalPopulation: number
+  totalRequired: number
+}

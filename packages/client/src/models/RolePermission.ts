@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type RolePermission = {
-    id: number;
-    roleId: string;
-    permissionId: string;
-    allowed: boolean;
-};
-
+  id: number
+  roleId: string
+  permissionId: string
+  allowed: boolean
+}

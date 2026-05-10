@@ -3,10 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type Commodity = {
-    ticker: string;
-    name: string;
-    category: string | null;
-    weight: number | null;
-    volume: number | null;
-};
-
+  ticker: string
+  name: string
+  category: string | null
+  weight: number | null
+  volume: number | null
+}

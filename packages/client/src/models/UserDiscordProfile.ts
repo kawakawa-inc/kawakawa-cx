@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UserDiscordProfile = {
-    discordId: string;
-    discordUsername: string;
-    discordAvatar: string | null;
-    connectedAt: string;
-};
-
+  discordId: string
+  discordUsername: string
+  discordAvatar: string | null
+  connectedAt: string
+}

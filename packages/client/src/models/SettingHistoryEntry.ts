@@ -3,11 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 export type SettingHistoryEntry = {
-    id: number;
-    key: string;
-    value: string;
-    changedByUsername: string | null;
-    effectiveAt: string;
-    createdAt: string;
-};
-
+  id: number
+  key: string
+  value: string
+  changedByUsername: string | null
+  effectiveAt: string
+  createdAt: string
+}

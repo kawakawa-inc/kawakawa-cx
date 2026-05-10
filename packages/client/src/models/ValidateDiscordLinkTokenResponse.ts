@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type ValidateDiscordLinkTokenResponse = {
-    valid: boolean;
-    discordUsername?: string;
-    expiresAt?: string;
-    error?: string;
-};
-
+  valid: boolean
+  discordUsername?: string
+  expiresAt?: string
+  error?: string
+}

@@ -3,10 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordRole = {
-    id: string;
-    name: string;
-    color: number;
-    position: number;
-    managed: boolean;
-};
-
+  id: string
+  name: string
+  color: number
+  position: number
+  managed: boolean
+}

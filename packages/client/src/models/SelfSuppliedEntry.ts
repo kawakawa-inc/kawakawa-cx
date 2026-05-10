@@ -9,10 +9,9 @@
  * ticker for the purposes of the contract walk.
  */
 export type SelfSuppliedEntry = {
-    id: number;
-    locationId: string;
-    commodityTicker: string;
-    note: string | null;
-    createdAt: string;
-};
-
+  id: number
+  locationId: string
+  commodityTicker: string
+  note: string | null
+  createdAt: string
+}

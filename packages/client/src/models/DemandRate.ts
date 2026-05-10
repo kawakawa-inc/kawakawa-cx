@@ -6,6 +6,6 @@
  * Whether a fixed demand amount is a total or daily rate
  */
 export enum DemandRate {
-    TOTAL = 'total',
-    DAILY = 'daily',
+  TOTAL = 'total',
+  DAILY = 'daily',
 }

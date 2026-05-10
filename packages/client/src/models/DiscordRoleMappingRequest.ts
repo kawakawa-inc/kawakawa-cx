@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordRoleMappingRequest = {
-    discordRoleId: string;
-    discordRoleName: string;
-    appRoleId: string;
-    priority?: number;
-};
-
+  discordRoleId: string
+  discordRoleName: string
+  appRoleId: string
+  priority?: number
+}

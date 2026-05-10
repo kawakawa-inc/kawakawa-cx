@@ -6,8 +6,8 @@
  * Lifecycle status of a planned trip.
  */
 export enum TripStatus {
-    PLANNED = 'planned',
-    DISPATCHED = 'dispatched',
-    DELIVERED = 'delivered',
-    CANCELLED = 'cancelled',
+  PLANNED = 'planned',
+  DISPATCHED = 'dispatched',
+  DELIVERED = 'delivered',
+  CANCELLED = 'cancelled',
 }

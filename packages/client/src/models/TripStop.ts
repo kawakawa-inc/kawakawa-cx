@@ -6,10 +6,9 @@
  * One stop on a trip.
  */
 export type TripStop = {
-    id: number;
-    sequence: number;
-    locationId: string;
-    plannedArriveAt: string;
-    notes: string | null;
-};
-
+  id: number
+  sequence: number
+  locationId: string
+  plannedArriveAt: string
+  notes: string | null
+}

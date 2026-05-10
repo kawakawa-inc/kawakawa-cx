@@ -2,30 +2,29 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { BuyOrderSourceMode } from './BuyOrderSourceMode';
-import type { Currency } from './Currency';
-import type { DemandSource } from './DemandSource';
-import type { OrderType } from './OrderType';
-import type { PricingMode } from './PricingMode';
+import type { BuyOrderSourceMode } from './BuyOrderSourceMode'
+import type { Currency } from './Currency'
+import type { DemandSource } from './DemandSource'
+import type { OrderType } from './OrderType'
+import type { PricingMode } from './PricingMode'
 export type BuyOrderResponse = {
-    id: number;
-    commodityTicker: string;
-    locationId: string;
-    quantity: number;
-    price: number;
-    currency: Currency;
-    priceListCode: string | null;
-    orderType: OrderType;
-    sourceMode: BuyOrderSourceMode;
-    demandSource: DemandSource | null;
-    targetDays: number | null;
-    activeReservationCount: number;
-    reservedQuantity: number;
-    fulfilledQuantity: number;
-    remainingQuantity: number;
-    pricingMode: PricingMode;
-    effectivePrice: number | null;
-    isFallback: boolean;
-    priceLocationId: string | null;
-};
-
+  id: number
+  commodityTicker: string
+  locationId: string
+  quantity: number
+  price: number
+  currency: Currency
+  priceListCode: string | null
+  orderType: OrderType
+  sourceMode: BuyOrderSourceMode
+  demandSource: DemandSource | null
+  targetDays: number | null
+  activeReservationCount: number
+  reservedQuantity: number
+  fulfilledQuantity: number
+  remainingQuantity: number
+  pricingMode: PricingMode
+  effectivePrice: number | null
+  isFallback: boolean
+  priceLocationId: string | null
+}

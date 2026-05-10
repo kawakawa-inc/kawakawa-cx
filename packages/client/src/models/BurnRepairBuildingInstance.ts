@@ -6,14 +6,13 @@
  * One building instance with age and repair eligibility
  */
 export type BurnRepairBuildingInstance = {
-    ticker: string;
-    /**
-     * Days since last repair (or construction if never repaired)
-     */
-    ageDays: number;
-    /**
-     * False for "indestructible" buildings (CM, HB1, STO, etc.) that don't decay
-     */
-    needsRepair: boolean;
-};
-
+  ticker: string
+  /**
+   * Days since last repair (or construction if never repaired)
+   */
+  ageDays: number
+  /**
+   * False for "indestructible" buildings (CM, HB1, STO, etc.) that don't decay
+   */
+  needsRepair: boolean
+}

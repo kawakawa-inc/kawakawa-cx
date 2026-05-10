@@ -6,6 +6,6 @@
  * Buy order source mode: manual (fixed qty) or demand (auto-calculated)
  */
 export enum BuyOrderSourceMode {
-    MANUAL = 'manual',
-    DEMAND = 'demand',
+  MANUAL = 'manual',
+  DEMAND = 'demand',
 }

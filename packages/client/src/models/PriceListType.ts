@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum PriceListType {
-    FIO = 'fio',
-    CUSTOM = 'custom',
+  FIO = 'fio',
+  CUSTOM = 'custom',
 }

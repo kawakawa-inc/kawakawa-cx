@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum ReservationStatus {
-    PENDING = 'pending',
-    CONFIRMED = 'confirmed',
-    REJECTED = 'rejected',
-    FULFILLED = 'fulfilled',
-    EXPIRED = 'expired',
-    CANCELLED = 'cancelled',
+  PENDING = 'pending',
+  CONFIRMED = 'confirmed',
+  REJECTED = 'rejected',
+  FULFILLED = 'fulfilled',
+  EXPIRED = 'expired',
+  CANCELLED = 'cancelled',
 }

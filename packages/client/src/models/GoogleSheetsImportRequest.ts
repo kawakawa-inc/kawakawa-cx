@@ -2,10 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { CsvFieldMapping } from './CsvFieldMapping';
+import type { CsvFieldMapping } from './CsvFieldMapping'
 export type GoogleSheetsImportRequest = {
-    url: string;
-    priceListCode: string;
-    fieldMapping: CsvFieldMapping;
-};
-
+  url: string
+  priceListCode: string
+  fieldMapping: CsvFieldMapping
+}

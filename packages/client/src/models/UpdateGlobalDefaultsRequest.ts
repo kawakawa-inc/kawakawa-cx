@@ -2,8 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Record_string_unknown_ } from './Record_string_unknown_';
+import type { Record_string_unknown_ } from './Record_string_unknown_'
 export type UpdateGlobalDefaultsRequest = {
-    settings: Record_string_unknown_;
-};
-
+  settings: Record_string_unknown_
+}

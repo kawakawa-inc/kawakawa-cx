@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum ImportFormat {
-    FLAT = 'flat',
-    PIVOT = 'pivot',
-    KAWA = 'kawa',
+  FLAT = 'flat',
+  PIVOT = 'pivot',
 }

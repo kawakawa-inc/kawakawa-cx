@@ -11,6 +11,6 @@
  * it to render the metric picker and format cell values.
  */
 export enum CorpMetricGroupBy {
-    TICKER = 'ticker',
-    USER_TICKER = 'user-ticker',
+  TICKER = 'ticker',
+  USER_TICKER = 'user-ticker',
 }

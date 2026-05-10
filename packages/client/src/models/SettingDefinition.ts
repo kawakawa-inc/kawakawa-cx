@@ -2,15 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { SettingValueType } from './SettingValueType';
+import type { SettingValueType } from './SettingValueType'
 export type SettingDefinition = {
-    key: string;
-    type: SettingValueType;
-    defaultValue: any;
-    category: string;
-    label: string;
-    description: string;
-    enumOptions?: Array<string>;
-    sensitive?: boolean;
-};
-
+  key: string
+  type: SettingValueType
+  defaultValue: any
+  category: string
+  label: string
+  description: string
+  enumOptions?: Array<string>
+  sensitive?: boolean
+}

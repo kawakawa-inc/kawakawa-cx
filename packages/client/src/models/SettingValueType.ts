@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum SettingValueType {
-    STRING = 'string',
-    BOOLEAN = 'boolean',
-    NUMBER = 'number',
-    ENUM = 'enum',
-    STRING_ = 'string[]',
+  STRING = 'string',
+  BOOLEAN = 'boolean',
+  NUMBER = 'number',
+  ENUM = 'enum',
+  STRING_ = 'string[]',
 }

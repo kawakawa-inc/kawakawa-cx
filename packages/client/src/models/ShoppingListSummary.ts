@@ -6,11 +6,10 @@
  * Shopping list summary (for listing)
  */
 export type ShoppingListSummary = {
-    id: number;
-    name: string;
-    itemCount: number;
-    totalQuantity: number;
-    createdAt: string;
-    updatedAt: string;
-};
-
+  id: number
+  name: string
+  itemCount: number
+  totalQuantity: number
+  createdAt: string
+  updatedAt: string
+}

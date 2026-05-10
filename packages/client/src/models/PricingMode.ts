@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum PricingMode {
-    FIXED = 'fixed',
-    DYNAMIC = 'dynamic',
+  FIXED = 'fixed',
+  DYNAMIC = 'dynamic',
 }

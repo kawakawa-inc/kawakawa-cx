@@ -6,9 +6,8 @@
  * Response type for exchange sync status
  */
 export type ExchangeSyncStatus = {
-    exchangeCode: string;
-    locationId: string | null;
-    lastSyncedAt: string | null;
-    priceCount: number;
-};
-
+  exchangeCode: string
+  locationId: string | null
+  lastSyncedAt: string | null
+  priceCount: number
+}

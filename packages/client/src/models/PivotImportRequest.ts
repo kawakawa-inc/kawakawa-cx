@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type PivotImportRequest = {
-    url: string;
-    priceListCode: string;
-};
-
+  url: string
+  priceListCode: string
+}

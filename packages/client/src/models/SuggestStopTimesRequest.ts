@@ -9,31 +9,30 @@
  * arrival is taken from `startAt`; subsequent stops are accumulated.
  */
 export type SuggestStopTimesRequest = {
-    /**
-     * ISO timestamp for the first stop.
-     */
-    startAt: string;
-    /**
-     * Ordered locations the trip will visit.
-     */
-    stops: Array<{
-        locationId: string;
-    }>;
-    /**
-     * Optional ship — used to compute the load-factor (full ship is slower).
-     */
-    shipDbId?: number | null;
-    /**
-     * Shipments routed against the trip's stops. Used to compute per-segment
-     * cargo mass for the load factor.
-     */
-    shipments: Array<{
-        lines: Array<{
-            amount: number;
-            commodityTicker: string;
-        }>;
-        destStopIndex: number;
-        originStopIndex: number;
-    }>;
-};
-
+  /**
+   * ISO timestamp for the first stop.
+   */
+  startAt: string
+  /**
+   * Ordered locations the trip will visit.
+   */
+  stops: Array<{
+    locationId: string
+  }>
+  /**
+   * Optional ship — used to compute the load-factor (full ship is slower).
+   */
+  shipDbId?: number | null
+  /**
+   * Shipments routed against the trip's stops. Used to compute per-segment
+   * cargo mass for the load factor.
+   */
+  shipments: Array<{
+    lines: Array<{
+      amount: number
+      commodityTicker: string
+    }>
+    destStopIndex: number
+    originStopIndex: number
+  }>
+}

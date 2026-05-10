@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateRoleRequest = {
-    name?: string;
-    color?: string;
-};
-
+  name?: string
+  color?: string
+}

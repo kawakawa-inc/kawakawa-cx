@@ -3,8 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum Currency {
-    ICA = 'ICA',
-    CIS = 'CIS',
-    AIC = 'AIC',
-    NCC = 'NCC',
+  ICA = 'ICA',
+  CIS = 'CIS',
+  AIC = 'AIC',
+  NCC = 'NCC',
 }

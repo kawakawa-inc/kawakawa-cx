@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum MessageVisibility {
-    EPHEMERAL = 'ephemeral',
-    PUBLIC = 'public',
+  EPHEMERAL = 'ephemeral',
+  PUBLIC = 'public',
 }

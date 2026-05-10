@@ -6,7 +6,6 @@
  * Repair material need on a ship (synced from FIO `RepairMaterials`)
  */
 export type ShipRepairMaterial = {
-    ticker: string;
-    amount: number;
-};
-
+  ticker: string
+  amount: number
+}

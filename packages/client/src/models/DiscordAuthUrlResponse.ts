@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordAuthUrlResponse = {
-    url: string;
-    state: string;
-};
-
+  url: string
+  state: string
+}

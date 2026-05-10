@@ -2,11 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { FilterPrivacy } from './FilterPrivacy';
-import type { SavedFilterData } from './SavedFilterData';
+import type { FilterPrivacy } from './FilterPrivacy'
+import type { SavedFilterData } from './SavedFilterData'
 export type CreateSavedFilterRequest = {
-    name: string;
-    filterData: SavedFilterData;
-    privacy: FilterPrivacy;
-};
-
+  name: string
+  filterData: SavedFilterData
+  privacy: FilterPrivacy
+}

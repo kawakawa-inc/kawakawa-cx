@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum FilterPrivacy {
-    PRIVATE = 'private',
-    UNLISTED = 'unlisted',
-    PUBLIC = 'public',
+  PRIVATE = 'private',
+  UNLISTED = 'unlisted',
+  PUBLIC = 'public',
 }

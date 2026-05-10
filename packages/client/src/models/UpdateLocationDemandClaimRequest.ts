@@ -2,12 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ClaimCategory } from './ClaimCategory';
-import type { DemandRate } from './DemandRate';
+import type { ClaimCategory } from './ClaimCategory'
+import type { DemandRate } from './DemandRate'
 export type UpdateLocationDemandClaimRequest = {
-    quantity?: number;
-    rate?: DemandRate;
-    category?: ClaimCategory;
-    note?: string | null;
-};
-
+  quantity?: number
+  rate?: DemandRate
+  category?: ClaimCategory
+  note?: string | null
+}

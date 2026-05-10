@@ -6,11 +6,10 @@
  * A single shopping list item
  */
 export type BurnRepairShoppingListItem = {
-    commodityTicker: string;
-    demand: number;
-    production: number;
-    originStock: number;
-    baseStock: number;
-    gap: number;
-};
-
+  commodityTicker: string
+  demand: number
+  production: number
+  originStock: number
+  baseStock: number
+  gap: number
+}

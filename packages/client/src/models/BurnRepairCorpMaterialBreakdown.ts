@@ -2,7 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { BurnRepairCorpMaterialUserContribution } from './BurnRepairCorpMaterialUserContribution';
+import type { BurnRepairCorpMaterialUserContribution } from './BurnRepairCorpMaterialUserContribution'
 /**
  * Response for GET /burn-repair/corp/material/:ticker.
  *
@@ -13,17 +13,16 @@ import type { BurnRepairCorpMaterialUserContribution } from './BurnRepairCorpMat
  * for now — they don't drill down cleanly through `burn_repair_cache`.
  */
 export type BurnRepairCorpMaterialBreakdown = {
-    commodityTicker: string;
-    productionDaily: number;
-    burnDaily: number;
-    inputsDaily: number;
-    /**
-     * Convenience: burnDaily + inputsDaily, the "consumption" axis in the modal.
-     */
-    consumptionDaily: number;
-    /**
-     * Sorted descending by `productionDaily + consumptionDaily`.
-     */
-    perUser: Array<BurnRepairCorpMaterialUserContribution>;
-};
-
+  commodityTicker: string
+  productionDaily: number
+  burnDaily: number
+  inputsDaily: number
+  /**
+   * Convenience: burnDaily + inputsDaily, the "consumption" axis in the modal.
+   */
+  consumptionDaily: number
+  /**
+   * Sorted descending by `productionDaily + consumptionDaily`.
+   */
+  perUser: Array<BurnRepairCorpMaterialUserContribution>
+}

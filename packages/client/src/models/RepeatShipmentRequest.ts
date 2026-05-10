@@ -8,9 +8,8 @@
  * amounts, etc.).
  */
 export type RepeatShipmentRequest = {
-    /**
-     * Optional notes override for the cloned shipment.
-     */
-    notes?: string | null;
-};
-
+  /**
+   * Optional notes override for the cloned shipment.
+   */
+  notes?: string | null
+}

@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordCallbackRequest = {
-    code: string;
-    state: string;
-};
-
+  code: string
+  state: string
+}

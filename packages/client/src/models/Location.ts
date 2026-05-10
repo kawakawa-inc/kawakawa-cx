@@ -2,12 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { LocationType } from './LocationType';
+import type { LocationType } from './LocationType'
 export type Location = {
-    id: string;
-    name: string;
-    type: LocationType;
-    systemCode: string;
-    systemName: string;
-};
-
+  id: string
+  name: string
+  type: LocationType
+  systemCode: string
+  systemName: string
+}

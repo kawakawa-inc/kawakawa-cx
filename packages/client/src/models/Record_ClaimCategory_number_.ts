@@ -6,9 +6,8 @@
  * Construct a type with a set of properties K of type T
  */
 export type Record_ClaimCategory_number_ = {
-    reserve: number;
-    government: number;
-    contract: number;
-    other: number;
-};
-
+  reserve: number
+  government: number
+  contract: number
+  other: number
+}

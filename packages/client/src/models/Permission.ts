@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type Permission = {
-    id: string;
-    name: string;
-    description: string | null;
-};
-
+  id: string
+  name: string
+  description: string | null
+}

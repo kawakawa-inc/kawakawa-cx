@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UsernameAvailabilityResponse = {
-    available: boolean;
-    message?: string;
-};
-
+  available: boolean
+  message?: string
+}

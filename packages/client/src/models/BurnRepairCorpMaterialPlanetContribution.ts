@@ -8,10 +8,9 @@
  * breakdown modal can drill from user → planet without an extra round-trip.
  */
 export type BurnRepairCorpMaterialPlanetContribution = {
-    planetNaturalId: string;
-    planetName: string;
-    productionDaily: number;
-    burnDaily: number;
-    inputsDaily: number;
-};
-
+  planetNaturalId: string
+  planetName: string
+  productionDaily: number
+  burnDaily: number
+  inputsDaily: number
+}

@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum InvoiceDirection {
-    SENT = 'sent',
-    RECEIVED = 'received',
+  SENT = 'sent',
+  RECEIVED = 'received',
 }

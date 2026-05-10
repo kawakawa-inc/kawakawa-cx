@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateUserRequest = {
-    isActive?: boolean;
-    roles?: Array<string>;
-};
-
+  isActive?: boolean
+  roles?: Array<string>
+}

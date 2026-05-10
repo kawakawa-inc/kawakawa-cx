@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type PivotImportResult = {
-    imported: number;
-    updated: number;
-    skipped: number;
-    errors: Array<string>;
-};
-
+  imported: number
+  updated: number
+  skipped: number
+  errors: Array<string>
+}

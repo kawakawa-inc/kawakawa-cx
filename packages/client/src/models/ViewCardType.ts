@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum ViewCardType {
-    TABLE = 'table',
-    GRAPH = 'graph',
+  TABLE = 'table',
+  GRAPH = 'graph',
 }

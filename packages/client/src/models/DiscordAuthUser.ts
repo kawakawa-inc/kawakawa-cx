@@ -2,13 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Role } from './Role';
+import type { Role } from './Role'
 export type DiscordAuthUser = {
-    id: number;
-    username: string;
-    displayName: string;
-    email?: string;
-    roles: Array<Role>;
-    permissions: Array<string>;
-};
-
+  id: number
+  username: string
+  displayName: string
+  email?: string
+  roles: Array<Role>
+  permissions: Array<string>
+}

@@ -9,7 +9,6 @@
  * is to delete the view itself.
  */
 export type ViewOwner = {
-    userId: number;
-    username: string;
-};
-
+  userId: number
+  username: string
+}

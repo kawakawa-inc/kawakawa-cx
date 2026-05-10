@@ -3,6 +3,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CompleteDiscordLinkRequest = {
-    token: string;
-};
-
+  token: string
+}

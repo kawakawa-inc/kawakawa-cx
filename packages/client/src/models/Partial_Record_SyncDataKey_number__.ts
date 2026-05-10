@@ -6,9 +6,8 @@
  * Make all properties in T optional
  */
 export type Partial_Record_SyncDataKey_number__ = {
-    locations?: number;
-    commodities?: number;
-    priceLists?: number;
-    globalDefaults?: number;
-};
-
+  locations?: number
+  commodities?: number
+  priceLists?: number
+  globalDefaults?: number
+}

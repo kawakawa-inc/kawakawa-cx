@@ -2,14 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { BulkMultiPlanetResult } from './BulkMultiPlanetResult';
+import type { BulkMultiPlanetResult } from './BulkMultiPlanetResult'
 export type BulkMultiCreateLogisticsFlowsResponse = {
-    perPlanet: Array<BulkMultiPlanetResult>;
-    totals: {
-        empty: number;
-        cycles: number;
-        duplicates: number;
-        created: number;
-    };
-};
-
+  perPlanet: Array<BulkMultiPlanetResult>
+  totals: {
+    empty: number
+    cycles: number
+    duplicates: number
+    created: number
+  }
+}

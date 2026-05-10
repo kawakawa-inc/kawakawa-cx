@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type SetRolePermissionRequest = {
-    roleId: string;
-    permissionId: string;
-    allowed: boolean;
-};
-
+  roleId: string
+  permissionId: string
+  allowed: boolean
+}

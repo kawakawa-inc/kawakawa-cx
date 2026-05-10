@@ -2,14 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ClaimCategory } from './ClaimCategory';
-import type { DemandRate } from './DemandRate';
+import type { ClaimCategory } from './ClaimCategory'
+import type { DemandRate } from './DemandRate'
 export type CreateLocationDemandClaimRequest = {
-    locationId: string;
-    commodityTicker: string;
-    quantity: number;
-    rate: DemandRate;
-    category: ClaimCategory;
-    note?: string;
-};
-
+  locationId: string
+  commodityTicker: string
+  quantity: number
+  rate: DemandRate
+  category: ClaimCategory
+  note?: string
+}

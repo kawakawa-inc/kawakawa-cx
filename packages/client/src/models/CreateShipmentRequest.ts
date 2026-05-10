@@ -2,11 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ShipmentLineInput } from './ShipmentLineInput';
+import type { ShipmentLineInput } from './ShipmentLineInput'
 export type CreateShipmentRequest = {
-    originLocationId: string;
-    destLocationId: string;
-    notes?: string | null;
-    lines: Array<ShipmentLineInput>;
-};
-
+  originLocationId: string
+  destLocationId: string
+  notes?: string | null
+  lines: Array<ShipmentLineInput>
+}

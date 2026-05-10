@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateVersionRequest = {
-    label?: string | null;
-    description?: string | null;
-    defaultLocationId?: string;
-};
-
+  label?: string | null
+  description?: string | null
+  defaultLocationId?: string
+}

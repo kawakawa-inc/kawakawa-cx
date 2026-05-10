@@ -2,8 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Record_string_number_ } from './Record_string_number_';
+import type { Record_string_number_ } from './Record_string_number_'
 /**
  * Map of commodity ticker to quantity (alias for consistency)
  */
-export type ShoppingListMaterials = Record_string_number_;
+export type ShoppingListMaterials = Record_string_number_

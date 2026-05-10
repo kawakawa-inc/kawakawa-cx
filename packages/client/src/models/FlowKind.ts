@@ -6,7 +6,7 @@
  * Edge sizing rule: demand-pull, surplus-push, or fixed override
  */
 export enum FlowKind {
-    DEMAND = 'demand',
-    SURPLUS = 'surplus',
-    FIXED = 'fixed',
+  DEMAND = 'demand',
+  SURPLUS = 'surplus',
+  FIXED = 'fixed',
 }

@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CsvRowError = {
-    rowNumber: number;
-    field: string;
-    value: string;
-    message: string;
-};
-
+  rowNumber: number
+  field: string
+  value: string
+  message: string
+}

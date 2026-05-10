@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum LocationType {
-    STATION = 'Station',
-    PLANET = 'Planet',
+  STATION = 'Station',
+  PLANET = 'Planet',
 }

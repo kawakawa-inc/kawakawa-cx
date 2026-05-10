@@ -7,9 +7,8 @@
  * Can use header names (string) or column indices (number, 0-based)
  */
 export type CsvFieldMapping = {
-    ticker: (string | number);
-    location?: (string | number);
-    price: (string | number);
-    currency?: (string | number);
-};
-
+  ticker: string | number
+  location?: string | number
+  price: string | number
+  currency?: string | number
+}

@@ -2,12 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Record_string_number_ } from './Record_string_number_';
+import type { Record_string_number_ } from './Record_string_number_'
 /**
  * Response for GET /burn-repair/corp/buildings
  */
 export type BurnRepairCorpBuildingsResponse = {
-    buildings: Record_string_number_;
-    totalBuildings: number;
-};
-
+  buildings: Record_string_number_
+  totalBuildings: number
+}

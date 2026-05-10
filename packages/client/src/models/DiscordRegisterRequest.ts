@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordRegisterRequest = {
-    state: string;
-    username?: string;
-    displayName: string;
-    email?: string;
-};
-
+  state: string
+  username?: string
+  displayName: string
+  email?: string
+}

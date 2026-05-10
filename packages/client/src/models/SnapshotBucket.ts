@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum SnapshotBucket {
-    DAY = 'day',
-    WEEK = 'week',
-    MONTH = 'month',
+  DAY = 'day',
+  WEEK = 'week',
+  MONTH = 'month',
 }

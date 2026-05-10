@@ -2,11 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Currency } from './Currency';
+import type { Currency } from './Currency'
 export type UpdatePriceListRequest = {
-    name?: string;
-    description?: string | null;
-    currency?: Currency;
-    isActive?: boolean;
-};
-
+  name?: string
+  description?: string | null
+  currency?: Currency
+  isActive?: boolean
+}

@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type ShipmentLineInput = {
-    flowId?: number | null;
-    commodityTicker: string;
-    amount: number;
-};
-
+  flowId?: number | null
+  commodityTicker: string
+  amount: number
+}

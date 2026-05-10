@@ -14,11 +14,11 @@
  * - production_output: recurring production order outputs (surplus)
  */
 export enum BulkFlowCategory {
-    BURN = 'burn',
-    PRODUCTION_INPUT = 'production_input',
-    REPAIR = 'repair',
-    GOVERNMENT = 'government',
-    CONTRACT = 'contract',
-    RESERVE = 'reserve',
-    PRODUCTION_OUTPUT = 'production_output',
+  BURN = 'burn',
+  PRODUCTION_INPUT = 'production_input',
+  REPAIR = 'repair',
+  GOVERNMENT = 'government',
+  CONTRACT = 'contract',
+  RESERVE = 'reserve',
+  PRODUCTION_OUTPUT = 'production_output',
 }

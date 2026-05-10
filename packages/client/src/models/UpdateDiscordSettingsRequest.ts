@@ -3,12 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateDiscordSettingsRequest = {
-    clientId?: string;
-    clientSecret?: string;
-    botToken?: string;
-    redirectUri?: string;
-    guildId?: string;
-    autoApprovalEnabled?: boolean;
-    webUrl?: string;
-};
-
+  clientId?: string
+  clientSecret?: string
+  botToken?: string
+  redirectUri?: string
+  guildId?: string
+  autoApprovalEnabled?: boolean
+  webUrl?: string
+}

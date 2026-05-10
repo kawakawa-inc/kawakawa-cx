@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CreateRoleRequest = {
-    id: string;
-    name: string;
-    color: string;
-};
-
+  id: string
+  name: string
+  color: string
+}

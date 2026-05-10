@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type CreateInvoiceRequest = {
-    counterpartyUserId: number;
-    name?: string;
-    notes?: string;
-};
-
+  counterpartyUserId: number
+  name?: string
+  notes?: string
+}

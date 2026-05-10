@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type SyncJobStartResponse = {
-    jobIds: {
-        planets: number;
-        inventory: number;
-    };
-};
-
+  jobIds: {
+    planets: number
+    inventory: number
+  }
+}

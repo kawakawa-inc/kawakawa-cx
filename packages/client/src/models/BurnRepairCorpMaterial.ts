@@ -6,10 +6,9 @@
  * Aggregated ticker totals for corp-wide views
  */
 export type BurnRepairCorpMaterial = {
-    commodityTicker: string;
-    burnDaily: number;
-    inputsDaily: number;
-    repairTotal: number;
-    productionDaily: number;
-};
-
+  commodityTicker: string
+  burnDaily: number
+  inputsDaily: number
+  repairTotal: number
+  productionDaily: number
+}

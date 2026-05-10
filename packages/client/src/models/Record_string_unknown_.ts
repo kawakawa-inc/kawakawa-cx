@@ -5,4 +5,4 @@
 /**
  * Construct a type with a set of properties K of type T
  */
-export type Record_string_unknown_ = Record<string, any>;
+export type Record_string_unknown_ = Record<string, any>

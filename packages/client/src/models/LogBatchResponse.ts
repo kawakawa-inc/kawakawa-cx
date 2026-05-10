@@ -6,13 +6,12 @@
  * Response from log submission
  */
 export type LogBatchResponse = {
-    /**
-     * Whether the logs were accepted
-     */
-    accepted: boolean;
-    /**
-     * Number of logs processed
-     */
-    count: number;
-};
-
+  /**
+   * Whether the logs were accepted
+   */
+  accepted: boolean
+  /**
+   * Number of logs processed
+   */
+  count: number
+}

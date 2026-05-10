@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordProfileForRegistration = {
-    discordId: string;
-    discordUsername: string;
-    discordAvatar: string | null;
-};
-
+  discordId: string
+  discordUsername: string
+  discordAvatar: string | null
+}

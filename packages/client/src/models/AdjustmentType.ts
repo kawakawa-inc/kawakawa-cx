@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum AdjustmentType {
-    PERCENTAGE = 'percentage',
-    FIXED = 'fixed',
+  PERCENTAGE = 'percentage',
+  FIXED = 'fixed',
 }

@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export type DiscordInfo = {
-    connected: boolean;
-    discordUsername: string | null;
-    discordId: string | null;
-    connectedAt: string | null;
-};
-
+  connected: boolean
+  discordUsername: string | null
+  discordId: string | null
+  connectedAt: string | null
+}

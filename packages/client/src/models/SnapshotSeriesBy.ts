@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum SnapshotSeriesBy {
-    USER = 'user',
-    CORP = 'corp',
+  USER = 'user',
+  CORP = 'corp',
 }

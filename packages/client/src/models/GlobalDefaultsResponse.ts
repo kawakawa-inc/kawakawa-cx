@@ -2,8 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { GlobalDefaultSetting } from './GlobalDefaultSetting';
+import type { GlobalDefaultSetting } from './GlobalDefaultSetting'
 export type GlobalDefaultsResponse = {
-    settings: Array<GlobalDefaultSetting>;
-};
-
+  settings: Array<GlobalDefaultSetting>
+}

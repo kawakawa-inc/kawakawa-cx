@@ -3,6 +3,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateReservationStatusRequest = {
-    notes?: string;
-};
-
+  notes?: string
+}

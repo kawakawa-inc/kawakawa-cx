@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type FioSyncInfo = {
-    fioUsername: string | null;
-    lastSyncedAt: string | null;
-};
-
+  fioUsername: string | null
+  lastSyncedAt: string | null
+}

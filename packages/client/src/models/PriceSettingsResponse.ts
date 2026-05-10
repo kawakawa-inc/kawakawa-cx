@@ -2,12 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { FioPriceField } from './FioPriceField';
+import type { FioPriceField } from './FioPriceField'
 export type PriceSettingsResponse = {
-    fioBaseUrl: string;
-    fioPriceField: FioPriceField;
-    hasGoogleSheetsApiKey: boolean;
-    kawaSheetUrl: string | null;
-    kawaSheetGid: number | null;
-};
-
+  fioBaseUrl: string
+  fioPriceField: FioPriceField
+  hasGoogleSheetsApiKey: boolean
+}

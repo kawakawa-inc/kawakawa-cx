@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateLineItemRequest = {
-    quantity?: number;
-    notes?: string;
-};
-
+  quantity?: number
+  notes?: string
+}

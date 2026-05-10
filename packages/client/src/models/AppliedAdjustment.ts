@@ -2,12 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { AdjustmentType } from './AdjustmentType';
+import type { AdjustmentType } from './AdjustmentType'
 export type AppliedAdjustment = {
-    id: number;
-    description: string | null;
-    type: AdjustmentType;
-    value: number;
-    appliedAmount: number;
-};
-
+  id: number
+  description: string | null
+  type: AdjustmentType
+  value: number
+  appliedAmount: number
+}

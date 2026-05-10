@@ -13,36 +13,35 @@
  * will refine this; today the global setting applies to all buildings.)
  */
 export type RepairEvent = {
-    /**
-     * FIO building id (stable across syncs).
-     */
-    buildingId: string;
-    /**
-     * Building type ticker, e.g. "HB1".
-     */
-    buildingTicker: string;
-    /**
-     * Planet the building is on.
-     */
-    locationNaturalId: string;
-    /**
-     * Display name for the planet.
-     */
-    locationName: string;
-    /**
-     * When the next repair is due. ISO string.
-     */
-    nextRepairAt: string;
-    /**
-     * Hull condition (0..1) at the time of the graph build.
-     */
-    condition: number;
-    /**
-     * Per-ticker material requirements for this repair.
-     */
-    materials: Array<{
-        amount: number;
-        ticker: string;
-    }>;
-};
-
+  /**
+   * FIO building id (stable across syncs).
+   */
+  buildingId: string
+  /**
+   * Building type ticker, e.g. "HB1".
+   */
+  buildingTicker: string
+  /**
+   * Planet the building is on.
+   */
+  locationNaturalId: string
+  /**
+   * Display name for the planet.
+   */
+  locationName: string
+  /**
+   * When the next repair is due. ISO string.
+   */
+  nextRepairAt: string
+  /**
+   * Hull condition (0..1) at the time of the graph build.
+   */
+  condition: number
+  /**
+   * Per-ticker material requirements for this repair.
+   */
+  materials: Array<{
+    amount: number
+    ticker: string
+  }>
+}

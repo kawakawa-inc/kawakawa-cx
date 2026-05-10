@@ -3,10 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type AddLineItemRequest = {
-    sellOrderId?: number;
-    buyOrderId?: number;
-    reservationId?: number;
-    quantity: number;
-    notes?: string;
-};
-
+  sellOrderId?: number
+  buyOrderId?: number
+  reservationId?: number
+  quantity: number
+  notes?: string
+}

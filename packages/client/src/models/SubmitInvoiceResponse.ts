@@ -2,10 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { Invoice } from './Invoice';
+import type { Invoice } from './Invoice'
 export type SubmitInvoiceResponse = {
-    invoice: Invoice;
-    reservationsCreated: number;
-    errors: Array<string>;
-};
-
+  invoice: Invoice
+  reservationsCreated: number
+  errors: Array<string>
+}

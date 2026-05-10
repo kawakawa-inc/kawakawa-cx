@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum OrderType {
-    INTERNAL = 'internal',
-    PARTNER = 'partner',
+  INTERNAL = 'internal',
+  PARTNER = 'partner',
 }

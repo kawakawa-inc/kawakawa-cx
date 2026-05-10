@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export enum FioPriceField {
-    MMBUY = 'MMBuy',
-    MMSELL = 'MMSell',
-    PRICE_AVERAGE = 'PriceAverage',
-    ASK = 'Ask',
-    BID = 'Bid',
+  MMBUY = 'MMBuy',
+  MMSELL = 'MMSell',
+  PRICE_AVERAGE = 'PriceAverage',
+  ASK = 'Ask',
+  BID = 'Bid',
 }

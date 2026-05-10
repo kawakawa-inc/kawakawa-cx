@@ -3,6 +3,5 @@
 /* tslint:disable */
 /* eslint-disable */
 export type UpdateGoogleSettingsRequest = {
-    apiKey?: string;
-};
-
+  apiKey?: string
+}

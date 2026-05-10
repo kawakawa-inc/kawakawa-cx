@@ -6,8 +6,8 @@
  * FIO-detection buckets used by the bulk-create endpoint
  */
 export enum BulkDetectionCategory {
-    CONSUMABLES = 'consumables',
-    INPUTS = 'inputs',
-    REPAIR = 'repair',
-    PRODUCTION_OUTPUT = 'production_output',
+  CONSUMABLES = 'consumables',
+  INPUTS = 'inputs',
+  REPAIR = 'repair',
+  PRODUCTION_OUTPUT = 'production_output',
 }

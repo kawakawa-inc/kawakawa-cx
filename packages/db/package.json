@@ -16,6 +16,7 @@
     }
   },
   "scripts": {
+    "knip": "knip",
     "build": "tsc",
     "dev": "tsc --watch",
     "db:push": "drizzle-kit push",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "drizzle-kit": "^0.31.7",
-    "typescript": "~5.3.0"
+    "typescript": "~5.3.0",
+    "knip": "^5.74.0"
   }
 }

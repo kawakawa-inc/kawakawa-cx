@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/index.ts", "src/deploy-commands.ts"],
+  "project": ["src/**/*.ts", "!src/**/*.test.ts"],
+  "ignoreDependencies": ["pino-pretty", "@kawakawa/db", "@kawakawa/parser", "@kawakawa/services", "@kawakawa/types"],
+  "ignoreExportsUsedInFile": true
+}

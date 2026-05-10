@@ -3,6 +3,7 @@
 import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
 import { locationService } from './locationService'
 import { commodityService } from './commodityService'
+import { handleAuthFailure } from './authBus'
 
 // Polling interval (30 seconds)
 const POLL_INTERVAL = 30 * 1000
@@ -27,15 +28,16 @@ export const SYNC_EVENTS = {
 // Fetch sync state from API
 async function fetchSyncState(): Promise<SyncState | null> {
   try {
+    const token = localStorage.getItem('jwt')
     const response = await fetch('/api/sync/state', {
       headers: {
-        Authorization: `Bearer ${localStorage.getItem('jwt')}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     })
 
     if (!response.ok) {
       if (response.status === 401) {
-        // Token expired or invalid - stop polling
+        handleAuthFailure()
         stopPolling()
         return null
       }

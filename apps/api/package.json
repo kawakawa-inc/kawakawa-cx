@@ -7,6 +7,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "knip": "knip",
     "dev": "tsx watch --include=src/** --env-file-if-exists=.env src/index.ts",
     "dev:debug": "tsx watch --inspect --env-file-if-exists=.env src/index.ts",
     "build": "tsoa spec-and-routes && tsc",
@@ -63,8 +64,8 @@
     "@types/pg": "^8.15.6",
     "@types/swagger-ui-express": "^4.1.6",
     "@vitest/ui": "^4.0.14",
-    "concurrently": "^9.1.0",
     "drizzle-kit": "^0.31.7",
+    "knip": "^5.74.0",
     "tsx": "^4.19.0",
     "typescript": "~5.3.0",
     "vitest": "^4.0.14"

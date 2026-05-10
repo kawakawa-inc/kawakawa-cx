@@ -47,6 +47,16 @@
           </template>
           Calculator
         </v-tooltip>
+        <!-- Logistics — hidden until feature is ready to ship
+        <v-tooltip location="bottom">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" to="/logistics" icon size="small" class="mx-1">
+              <v-icon>mdi-rocket-launch</v-icon>
+            </v-btn>
+          </template>
+          Logistics
+        </v-tooltip>
+        -->
         <v-tooltip location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" to="/burn-repair" icon size="small" class="mx-1">
@@ -147,6 +157,7 @@ import { locationService } from './services/locationService'
 import { roleService } from './services/roleService'
 import { api } from './services/api'
 import { syncService, SYNC_EVENTS } from './services/syncService'
+import { onAuthFailure, handleAuthFailure } from './services/authBus'
 import NotificationDropdown from './components/NotificationDropdown.vue'
 import type { SyncDataKey } from '@kawakawa/types'
 
@@ -209,7 +220,7 @@ const checkAuth = () => {
 
 const confirmLogout = () => {
   logoutDialog.value = false
-  localStorage.removeItem('jwt')
+  handleAuthFailure()
   userStore.clearUser()
   invoicesStore.clearAll()
   shoppingListStore.clearList()
@@ -228,9 +239,8 @@ const validateSession = async () => {
     userStore.setUser(user)
     isAuthenticated.value = true
   } catch (error) {
-    // Token is invalid or user doesn't exist - clear and redirect
-    console.warn('Session invalid, clearing token:', error)
-    localStorage.removeItem('jwt')
+    // Token is invalid — handleAuthFailure already cleared localStorage
+    console.warn('Session invalid:', error)
     userStore.clearUser()
     invoicesStore.clearAll()
     shoppingListStore.clearList()
@@ -289,6 +299,8 @@ const refreshApp = () => {
   window.location.reload()
 }
 
+let unsubAuthFailure: (() => void) | null = null
+
 onMounted(async () => {
   // Listen for token refresh events
   window.addEventListener('token-refreshed', handleTokenRefreshed)
@@ -297,6 +309,15 @@ onMounted(async () => {
   // Listen for sync events
   window.addEventListener(SYNC_EVENTS.APP_VERSION_CHANGED, handleAppVersionChanged)
   window.addEventListener(SYNC_EVENTS.DATA_UPDATED, handleDataUpdated)
+
+  // Listen for centralized auth failures (401 from any API call)
+  unsubAuthFailure = onAuthFailure(() => {
+    userStore.clearUser()
+    invoicesStore.clearAll()
+    shoppingListStore.clearList()
+    isAuthenticated.value = false
+    router.push('/login')
+  })
 
   router.afterEach(() => {
     checkAuth()
@@ -308,7 +329,7 @@ onMounted(async () => {
   // Prefetch reference data if authenticated and verified
   if (isAuthenticated.value && isVerified.value) {
     commodityService.prefetch().catch(err => console.error('Failed to prefetch commodities:', err))
-    locationService.prefetch().catch(err => console.error('Failed to prefetch locations:', err))
+    locationService.prefetch().catch(err => console.error('Failed to load locations:', err))
     locationService
       .loadUserLocations()
       .catch(err => console.error('Failed to load user locations:', err))
@@ -321,6 +342,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unsubAuthFailure?.()
   window.removeEventListener('token-refreshed', handleTokenRefreshed)
   window.removeEventListener('approval-queue-updated', handleApprovalQueueUpdated)
   window.removeEventListener(SYNC_EVENTS.APP_VERSION_CHANGED, handleAppVersionChanged)

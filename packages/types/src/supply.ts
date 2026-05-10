@@ -3,32 +3,11 @@
 /** Buy order source mode: manual (fixed qty) or demand (auto-calculated) */
 export type BuyOrderSourceMode = 'manual' | 'demand'
 
-/** Reserve source for sell orders: manual (fixed) or demand (auto-calculated from burn) */
-export type ReserveSource = 'manual' | 'demand'
-
 /** Demand source: burn (rate * days) or repair (absolute cost) */
 export type DemandSource = 'burn' | 'repair'
 
 /** Whether a fixed demand amount is a total or daily rate */
 export type DemandRate = 'total' | 'daily'
-
-/** Linked planet info for demand orders/reserves */
-export interface LinkedPlanetInfo {
-  userPlanetId: number
-  planetNaturalId: string
-  planetName: string
-}
-
-/** Source of a material need (repair, burn, or production) */
-export type MaterialNeedSource = 'repair' | 'burn' | 'production'
-
-/** A single material need with quantity and source */
-export interface MaterialNeed {
-  ticker: string
-  quantity: number
-  source: MaterialNeedSource
-  planetId: string
-}
 
 /** Per-planet override settings */
 export interface PlanetOverride {
@@ -39,15 +18,6 @@ export interface PlanetOverride {
 
 /** Map of planet NaturalId to override settings */
 export type PlanetOverrides = Record<string, PlanetOverride>
-
-/** Options for supply calculation */
-export interface SupplyCalculationOptions {
-  repairDays: number
-  burnDays: number
-  includeProduction: boolean
-  planetOverrides: PlanetOverrides
-  now?: Date // for testing
-}
 
 /** Building data as stored in the database */
 export interface BuildingData {
@@ -88,35 +58,6 @@ export interface PlanetSupplyInput {
   buildings: BuildingData[]
   workforce: WorkforceData[]
   production: ProductionData[]
-}
-
-/** Supply calculation result for a single planet */
-export interface PlanetSupplyResult {
-  planetId: string
-  planetName: string
-  repairNeeds: MaterialNeed[]
-  burnNeeds: MaterialNeed[]
-  productionNeeds: MaterialNeed[]
-  buildingCount: number
-  repairableBuildingCount: number
-  options: {
-    repairDays: number
-    burnDays: number
-    includeProduction: boolean
-  }
-}
-
-/** Aggregated supply calculation result across all planets */
-export interface SupplyCalculationResult {
-  planets: PlanetSupplyResult[]
-  /** Aggregated material quantities by ticker (all sources) */
-  aggregatedMaterials: Record<string, number>
-  /** Aggregated repair materials by ticker */
-  repairMaterials: Record<string, number>
-  /** Aggregated burn materials by ticker */
-  burnMaterials: Record<string, number>
-  /** Aggregated production materials by ticker */
-  productionMaterials: Record<string, number>
 }
 
 // ==================== Burn & Repair (corp-wide cache) ====================
@@ -346,6 +287,14 @@ export interface LogisticsFlow {
   amountOverride: number | null
   rate: DemandRate
   priority: number | null
+  /** Days for one ship trip from source to destination. 0 = unset/instant. */
+  transitDays: number
+  /**
+   * Days between consecutive shipments on this flow. Drives the shipment
+   * unit of work — per-shipment quantity and the next-arrival / load /
+   * contract-by timeline. Defaults to 7. User-set per flow.
+   */
+  cadenceDays: number
   note: string | null
   createdAt: string
   updatedAt: string
@@ -361,6 +310,8 @@ export interface CreateLogisticsFlowRequest {
   amountOverride?: number
   rate?: DemandRate
   priority?: number
+  transitDays?: number
+  cadenceDays?: number
   note?: string
 }
 
@@ -371,11 +322,65 @@ export interface UpdateLogisticsFlowRequest {
   amountOverride?: number | null
   rate?: DemandRate
   priority?: number | null
+  transitDays?: number
+  cadenceDays?: number
   note?: string | null
 }
 
 /** FIO-detection buckets used by the bulk-create endpoint */
 export type BulkDetectionCategory = 'consumables' | 'inputs' | 'repair' | 'production_output'
+
+/**
+ * Granular demand/supply categories surfaced in the Add Hub review step.
+ * Each maps to a specific data source:
+ *  - burn: workforce consumables (fio_planet_workforce.needs)
+ *  - production_input: recurring production order inputs
+ *  - repair: building repair materials
+ *  - government: manual demand claims (category=government)
+ *  - contract: manual demand claims (category=contract)
+ *  - reserve: manual demand claims (category=reserve)
+ *  - production_output: recurring production order outputs (surplus)
+ */
+export type BulkFlowCategory =
+  | 'burn'
+  | 'production_input'
+  | 'repair'
+  | 'government'
+  | 'contract'
+  | 'reserve'
+  | 'production_output'
+
+/** A single detected material in a bulk preview, before flow creation. */
+export interface BulkPreviewItem {
+  ticker: string
+  category: BulkFlowCategory
+  kind: 'demand' | 'surplus'
+}
+
+/** Preview request — same shape as the create request. */
+export interface BulkMultiPreviewRequest {
+  hubLocationId: string
+  planetLocationIds: string[]
+  hubStorageTypes: string[]
+  planetStorageTypes: string[]
+  categories: BulkFlowCategory[]
+}
+
+/** Per-planet preview result (no DB writes). */
+export interface BulkPlanetPreview {
+  planetLocationId: string
+  items: BulkPreviewItem[]
+  skippedDuplicates: Array<{ category: BulkFlowCategory; ticker: string }>
+  skippedCycles: Array<{ category: BulkFlowCategory; ticker: string }>
+  /** Set when the planet wasn't found in fio_user_planets. */
+  error?: string
+}
+
+/** Aggregate preview response across all selected planets. */
+export interface BulkMultiPreviewResponse {
+  perPlanet: BulkPlanetPreview[]
+  totals: { items: number; duplicates: number; cycles: number }
+}
 
 export interface BulkCreateLogisticsFlowsRequest {
   fromLocationId: string
@@ -406,15 +411,21 @@ export interface BulkMultiCreateLogisticsFlowsRequest {
   planetLocationIds: string[]
   hubStorageTypes: string[]
   planetStorageTypes: string[]
-  categories: BulkDetectionCategory[]
+  categories: BulkFlowCategory[]
+  /**
+   * Per-planet tickers to exclude from creation, keyed by category.
+   * Outer key is planetLocationId, inner key is BulkFlowCategory.
+   * Used by the Add Hub review step to honor user deselections.
+   */
+  exclusions?: Record<string, Record<string, string[]>>
 }
 
 export interface BulkMultiPlanetResult {
   planetLocationId: string
-  created: Array<{ category: BulkDetectionCategory; flow: LogisticsFlow }>
-  skippedDuplicates: Array<{ category: BulkDetectionCategory; ticker: string }>
-  skippedCycles: Array<{ category: BulkDetectionCategory; ticker: string }>
-  emptyCategories: BulkDetectionCategory[]
+  created: Array<{ category: BulkFlowCategory; flow: LogisticsFlow }>
+  skippedDuplicates: Array<{ category: BulkFlowCategory; ticker: string }>
+  skippedCycles: Array<{ category: BulkFlowCategory; ticker: string }>
+  emptyCategories: BulkFlowCategory[]
   /** Set when the planet wasn't found in fio_user_planets (not synced, or not owned by user) */
   error?: string
 }
@@ -459,6 +470,219 @@ export interface UpdateLocationDemandClaimRequest {
   note?: string | null
 }
 
+/**
+ * "Incoming" inventory delta from a user's pending or recently-fulfilled
+ * BUY invoices, used by the Plan tab to net out contract amounts. Mirrors
+ * the market view's FIO-aware logic: fulfilled reservations stop counting
+ * once FIO has synced after them.
+ */
+export interface ContractCoverageEntry {
+  locationId: string
+  commodityTicker: string
+  incomingQuantity: number
+}
+
+/**
+ * "I handle this locally" entry — hides a (location, ticker) combo from
+ * contract suggestions on the Plan tab. Used when production isn't reflected
+ * in FIO (e.g., expert juggling). Treated as if the location produced the
+ * ticker for the purposes of the contract walk.
+ */
+export interface SelfSuppliedEntry {
+  id: number
+  locationId: string
+  commodityTicker: string
+  note: string | null
+  createdAt: string
+}
+
+export interface CreateSelfSuppliedRequest {
+  locationId: string
+  commodityTicker: string
+  note?: string | null
+}
+
+/** Lifecycle status of a planned trip. */
+export type TripStatus = 'planned' | 'dispatched' | 'delivered' | 'cancelled'
+
+/**
+ * One material in a shipment's manifest. `flowId` links the line to a
+ * recurring flow; `flowId = null` is an ad-hoc one-off.
+ */
+export interface ShipmentLine {
+  id: number
+  flowId: number | null
+  commodityTicker: string
+  amount: number
+}
+
+/**
+ * A shipment is a parcel: materials moving from `originLocationId` to
+ * `destLocationId`. A shipment in the queue (no `tripId`) hasn't been
+ * bundled onto a ship yet — the Plan tab surfaces it for assignment. Once
+ * assigned, the system links it to the trip's stops via `originStopId` /
+ * `destStopId`.
+ */
+export interface Shipment {
+  id: number
+  /** Null when the shipment is queued (not yet assigned to a trip). */
+  tripId: number | null
+  originLocationId: string
+  destLocationId: string
+  originStopId: number | null
+  destStopId: number | null
+  notes: string | null
+  lines: ShipmentLine[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** One stop on a trip. */
+export interface TripStop {
+  id: number
+  sequence: number
+  locationId: string
+  plannedArriveAt: string
+  notes: string | null
+}
+
+/**
+ * A trip = one ship's run. Owns the status state machine. `stops` is ordered
+ * by sequence; `shipments` is the set of parcels assigned to this trip.
+ */
+export interface Trip {
+  id: number
+  shipDbId: number | null
+  status: TripStatus
+  /** Stamped by the server when status → 'dispatched'. */
+  actualDispatchAt: string | null
+  /** Stamped by the server when status → 'delivered'. */
+  actualArrivalAt: string | null
+  notes: string | null
+  stops: TripStop[]
+  shipments: Shipment[]
+  createdAt: string
+  updatedAt: string
+}
+
+// ==================== Shipment requests (parcel CRUD) ====================
+
+export interface ShipmentLineInput {
+  flowId?: number | null
+  commodityTicker: string
+  amount: number
+}
+
+export interface CreateShipmentRequest {
+  originLocationId: string
+  destLocationId: string
+  notes?: string | null
+  lines: ShipmentLineInput[]
+}
+
+/**
+ * Update an existing shipment. When `lines` is provided, the manifest is
+ * fully replaced. Origin/destination can only be edited while the shipment
+ * is queued (no trip assigned).
+ */
+export interface UpdateShipmentRequest {
+  originLocationId?: string
+  destLocationId?: string
+  notes?: string | null
+  lines?: ShipmentLineInput[]
+}
+
+/**
+ * Repeat a shipment back into the queue with refreshed amounts. Currently
+ * has no parameters; reserved for future shaping (target trip, override
+ * amounts, etc.).
+ */
+export interface RepeatShipmentRequest {
+  /** Optional notes override for the cloned shipment. */
+  notes?: string | null
+}
+
+// ==================== Trip requests ====================
+
+/** Input stop entry; index into the request's `stops` array becomes its sequence. */
+export interface TripStopInput {
+  locationId: string
+  plannedArriveAt: string
+  notes?: string | null
+}
+
+/**
+ * Per-shipment routing on a trip — origin/dest are indices into the trip's
+ * `stops` array, matching `TripStopInput[]`.
+ */
+export interface TripShipmentAssignment {
+  shipmentId: number
+  originStopIndex: number
+  destStopIndex: number
+}
+
+export interface CreateTripRequest {
+  shipDbId?: number | null
+  notes?: string | null
+  /** ≥ 2 entries, in intended visit order. */
+  stops: TripStopInput[]
+  /** Queued shipments to bind to this trip. May be empty for a shell trip. */
+  shipments: TripShipmentAssignment[]
+}
+
+/**
+ * Replace the trip's stops + shipment assignments atomically. Shipments that
+ * were on the trip but aren't in the new `shipments` list are returned to
+ * the queue (trip_id = null).
+ */
+export interface UpdateTripRequest {
+  shipDbId?: number | null
+  notes?: string | null
+  stops?: TripStopInput[]
+  shipments?: TripShipmentAssignment[]
+}
+
+export interface UpdateTripStatusRequest {
+  status: TripStatus
+}
+
+/** Repeat (clone) a trip — clones the trip plus its shipments, with stop times shifted. */
+export interface RepeatTripRequest {
+  /** ISO timestamp for the new trip's first stop. Defaults to now. */
+  firstStopAt?: string
+}
+
+/**
+ * Ask the server to estimate stop arrival times for a planned route. Tier-1
+ * heuristic: per-jump time × FIO jump count + a small same-system constant,
+ * scaled by cargo-load fraction when a ship is assigned. The first stop's
+ * arrival is taken from `startAt`; subsequent stops are accumulated.
+ */
+export interface SuggestStopTimesRequest {
+  /** ISO timestamp for the first stop. */
+  startAt: string
+  /** Ordered locations the trip will visit. */
+  stops: Array<{ locationId: string }>
+  /** Optional ship — used to compute the load-factor (full ship is slower). */
+  shipDbId?: number | null
+  /**
+   * Shipments routed against the trip's stops. Used to compute per-segment
+   * cargo mass for the load factor.
+   */
+  shipments: Array<{
+    originStopIndex: number
+    destStopIndex: number
+    lines: Array<{ commodityTicker: string; amount: number }>
+  }>
+}
+
+export interface SuggestStopTimesResponse {
+  /** One entry per stop in the request. `stops[0].plannedArriveAt === startAt`. */
+  stops: Array<{ plannedArriveAt: string }>
+  /** Caveats — unknown jump counts, missing locations, etc. */
+  warnings: string[]
+}
+
 /** Per-ticker breakdown of why a node consumes what it consumes */
 export interface NativeConsumptionBreakdown {
   workforceBurn: number
@@ -482,6 +706,41 @@ export interface EdgeState {
   /** True when kind='fixed' (user-pinned) */
   isOverride: boolean
   priority: number | null
+  /** Days for one ship trip on this edge (mirrored from the flow row). */
+  transitDays: number
+  /** Days between shipments on this flow (mirrored from the flow row). */
+  cadenceDays: number
+  /**
+   * Quantity carried in one shipment on this flow:
+   * `dailyConsumption(at destination) × cadenceDays`. 0 when the destination
+   * has no consumption for the ticker. Surplus edges report 0 in Stage A —
+   * surplus shipments are tracked separately in Stage B.
+   */
+  perShipmentAmount: number
+  /**
+   * The next planned arrival date for this flow at the destination. In Stage
+   * A this is a forward projection from `now`: `now + cadenceDays`. Stage B
+   * (shipment entity) anchors it to the latest active shipment instead. ISO
+   * string. Null on surplus edges.
+   */
+  nextArrivalAt: string | null
+  /**
+   * When the ship must load at the source to arrive on `nextArrivalAt`:
+   * `nextArrivalAt − transitDays`. ISO string. Null on surplus edges.
+   */
+  loadAt: string | null
+  /**
+   * Latest date the ship must depart the source — same as `loadAt` today.
+   * Kept distinct so we can later add ship-prep time without renaming.
+   */
+  shipBy: string | null
+  /**
+   * Latest date to place an inbound contract so goods arrive at the source
+   * by `loadAt`: `loadAt − contract_lead_days`. Per-flow because each flow
+   * has its own cadence and therefore its own load schedule. ISO string.
+   * Null on surplus edges.
+   */
+  contractBy: string | null
   note: string | null
 }
 
@@ -511,7 +770,92 @@ export interface NodeState {
   balance: Record<string, number>
   /** Shopping list = max(0, -balance). Shorthand for the UI. */
   shoppingList: Record<string, number>
+  /**
+   * Per-ticker daily consumption rate (workforce burn + production inputs +
+   * daily-rate claims). Production is NOT subtracted here — it's reported
+   * separately in `dailyProduction` so callers can compute net daily.
+   */
+  dailyConsumption: Record<string, number>
+  /** Per-ticker daily production rate. */
+  dailyProduction: Record<string, number>
+  /**
+   * Per-ticker days of stock remaining at current net daily consumption.
+   * `Infinity` (encoded as `null` over the wire) if net consumption is 0.
+   * Stock-mode='ignored' nodes report `null`.
+   */
+  daysOfStock: Record<string, number | null>
+  /**
+   * Per-ticker run-out date as an ISO string. Null when daysOfStock is
+   * Infinity or stock is being ignored.
+   */
+  runOutAt: Record<string, string | null>
+  /**
+   * Per-ticker latest date to place an external KAWA contract so a partner's
+   * delivery arrives before run-out. `runOutAt - settings.contractLeadDays`.
+   * Null when runOutAt is null. Computed for every ticker the node consumes
+   * (contracts don't require a pre-existing demand edge).
+   */
+  latestContractAt: Record<string, string | null>
+  /**
+   * Per-ticker daily outflow rate committed to downstream demand/fixed edges
+   * (`derivedOutflow / burnDays`). Drives the effective-drain calculation so
+   * a hub with stock-out-the-door surfaces a real run-out instead of "never."
+   */
+  dailyOutflow: Record<string, number>
+  /**
+   * Per-ticker daily inflow rate from committed inbound edges
+   * (`derivedInflow / burnDays`). Symmetric with `dailyOutflow`; used in the
+   * Inspector to show "Inflow/day" alongside "Outflow/day" instead of the
+   * old burnDays-totals display.
+   */
+  dailyInflow: Record<string, number>
+  /**
+   * Per-ticker IMMEDIATE upstream sources for this ticker's inflow — the
+   * locationIds whose committed flows feed this node. The UI surfaces these
+   * as click-through chips so the user can navigate one hop at a time:
+   *
+   * - `[]` — this node is its own source: it produces the ticker, has no
+   *   committed inflow, or otherwise owns the action here. Contract-by/CX
+   *   decisions belong to this row.
+   * - `[X]` — single upstream feed (most leaves). The leaf is informational;
+   *   click X to see X's own sources / action.
+   * - `[X, Y, ...]` — aggregating hub fed by multiple committed surplus or
+   *   demand edges (e.g. BEN gets DW from two producer planets). Surfaced as
+   *   a chip-with-dropdown.
+   *
+   * Surplus inbound edges take priority when both kinds are present at a node
+   * — surplus is the "supply push" channel, so those are the producers we want
+   * to surface. Edges with `amount === 0` (solver didn't allocate) are ignored.
+   */
+  chainSource: Record<string, string[]>
   warnings: string[]
+}
+
+/**
+ * A scheduled repair event for one of the user's buildings. Repair is no
+ * longer folded into per-day consumption — it's a discrete event with a known
+ * date and material list. The Plan tab consumes these to surface "ship by /
+ * contract by" deadlines for repair shipments.
+ *
+ * `nextRepairAt = (lastRepairAt ?? buildingCreated) + repairDays`, where
+ * `repairDays` is the user's target repair age. (A future per-building override
+ * will refine this; today the global setting applies to all buildings.)
+ */
+export interface RepairEvent {
+  /** FIO building id (stable across syncs). */
+  buildingId: string
+  /** Building type ticker, e.g. "HB1". */
+  buildingTicker: string
+  /** Planet the building is on. */
+  locationNaturalId: string
+  /** Display name for the planet. */
+  locationName: string
+  /** When the next repair is due. ISO string. */
+  nextRepairAt: string
+  /** Hull condition (0..1) at the time of the graph build. */
+  condition: number
+  /** Per-ticker material requirements for this repair. */
+  materials: Array<{ ticker: string; amount: number }>
 }
 
 /** Full solver output: one graph response per user */
@@ -521,8 +865,118 @@ export interface LogisticsGraph {
     repairDays: number
     conditionMode: 'actual' | 'max'
     stockMode: 'included' | 'ignored'
+    /**
+     * Trip lead time in days. Drives both the Plan-tab look-ahead window
+     * AND the contract-by deadline (so an order placed today arrives before
+     * the trip ships). Stored as the user setting `logistics.tripLeadDays`.
+     * Default 7.
+     */
+    tripLeadDays: number
   }
   nodes: NodeState[]
   edges: EdgeState[]
+  /**
+   * Upcoming repair events across all the user's buildings. Each event has
+   * a known date (lastRepairAt + repairDays target age) and material list.
+   * The Plan tab uses these to surface contract-by / ship-by deadlines for
+   * repair shipments alongside flow-cadence shipments.
+   */
+  repairEvents: RepairEvent[]
   warnings: string[]
+}
+
+/** Repair material need on a ship (synced from FIO `RepairMaterials`) */
+export interface ShipRepairMaterial {
+  ticker: string
+  amount: number
+}
+
+/** Active or recently-finished flight for one of the user's ships */
+export interface ShipFlight {
+  fioFlightId: string
+  fioShipId: string
+  originDisplay: string | null
+  destinationDisplay: string | null
+  originNaturalId: string | null
+  destinationNaturalId: string | null
+  departureAt: string | null
+  arrivalAt: string | null
+  currentSegmentIndex: number | null
+  stlDistance: number | null
+  ftlDistance: number | null
+  isAborted: boolean
+}
+
+/** One of the user's ships, joined with current fuel state and active flight */
+export interface UserShip {
+  id: number
+  fioShipId: string
+  registration: string
+  /** FIO returns null for unnamed starter ships — UI should fall back to registration. */
+  name: string | null
+  blueprintNaturalId: string | null
+  commissioningAt: string | null
+  /** True when the ship has an active flight assigned */
+  inFlight: boolean
+  /** Total mass (tons) of the ship as reported by FIO — includes cargo + fuel */
+  mass: number
+  operatingEmptyMass: number
+  acceleration: number | null
+  thrust: number | null
+  reactorPower: number | null
+  emitterPower: number | null
+  stlFuelFlowRate: number | null
+  /** Hull condition 0..1 */
+  condition: number | null
+  lastRepairAt: string | null
+  /** Resolved location naturalId (most-specific: planet > station > system); null when in flight */
+  locationNaturalId: string | null
+  /** Display name resolved from `fio_locations` */
+  locationName: string | null
+  locationSystemNaturalId: string | null
+  /**
+   * Cargo bay state, sourced from `/storage/{user}` and matched by `StoreId`.
+   * `weightCapacity` is the real mass cap in tons (e.g. 5000 t for an HCB).
+   * `weightLoad` / `volumeLoad` are the live currently-loaded amounts.
+   */
+  cargo: {
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  /**
+   * STL/FTL fuel state. `amount` is in fuel units; `maxUnits` is the tank's
+   * capacity in those same units (derived from VolumeCapacity / unit-volume).
+   * `weightLoad`/`weightCapacity` and `volumeLoad`/`volumeCapacity` are the
+   * tank's mass and volume figures (t / m³) — useful for displaying fill bars.
+   */
+  stlFuel: {
+    amount: number
+    maxUnits: number
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  ftlFuel: {
+    amount: number
+    maxUnits: number
+    weightLoad: number
+    weightCapacity: number
+    volumeLoad: number
+    volumeCapacity: number
+  }
+  repairMaterials: ShipRepairMaterial[]
+  /** Active flight if `inFlight`, else null */
+  flight: ShipFlight | null
+  /** When our DB last upserted this row from FIO. */
+  lastSyncedAt: string
+  /**
+   * The Timestamp field FIO returned with the ship record — i.e. when FIO
+   * itself last got an update from the player. The useful "data freshness"
+   * value to show in the UI ("data from 2h ago"). May be null if FIO didn't
+   * include a timestamp (rare).
+   */
+  fioReportedAt: string | null
 }

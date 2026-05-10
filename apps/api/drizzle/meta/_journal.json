@@ -148,6 +148,13 @@
       "when": 1777743357386,
       "tag": "0020_real_pride",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1778437843739,
+      "tag": "0021_kind_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

@@ -24,8 +24,12 @@ import type {
   BulkMultiCreateLogisticsFlowsRequest,
   BulkMultiCreateLogisticsFlowsResponse,
   BulkMultiPlanetResult,
+  BulkFlowCategory,
+  BulkMultiPreviewRequest,
+  BulkMultiPreviewResponse,
+  BulkPlanetPreview,
 } from '@kawakawa/types'
-import { db, logisticsFlows, fioUserPlanets } from '../db/index.js'
+import { db, logisticsFlows, fioUserPlanets, locationDemandClaims } from '../db/index.js'
 import { eq, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
@@ -49,10 +53,28 @@ function toFlowResponse(row: typeof logisticsFlows.$inferSelect): LogisticsFlow 
     amountOverride: row.amountOverride,
     rate: row.rate as DemandRate,
     priority: row.priority,
+    transitDays: row.transitDays,
+    cadenceDays: row.cadenceDays,
     note: row.note,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
+}
+
+function normalizeTransitDays(input: number | undefined | null): number {
+  if (input == null) return 0
+  if (!Number.isFinite(input) || input < 0) {
+    throw BadRequest('transitDays must be a non-negative number')
+  }
+  return Math.floor(input)
+}
+
+function normalizeCadenceDays(input: number | undefined | null): number {
+  if (input == null) return 7
+  if (!Number.isFinite(input) || input < 1) {
+    throw BadRequest('cadenceDays must be an integer >= 1')
+  }
+  return Math.floor(input)
 }
 
 /** Per-ticker adjacency map of `from → [to...]` used for cycle detection. */
@@ -235,6 +257,69 @@ async function detectTickersForCategory(
   return tickers
 }
 
+/**
+ * Detect tickers for a granular BulkFlowCategory. Maps the fine-grained
+ * categories to their data sources:
+ *  - burn / production_input / repair / production_output: FIO data
+ *  - government / contract / reserve: manual demand claims
+ *
+ * For demand FIO categories, net-producer filtering is applied.
+ */
+async function detectTickersForBulkCategory(
+  userId: number,
+  category: BulkFlowCategory,
+  planetLocationId: string
+): Promise<Set<string>> {
+  // Manual claim categories — read from location_demand_claims
+  if (category === 'government' || category === 'contract' || category === 'reserve') {
+    const rows = await db
+      .select({ ticker: locationDemandClaims.commodityTicker })
+      .from(locationDemandClaims)
+      .where(
+        and(
+          eq(locationDemandClaims.userId, userId),
+          eq(locationDemandClaims.locationId, planetLocationId),
+          eq(locationDemandClaims.category, category)
+        )
+      )
+    const tickers = new Set<string>()
+    for (const row of rows) tickers.add(row.ticker)
+    return tickers
+  }
+
+  // FIO-based categories — need a user planet DB id
+  const planetDbId = await lookupUserPlanetDbId(userId, planetLocationId)
+  if (planetDbId == null) return new Set()
+
+  let tickers: Set<string>
+  switch (category) {
+    case 'burn':
+      tickers = await getConsumableTickers(planetDbId)
+      break
+    case 'production_input':
+      tickers = await getRecurringInputTickers(planetDbId)
+      break
+    case 'repair':
+      tickers = await getRepairMaterialTickers(userId, planetDbId)
+      break
+    case 'production_output':
+      return getRecurringOutputTickers(planetDbId)
+  }
+
+  // For demand FIO categories, exclude net producers.
+  if (tickers.size > 0) {
+    const prodRates = await getAllProductionRates(planetDbId, tickers, false)
+    for (const ticker of [...tickers]) {
+      const rates = prodRates[ticker]
+      if (rates && rates.dailyOutput > rates.dailyInput) {
+        tickers.delete(ticker)
+      }
+    }
+  }
+
+  return tickers
+}
+
 @Route('logistics/flows')
 @Tags('Logistics')
 @Security('jwt')
@@ -296,6 +381,8 @@ export class LogisticsFlowsController extends Controller {
         amountOverride: body.amountOverride ?? null,
         rate: body.rate ?? 'daily',
         priority: body.priority ?? null,
+        transitDays: normalizeTransitDays(body.transitDays),
+        cadenceDays: normalizeCadenceDays(body.cadenceDays),
         note: body.note ?? null,
       })
       .returning()
@@ -337,6 +424,14 @@ export class LogisticsFlowsController extends Controller {
         amountOverride: nextAmountOverride,
         rate: body.rate ?? existing.rate,
         priority: body.priority !== undefined ? body.priority : existing.priority,
+        transitDays:
+          body.transitDays !== undefined
+            ? normalizeTransitDays(body.transitDays)
+            : existing.transitDays,
+        cadenceDays:
+          body.cadenceDays !== undefined
+            ? normalizeCadenceDays(body.cadenceDays)
+            : existing.cadenceDays,
         note: body.note !== undefined ? body.note : existing.note,
         updatedAt: new Date(),
       })
@@ -416,7 +511,9 @@ export class LogisticsFlowsController extends Controller {
       const group = groupForKind(kind)
 
       for (const ticker of tickers) {
-        const key = `${body.fromLocationId}|${body.toLocationId}|${ticker}`
+        // Dedup key includes category so the same ticker can exist as
+        // different categories (e.g. DW as both consumables and inputs).
+        const key = `${body.fromLocationId}|${body.toLocationId}|${ticker}|${category}`
         if (existingKeys.has(key)) {
           response.skippedDuplicates.push({ category, ticker })
           continue
@@ -456,9 +553,10 @@ export class LogisticsFlowsController extends Controller {
   /**
    * Template-based bulk create: connect a single hub to many planets in one
    * operation. Direction auto-orients per category — consumption categories
-   * (consumables / inputs / repair) become hub→planet demand edges; the
-   * production_output category becomes planet→hub surplus edges. Dedupe + cycle
-   * skip applied across the whole operation with a single shared adjacency map.
+   * become hub→planet demand edges; production_output becomes planet→hub
+   * surplus edges. Supports granular categories (burn, production_input,
+   * repair, government, contract, reserve, production_output) and per-planet
+   * ticker exclusions from the review step.
    */
   @Post('bulk-multi')
   @SuccessResponse('201', 'Created')
@@ -484,6 +582,8 @@ export class LogisticsFlowsController extends Controller {
       throw BadRequest('planetLocationIds must not include the hub')
     }
 
+    const exclusions = body.exclusions ?? {}
+
     // Preload adjacency once; mutate incrementally across all planets.
     const adjacency = await loadAdjacency(userId)
 
@@ -503,18 +603,13 @@ export class LogisticsFlowsController extends Controller {
     const totals = { created: 0, duplicates: 0, cycles: 0, empty: 0 }
 
     for (const planetLocationId of body.planetLocationIds) {
-      const planetDbId = await lookupUserPlanetDbId(userId, planetLocationId)
+      const planetExclusions = exclusions[planetLocationId] ?? {}
       const result: BulkMultiPlanetResult = {
         planetLocationId,
         created: [],
         skippedDuplicates: [],
         skippedCycles: [],
         emptyCategories: [],
-      }
-      if (planetDbId == null) {
-        result.error = 'planet not synced or not owned'
-        perPlanet.push(result)
-        continue
       }
 
       for (const category of body.categories) {
@@ -527,22 +622,8 @@ export class LogisticsFlowsController extends Controller {
         const kind: FlowKind = isOutput ? 'surplus' : 'demand'
         const group = groupForKind(kind)
 
-        // Detect tickers at the planet (always the same end regardless of direction).
-        let tickers: Set<string>
-        switch (category) {
-          case 'consumables':
-            tickers = await getConsumableTickers(planetDbId)
-            break
-          case 'inputs':
-            tickers = await getRecurringInputTickers(planetDbId)
-            break
-          case 'repair':
-            tickers = await getRepairMaterialTickers(userId, planetDbId)
-            break
-          case 'production_output':
-            tickers = await getRecurringOutputTickers(planetDbId)
-            break
-        }
+        const tickers = await detectTickersForBulkCategory(userId, category, planetLocationId)
+        const categoryExclusions = new Set(planetExclusions[category] ?? [])
 
         if (tickers.size === 0) {
           result.emptyCategories.push(category)
@@ -551,7 +632,12 @@ export class LogisticsFlowsController extends Controller {
         }
 
         for (const ticker of tickers) {
-          const key = `${fromLocationId}|${toLocationId}|${ticker}`
+          // Skip user-deselected tickers from the review step.
+          if (categoryExclusions.has(ticker)) continue
+
+          // Dedup key includes category so the same ticker can exist as
+          // different categories (e.g. DW as both burn and production_input).
+          const key = `${fromLocationId}|${toLocationId}|${ticker}|${category}`
           if (existingKeys.has(key)) {
             result.skippedDuplicates.push({ category, ticker })
             totals.duplicates += 1
@@ -591,6 +677,94 @@ export class LogisticsFlowsController extends Controller {
     }
 
     this.setStatus(201)
+    return { perPlanet, totals }
+  }
+
+  /**
+   * Preview what the bulk-multi endpoint would create, without writing to the
+   * database. Returns per-planet detected tickers grouped by granular category
+   * (burn, production_input, repair, government, contract, reserve,
+   * production_output). The frontend review step uses this to let the user
+   * deselect individual materials before committing.
+   */
+  @Post('bulk-multi/preview')
+  public async previewBulkMultiFlows(
+    @Body() body: BulkMultiPreviewRequest,
+    @Request() request: { user: JwtPayload }
+  ): Promise<BulkMultiPreviewResponse> {
+    const userId = request.user.userId
+
+    if (!body.hubLocationId) {
+      throw BadRequest('hubLocationId is required')
+    }
+    if (body.planetLocationIds.length === 0) {
+      throw BadRequest('planetLocationIds must be non-empty')
+    }
+    if (body.categories.length === 0) {
+      throw BadRequest('at least one category is required')
+    }
+    if (body.hubStorageTypes.length === 0 || body.planetStorageTypes.length === 0) {
+      throw BadRequest('hubStorageTypes and planetStorageTypes must not be empty')
+    }
+    if (body.planetLocationIds.includes(body.hubLocationId)) {
+      throw BadRequest('planetLocationIds must not include the hub')
+    }
+
+    // Preload adjacency + existing keys for dedup/cycle checks.
+    const adjacency = await loadAdjacency(userId)
+    const existingRows = await db
+      .select({
+        from: logisticsFlows.fromLocationId,
+        to: logisticsFlows.toLocationId,
+        ticker: logisticsFlows.commodityTicker,
+      })
+      .from(logisticsFlows)
+      .where(eq(logisticsFlows.userId, userId))
+    const existingKeys = new Set<string>()
+    for (const r of existingRows) existingKeys.add(`${r.from}|${r.to}|${r.ticker}`)
+
+    const perPlanet: BulkPlanetPreview[] = []
+    const totals = { items: 0, duplicates: 0, cycles: 0 }
+
+    for (const planetLocationId of body.planetLocationIds) {
+      const result: BulkPlanetPreview = {
+        planetLocationId,
+        items: [],
+        skippedDuplicates: [],
+        skippedCycles: [],
+      }
+
+      for (const category of body.categories) {
+        const isOutput = category === 'production_output'
+        const fromLocationId = isOutput ? planetLocationId : body.hubLocationId
+        const toLocationId = isOutput ? body.hubLocationId : planetLocationId
+        const kind: 'demand' | 'surplus' = isOutput ? 'surplus' : 'demand'
+        const group = groupForKind(kind)
+
+        const tickers = await detectTickersForBulkCategory(userId, category, planetLocationId)
+
+        for (const ticker of tickers) {
+          // Dedup key includes category so the same ticker can exist as
+          // different categories (e.g. DW as both burn and production_input).
+          const key = `${fromLocationId}|${toLocationId}|${ticker}|${category}`
+          if (existingKeys.has(key)) {
+            result.skippedDuplicates.push({ category, ticker })
+            totals.duplicates += 1
+            continue
+          }
+          if (hasCycle(adjacency[group], fromLocationId, toLocationId, ticker)) {
+            result.skippedCycles.push({ category, ticker })
+            totals.cycles += 1
+            continue
+          }
+          result.items.push({ ticker, category, kind })
+          totals.items += 1
+        }
+      }
+
+      perPlanet.push(result)
+    }
+
     return { perPlanet, totals }
   }
 

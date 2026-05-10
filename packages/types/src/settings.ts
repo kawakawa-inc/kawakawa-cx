@@ -316,6 +316,16 @@ export const SETTING_DEFINITIONS = {
       'Planets to skip when bulk-creating logistics flows. Separate from fio.excludedLocations (inventory sync) and burnRepair.excludedPlanets (supply page).',
   } satisfies SettingDef<string[], 'string[]'>,
 
+  'logistics.tripLeadDays': {
+    key: 'logistics.tripLeadDays',
+    type: 'number',
+    defaultValue: 7,
+    category: SETTING_CATEGORIES.BURN_REPAIR,
+    label: 'Trip Lead Time (days)',
+    description:
+      'Single knob: how far in advance trips need to be planned. Drives both the Plan-tab look-ahead window and the contract-by deadline (so an order placed today arrives before the trip ships). Default 7.',
+  } satisfies SettingDef<number, 'number'>,
+
   'burnRepair.includeProduction': {
     key: 'burnRepair.includeProduction',
     type: 'boolean',

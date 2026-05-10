@@ -457,10 +457,9 @@ export class AdminController extends Controller {
   }
 
   /**
-   * Get a specific user by ID
+   * Get a specific user by ID (internal helper — not exposed as an endpoint)
    */
-  @Get('users/{userId}')
-  public async getUser(@Path() userId: number): Promise<AdminUser> {
+  private async getUser(userId: number): Promise<AdminUser> {
     // Subquery for aggregated roles for this user
     const userRolesSubquery = db
       .select({

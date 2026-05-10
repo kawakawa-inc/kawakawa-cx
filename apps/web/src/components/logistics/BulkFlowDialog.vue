@@ -1,11 +1,11 @@
 <template>
-  <v-dialog :model-value="modelValue" max-width="780" persistent>
+  <v-dialog :model-value="modelValue" max-width="900" persistent>
     <v-card>
-      <!-- ==================== Form phase ==================== -->
-      <template v-if="phase === 'form'">
+      <!-- ==================== Step 1: Configure ==================== -->
+      <template v-if="phase === 'configure'">
         <v-card-title class="d-flex align-center">
           <v-icon start>mdi-auto-fix</v-icon>
-          Bulk Add Flows
+          Add Hub
         </v-card-title>
 
         <v-divider />
@@ -161,17 +161,192 @@
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" :disabled="submitting" @click="close">Cancel</v-btn>
-          <v-btn color="primary" :loading="submitting" :disabled="!canSubmit" @click="handleSubmit">
-            Create ({{ estimatedOps }})
+          <v-btn
+            color="primary"
+            :loading="submitting"
+            :disabled="!canSubmit"
+            @click="handlePreview"
+          >
+            Review
           </v-btn>
         </v-card-actions>
       </template>
 
-      <!-- ==================== Result phase ==================== -->
+      <!-- ==================== Step 2: Review ==================== -->
+      <template v-else-if="phase === 'review'">
+        <v-card-title class="d-flex align-center">
+          <v-icon start>mdi-clipboard-check</v-icon>
+          Review Flows
+          <v-spacer />
+          <v-btn icon="mdi-arrow-left" size="small" variant="text" @click="phase = 'configure'" />
+        </v-card-title>
+
+        <v-divider />
+
+        <v-card-text class="pt-4" style="max-height: 70vh; overflow-y: auto">
+          <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mb-3">
+            {{ error }}
+          </v-alert>
+
+          <div v-if="previewLoading" class="d-flex justify-center pa-8">
+            <v-progress-circular indeterminate />
+          </div>
+
+          <template v-else-if="preview">
+            <!-- Totals summary -->
+            <div class="d-flex ga-3 mb-4 flex-wrap">
+              <v-chip size="small" color="primary" variant="flat">
+                {{ preview.totals.items }} materials
+              </v-chip>
+              <v-chip
+                v-if="preview.totals.duplicates > 0"
+                size="small"
+                color="warning"
+                variant="tonal"
+              >
+                {{ preview.totals.duplicates }} duplicates (skipped)
+              </v-chip>
+              <v-chip v-if="preview.totals.cycles > 0" size="small" color="error" variant="tonal">
+                {{ preview.totals.cycles }} cycles (skipped)
+              </v-chip>
+            </div>
+
+            <div class="text-caption text-medium-emphasis mb-3">
+              Click an icon to deselect it and exclude that flow. Deselected items will not be
+              created.
+            </div>
+
+            <!-- Per-planet panels -->
+            <v-expansion-panels variant="accordion" multiple>
+              <v-expansion-panel v-for="pp in sortedPreviewPlanets" :key="pp.planetLocationId">
+                <v-expansion-panel-title>
+                  <div class="d-flex align-center" style="width: 100%">
+                    <span>{{ planetName(pp.planetLocationId) }}</span>
+                    <v-spacer />
+                    <v-chip
+                      v-if="pp.items.length > 0"
+                      size="x-small"
+                      :color="selectedCount(pp) === pp.items.length ? 'primary' : 'grey'"
+                      variant="flat"
+                      class="mr-1"
+                    >
+                      {{ selectedCount(pp) }}/{{ pp.items.length }}
+                    </v-chip>
+                    <v-chip
+                      v-if="pp.skippedDuplicates.length > 0"
+                      size="x-small"
+                      color="warning"
+                      variant="tonal"
+                      class="mr-1"
+                    >
+                      {{ pp.skippedDuplicates.length }} dup
+                    </v-chip>
+                    <v-chip
+                      v-if="pp.skippedCycles.length > 0"
+                      size="x-small"
+                      color="error"
+                      variant="tonal"
+                      class="mr-1"
+                    >
+                      {{ pp.skippedCycles.length }} cyc
+                    </v-chip>
+                    <v-chip v-if="pp.error" size="x-small" color="error" variant="tonal">
+                      error
+                    </v-chip>
+                  </div>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <div v-if="pp.error" class="text-caption text-error">
+                    {{ pp.error }}
+                  </div>
+                  <div v-else-if="pp.items.length === 0" class="text-caption text-medium-emphasis">
+                    No new materials detected.
+                  </div>
+                  <div v-else>
+                    <div v-for="group in groupedByCategory(pp)" :key="group.category" class="mb-3">
+                      <div class="d-flex align-center mb-1">
+                        <span class="text-caption font-weight-medium">
+                          {{ categoryLabel(group.category) }}
+                        </span>
+                        <span class="text-caption text-medium-emphasis ml-2">
+                          ({{ group.selectedCount }}/{{ group.items.length }})
+                        </span>
+                        <v-btn
+                          size="x-small"
+                          variant="text"
+                          density="compact"
+                          class="ml-2"
+                          @click="toggleCategoryGroup(pp.planetLocationId, group)"
+                        >
+                          {{ group.selectedCount === group.items.length ? 'Deselect' : 'Select' }}
+                          all
+                        </v-btn>
+                      </div>
+                      <div class="d-flex flex-wrap ga-1">
+                        <div
+                          v-for="item in group.items"
+                          :key="`${item.ticker}-${group.category}`"
+                          class="icon-wrapper"
+                          :class="{
+                            deselected: isDeselected(
+                              pp.planetLocationId,
+                              item.ticker,
+                              group.category
+                            ),
+                          }"
+                          :title="item.ticker"
+                          @click="toggleItem(pp.planetLocationId, item.ticker, group.category)"
+                        >
+                          <CommodityIcon
+                            v-if="getCommodity(item.ticker)"
+                            :commodity="getCommodity(item.ticker)!"
+                            :size="28"
+                            style="width: 28px; height: 28px; font-size: 10px; border-radius: 4px"
+                          />
+                          <span v-else class="text-caption">{{ item.ticker }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Skipped info -->
+                    <div
+                      v-if="pp.skippedDuplicates.length > 0"
+                      class="text-caption text-warning mt-2"
+                    >
+                      Existing: {{ pp.skippedDuplicates.map(d => d.ticker).join(', ') }}
+                    </div>
+                    <div v-if="pp.skippedCycles.length > 0" class="text-caption text-error mt-1">
+                      Cycles: {{ pp.skippedCycles.map(c => c.ticker).join(', ') }}
+                    </div>
+                  </div>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </template>
+        </v-card-text>
+
+        <v-divider />
+
+        <v-card-actions>
+          <v-btn variant="text" :disabled="submitting" @click="phase = 'configure'">Back</v-btn>
+          <v-spacer />
+          <v-btn variant="text" :disabled="submitting" @click="close">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            :loading="submitting"
+            :disabled="totalSelected === 0"
+            @click="handleCreate"
+          >
+            Create ({{ totalSelected }})
+          </v-btn>
+        </v-card-actions>
+      </template>
+
+      <!-- ==================== Step 3: Result ==================== -->
       <template v-else>
         <v-card-title class="d-flex align-center">
           <v-icon start color="success">mdi-check-circle</v-icon>
-          Bulk Add Complete
+          Add Hub Complete
         </v-card-title>
 
         <v-divider />
@@ -196,14 +371,6 @@
               variant="tonal"
             >
               {{ result?.totals.cycles ?? 0 }} cycles
-            </v-chip>
-            <v-chip
-              v-if="(result?.totals.empty ?? 0) > 0"
-              color="grey"
-              size="small"
-              variant="tonal"
-            >
-              {{ result?.totals.empty ?? 0 }} empty categories
             </v-chip>
           </div>
 
@@ -237,9 +404,6 @@
                   >
                     {{ pr.skippedCycles.length }} cyc
                   </v-chip>
-                  <v-chip v-if="pr.error" size="x-small" color="error" variant="tonal">
-                    error
-                  </v-chip>
                 </div>
               </v-expansion-panel-title>
               <v-expansion-panel-text>
@@ -248,9 +412,9 @@
                 </div>
                 <div v-else>
                   <div
-                    v-for="group in groupByCategory(
+                    v-for="group in resultGroupByCategory(
                       pr.created.map(c => ({
-                        category: c.category,
+                        category: c.category as BulkFlowCategory,
                         ticker: c.flow.commodityTicker,
                       }))
                     )"
@@ -272,7 +436,12 @@
                   </div>
 
                   <div
-                    v-for="group in groupByCategory(pr.skippedDuplicates)"
+                    v-for="group in resultGroupByCategory(
+                      pr.skippedDuplicates.map(d => ({
+                        category: d.category as BulkFlowCategory,
+                        ticker: d.ticker,
+                      }))
+                    )"
                     :key="'d-' + group.category"
                     class="mb-2"
                   >
@@ -291,7 +460,12 @@
                   </div>
 
                   <div
-                    v-for="group in groupByCategory(pr.skippedCycles)"
+                    v-for="group in resultGroupByCategory(
+                      pr.skippedCycles.map(c => ({
+                        category: c.category as BulkFlowCategory,
+                        ticker: c.ticker,
+                      }))
+                    )"
                     :key="'y-' + group.category"
                     class="mb-2"
                   >
@@ -307,34 +481,6 @@
                     >
                       {{ t }}
                     </v-chip>
-                  </div>
-
-                  <div
-                    v-if="pr.emptyCategories.length > 0"
-                    class="text-caption text-medium-emphasis"
-                  >
-                    No tickers detected for:
-                    <v-chip
-                      v-for="c in pr.emptyCategories"
-                      :key="c"
-                      size="x-small"
-                      class="mr-1"
-                      variant="outlined"
-                    >
-                      {{ categoryLabel(c) }}
-                    </v-chip>
-                  </div>
-
-                  <div
-                    v-if="
-                      pr.created.length === 0 &&
-                      pr.skippedDuplicates.length === 0 &&
-                      pr.skippedCycles.length === 0 &&
-                      pr.emptyCategories.length === 0
-                    "
-                    class="text-caption text-medium-emphasis"
-                  >
-                    Nothing to do.
                   </div>
                 </div>
               </v-expansion-panel-text>
@@ -356,13 +502,19 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import KeyValueAutocomplete from '../KeyValueAutocomplete.vue'
+import CommodityIcon from '../CommodityIcon.vue'
 import { api } from '../../services/api'
 import { useSettingsStore } from '../../stores/settings'
+import { commodityService } from '../../services/commodityService'
 import type {
   BulkMultiCreateLogisticsFlowsRequest,
   BulkMultiCreateLogisticsFlowsResponse,
   BulkMultiPlanetResult,
-  BulkDetectionCategory,
+  BulkFlowCategory,
+  BulkPreviewItem,
+  BulkPlanetPreview,
+  BulkMultiPreviewResponse,
+  Commodity,
 } from '@kawakawa/types'
 import type { KeyValueItem } from '../KeyValueAutocomplete.vue'
 
@@ -384,12 +536,17 @@ const emit = defineEmits<{
 
 const settingsStore = useSettingsStore()
 
-type Phase = 'form' | 'result'
+type Phase = 'configure' | 'review' | 'result'
 
-const phase = ref<Phase>('form')
+const phase = ref<Phase>('configure')
 const submitting = ref(false)
+const previewLoading = ref(false)
 const error = ref('')
+const preview = ref<BulkMultiPreviewResponse | null>(null)
 const result = ref<BulkMultiCreateLogisticsFlowsResponse | null>(null)
+
+// Deselected items: Set of "planetId:ticker"
+const deselected = ref<Set<string>>(new Set())
 
 const hubLocationId = ref<string>('')
 const hubStorageTypes = ref<string[]>([])
@@ -397,26 +554,48 @@ const planetStorageTypes = ref<string[]>(['STORE'])
 const selectedPlanetIds = ref<Set<string>>(new Set())
 const exclusionsOpen = ref(false)
 
-const selectedCategories = ref<Set<BulkDetectionCategory>>(
-  new Set(['consumables', 'repair', 'inputs', 'production_output'])
+const selectedCategories = ref<Set<BulkFlowCategory>>(
+  new Set([
+    'burn',
+    'production_input',
+    'repair',
+    'government',
+    'contract',
+    'reserve',
+    'production_output',
+  ])
 )
 
-const categoryOptions: Array<{ value: BulkDetectionCategory; label: string; icon: string }> = [
-  { value: 'consumables', label: 'Consumables', icon: 'mdi-fire' },
-  { value: 'inputs', label: 'Production Inputs', icon: 'mdi-factory' },
+const categoryOptions: Array<{ value: BulkFlowCategory; label: string; icon: string }> = [
+  { value: 'burn', label: 'Burn', icon: 'mdi-fire' },
+  { value: 'production_input', label: 'Production Inputs', icon: 'mdi-factory' },
   { value: 'repair', label: 'Repair', icon: 'mdi-wrench' },
+  { value: 'government', label: 'Government', icon: 'mdi-bank' },
+  { value: 'contract', label: 'Contract', icon: 'mdi-file-document' },
+  { value: 'reserve', label: 'Reserve', icon: 'mdi-safe' },
   { value: 'production_output', label: 'Production Outputs', icon: 'mdi-package-variant' },
 ]
 
-function categoryLabel(c: BulkDetectionCategory): string {
+function categoryLabel(c: BulkFlowCategory): string {
   return categoryOptions.find(o => o.value === c)?.label ?? c
 }
 
-function toggleCategory(c: BulkDetectionCategory): void {
+function toggleCategory(c: BulkFlowCategory): void {
   const next = new Set(selectedCategories.value)
   if (next.has(c)) next.delete(c)
   else next.add(c)
   selectedCategories.value = next
+}
+
+// ---- Commodity lookup ----
+
+const commodityMap = computed(() => {
+  const all = commodityService.getAllCommoditiesSync()
+  return new Map(all.map(c => [c.ticker, c]))
+})
+
+function getCommodity(ticker: string): Commodity | undefined {
+  return commodityMap.value.get(ticker)
 }
 
 // ---- Planet list + exclusions ----
@@ -494,15 +673,25 @@ watch(
   () => props.modelValue,
   open => {
     if (!open) return
-    phase.value = 'form'
+    phase.value = 'configure'
+    preview.value = null
     result.value = null
     error.value = ''
+    deselected.value = new Set()
     hubLocationId.value = props.initialHubLocationId
     hubStorageTypes.value = hubDefaultStorage(props.initialHubLocationId)
     planetStorageTypes.value = ['STORE']
     selectedPlanetIds.value = new Set()
     exclusionsOpen.value = false
-    selectedCategories.value = new Set(['consumables', 'repair', 'inputs', 'production_output'])
+    selectedCategories.value = new Set([
+      'burn',
+      'production_input',
+      'repair',
+      'government',
+      'contract',
+      'reserve',
+      'production_output',
+    ])
   }
 )
 
@@ -517,28 +706,136 @@ const canSubmit = computed(() => {
   return true
 })
 
-const estimatedOps = computed(() => {
-  const planets = selectedPlanetIds.value.size
-  const cats = selectedCategories.value.size
-  return `${planets} planet${planets === 1 ? '' : 's'} × ${cats} categor${cats === 1 ? 'y' : 'ies'}`
-})
+// ---- Preview ----
 
-async function handleSubmit(): Promise<void> {
+async function handlePreview(): Promise<void> {
   submitting.value = true
+  previewLoading.value = true
   error.value = ''
+  deselected.value = new Set()
   try {
-    const body: BulkMultiCreateLogisticsFlowsRequest = {
+    const body = {
       hubLocationId: hubLocationId.value,
       planetLocationIds: [...selectedPlanetIds.value],
       hubStorageTypes: hubStorageTypes.value,
       planetStorageTypes: planetStorageTypes.value,
       categories: [...selectedCategories.value],
     }
+    preview.value = await api.logistics.previewBulkMultiFlows(body)
+    phase.value = 'review'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Preview failed'
+  } finally {
+    submitting.value = false
+    previewLoading.value = false
+  }
+}
+
+// ---- Review helpers ----
+
+function isDeselected(planetId: string, ticker: string, category: BulkFlowCategory): boolean {
+  return deselected.value.has(`${planetId}:${ticker}:${category}`)
+}
+
+function toggleItem(planetId: string, ticker: string, category: BulkFlowCategory): void {
+  const key = `${planetId}:${ticker}:${category}`
+  const next = new Set(deselected.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  deselected.value = next
+}
+
+interface CategoryGroup {
+  category: BulkFlowCategory
+  items: BulkPreviewItem[]
+  selectedCount: number
+}
+
+function groupedByCategory(pp: BulkPlanetPreview): CategoryGroup[] {
+  const groups = new Map<BulkFlowCategory, BulkPreviewItem[]>()
+  for (const item of pp.items) {
+    const list = groups.get(item.category) ?? []
+    list.push(item)
+    groups.set(item.category, list)
+  }
+  return [...groups.entries()]
+    .map(([category, items]) => ({
+      category,
+      items: items.sort((a, b) => a.ticker.localeCompare(b.ticker)),
+      selectedCount: items.filter(i => !isDeselected(pp.planetLocationId, i.ticker, category))
+        .length,
+    }))
+    .sort((a, b) => categoryLabel(a.category).localeCompare(categoryLabel(b.category)))
+}
+
+function toggleCategoryGroup(planetId: string, group: CategoryGroup): void {
+  const allSelected = group.selectedCount === group.items.length
+  const next = new Set(deselected.value)
+  for (const item of group.items) {
+    const key = `${planetId}:${item.ticker}:${group.category}`
+    if (allSelected) {
+      next.add(key)
+    } else {
+      next.delete(key)
+    }
+  }
+  deselected.value = next
+}
+
+function selectedCount(pp: BulkPlanetPreview): number {
+  return pp.items.filter(i => !isDeselected(pp.planetLocationId, i.ticker, i.category)).length
+}
+
+const totalSelected = computed(() => {
+  if (!preview.value) return 0
+  let count = 0
+  for (const pp of preview.value.perPlanet) {
+    count += selectedCount(pp)
+  }
+  return count
+})
+
+const sortedPreviewPlanets = computed(() => {
+  if (!preview.value) return []
+  return [...preview.value.perPlanet].sort((a, b) => {
+    if (a.items.length !== b.items.length) return b.items.length - a.items.length
+    return planetName(a.planetLocationId).localeCompare(planetName(b.planetLocationId))
+  })
+})
+
+// ---- Create from review ----
+
+async function handleCreate(): Promise<void> {
+  if (!preview.value) return
+  submitting.value = true
+  error.value = ''
+  try {
+    // Build exclusions map from deselected items.
+    const exclusions: Record<string, Record<string, string[]>> = {}
+    for (const pp of preview.value.perPlanet) {
+      for (const item of pp.items) {
+        if (isDeselected(pp.planetLocationId, item.ticker, item.category)) {
+          if (!exclusions[pp.planetLocationId]) exclusions[pp.planetLocationId] = {}
+          if (!exclusions[pp.planetLocationId][item.category])
+            exclusions[pp.planetLocationId][item.category] = []
+          exclusions[pp.planetLocationId][item.category].push(item.ticker)
+        }
+      }
+    }
+
+    const body: BulkMultiCreateLogisticsFlowsRequest = {
+      hubLocationId: hubLocationId.value,
+      planetLocationIds: [...selectedPlanetIds.value],
+      hubStorageTypes: hubStorageTypes.value,
+      planetStorageTypes: planetStorageTypes.value,
+      categories: [...selectedCategories.value],
+      exclusions,
+    }
     result.value = await api.logistics.bulkMultiCreateFlows(body)
     phase.value = 'result'
     if (result.value.totals.created > 0) emit('saved')
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Bulk create failed'
+    error.value = e instanceof Error ? e.message : 'Create failed'
   } finally {
     submitting.value = false
   }
@@ -579,8 +876,8 @@ const sortedPlanetResults = computed(() =>
   })
 )
 
-function groupByCategory(items: Array<{ category: BulkDetectionCategory; ticker: string }>) {
-  const groups = new Map<BulkDetectionCategory, string[]>()
+function resultGroupByCategory(items: Array<{ category: BulkFlowCategory; ticker: string }>) {
+  const groups = new Map<BulkFlowCategory, string[]>()
   for (const item of items) {
     const list = groups.get(item.category) ?? []
     list.push(item.ticker)
@@ -591,3 +888,24 @@ function groupByCategory(items: Array<{ category: BulkDetectionCategory; ticker:
     .sort((a, b) => categoryLabel(a.category).localeCompare(categoryLabel(b.category)))
 }
 </script>
+
+<style scoped>
+.icon-wrapper {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: opacity 0.15s ease;
+}
+
+.icon-wrapper.deselected {
+  opacity: 0.25;
+  text-decoration: line-through;
+}
+
+.icon-wrapper:hover {
+  outline: 2px solid rgba(var(--v-theme-primary), 0.5);
+  outline-offset: 1px;
+}
+</style>

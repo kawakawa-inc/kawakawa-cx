@@ -47,6 +47,7 @@ export const syncJobTypeEnum = pgEnum('sync_job_type', [
   'commodities',
   'locations',
   'stations',
+  'user-ships',
 ])
 export const syncJobStatusEnum = pgEnum('sync_job_status', ['pending', 'running', 'done', 'failed'])
 export const syncJobSourceEnum = pgEnum('sync_job_source', ['user', 'system'])
@@ -115,6 +116,12 @@ export const logisticsClaimCategoryEnum = pgEnum('logistics_claim_category', [
   'other',
 ])
 export const logisticsClaimSourceEnum = pgEnum('logistics_claim_source', ['manual', 'auto'])
+export const logisticsShipmentStatusEnum = pgEnum('logistics_shipment_status', [
+  'planned',
+  'dispatched',
+  'delivered',
+  'cancelled',
+])
 
 export const demandRateEnum = pgEnum('demand_rate', ['total', 'daily'])
 
@@ -456,6 +463,148 @@ export const fioPlanetProduction = pgTable(
   })
 )
 
+// ==================== FIO USER SHIPS (Ship roster from /ship/ships/{user}) ====================
+// Cargo Volume + fuel state are flattened from the per-store fuel endpoint for query simplicity.
+// Active flight (if any) joins via flightId → fioUserShipFlights.fioFlightId.
+export const fioUserShips = pgTable(
+  'fio_user_ships',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fioShipId: varchar('fio_ship_id', { length: 64 }).notNull(),
+    registration: varchar('registration', { length: 20 }).notNull(),
+    // FIO returns null for unnamed starter ships; UI should fall back to registration.
+    name: varchar('name', { length: 64 }),
+    blueprintNaturalId: varchar('blueprint_natural_id', { length: 32 }),
+    commissioningAt: timestamp('commissioning_at'),
+    flightId: varchar('flight_id', { length: 64 }), // null = parked
+    volumeM3: decimal('volume_m3', { precision: 14, scale: 4 }).notNull().default('0'),
+    mass: decimal('mass', { precision: 14, scale: 4 }).notNull().default('0'),
+    operatingEmptyMass: decimal('operating_empty_mass', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    acceleration: decimal('acceleration', { precision: 14, scale: 4 }),
+    thrust: decimal('thrust', { precision: 14, scale: 4 }),
+    reactorPower: decimal('reactor_power', { precision: 14, scale: 4 }),
+    emitterPower: decimal('emitter_power', { precision: 14, scale: 4 }),
+    stlFuelFlowRate: decimal('stl_fuel_flow_rate', { precision: 14, scale: 6 }),
+    condition: decimal('condition', { precision: 6, scale: 5 }),
+    lastRepairAt: timestamp('last_repair_at'),
+    locationNaturalId: varchar('location_natural_id', { length: 20 }), // null when in flight
+    locationSystemNaturalId: varchar('location_system_natural_id', { length: 20 }),
+    // FIO's own timestamp on the ship record — i.e. "when FIO last received
+    // an update for this ship from PRUN," not when we last hit FIO. Useful as
+    // a freshness indicator in the UI ("Data from 2h ago").
+    fioReportedAt: timestamp('fio_reported_at'),
+    storeId: varchar('store_id', { length: 64 }),
+    stlFuelStoreId: varchar('stl_fuel_store_id', { length: 64 }),
+    ftlFuelStoreId: varchar('ftl_fuel_store_id', { length: 64 }),
+    // ---- Cargo bay (matched against /storage/{user} via storeId) ----
+    cargoWeightLoad: decimal('cargo_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoWeightCapacity: decimal('cargo_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoVolumeLoad: decimal('cargo_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    cargoVolumeCapacity: decimal('cargo_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    // ---- STL fuel tank ----
+    stlFuelAmount: decimal('stl_fuel_amount', { precision: 14, scale: 4 }).notNull().default('0'),
+    stlFuelMaxUnits: decimal('stl_fuel_max_units', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelWeightLoad: decimal('stl_fuel_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelWeightCapacity: decimal('stl_fuel_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelVolumeLoad: decimal('stl_fuel_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    stlFuelVolumeCapacity: decimal('stl_fuel_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    // ---- FTL fuel tank ----
+    ftlFuelAmount: decimal('ftl_fuel_amount', { precision: 14, scale: 4 }).notNull().default('0'),
+    ftlFuelMaxUnits: decimal('ftl_fuel_max_units', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelWeightLoad: decimal('ftl_fuel_weight_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelWeightCapacity: decimal('ftl_fuel_weight_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelVolumeLoad: decimal('ftl_fuel_volume_load', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    ftlFuelVolumeCapacity: decimal('ftl_fuel_volume_capacity', { precision: 14, scale: 4 })
+      .notNull()
+      .default('0'),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('fio_user_ships_user_idx').on(table.userId),
+    uniqueUserShip: uniqueIndex('fio_user_ships_user_ship_idx').on(table.userId, table.fioShipId),
+  })
+)
+
+// ==================== FIO USER SHIP REPAIR MATERIALS ====================
+// Replaced wholesale per ship per sync (delete + insert).
+export const fioUserShipRepairMaterials = pgTable(
+  'fio_user_ship_repair_materials',
+  {
+    id: serial('id').primaryKey(),
+    shipId: integer('ship_id')
+      .notNull()
+      .references(() => fioUserShips.id, { onDelete: 'cascade' }),
+    materialTicker: varchar('material_ticker', { length: 10 }).notNull(),
+    amount: integer('amount').notNull(),
+  },
+  table => ({
+    shipIdx: index('fio_user_ship_repair_materials_ship_idx').on(table.shipId),
+  })
+)
+
+// ==================== FIO USER SHIP FLIGHTS (Active and recent flights) ====================
+export const fioUserShipFlights = pgTable(
+  'fio_user_ship_flights',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fioFlightId: varchar('fio_flight_id', { length: 64 }).notNull(),
+    fioShipId: varchar('fio_ship_id', { length: 64 }).notNull(),
+    originDisplay: text('origin_display'),
+    destinationDisplay: text('destination_display'),
+    originNaturalId: varchar('origin_natural_id', { length: 20 }),
+    destinationNaturalId: varchar('destination_natural_id', { length: 20 }),
+    departureAt: timestamp('departure_at'),
+    arrivalAt: timestamp('arrival_at'),
+    currentSegmentIndex: integer('current_segment_index'),
+    stlDistance: decimal('stl_distance', { precision: 18, scale: 4 }),
+    ftlDistance: decimal('ftl_distance', { precision: 18, scale: 4 }),
+    isAborted: boolean('is_aborted').notNull().default(false),
+    segments: jsonb('segments').notNull().default([]),
+    lastSyncedAt: timestamp('last_synced_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('fio_user_ship_flights_user_idx').on(table.userId),
+    uniqueUserFlight: uniqueIndex('fio_user_ship_flights_user_flight_idx').on(
+      table.userId,
+      table.fioFlightId
+    ),
+  })
+)
+
 // ==================== SELL ORDERS ====================
 export const sellOrders = pgTable(
   'sell_orders',
@@ -555,6 +704,14 @@ export const logisticsFlows = pgTable(
     amountOverride: integer('amount_override'), // required when kind='fixed'
     rate: demandRateEnum('rate').notNull().default('daily'),
     priority: integer('priority'), // null = fall through to jump-distance ordering
+    // Days for one ship trip from source to destination. Used to compute
+    // "ship by" deadlines per (base, commodity) shortfall. 0 = unset/instant.
+    transitDays: integer('transit_days').notNull().default(0),
+    // Days between consecutive shipments on this flow. The shipment unit of
+    // work — drives per-shipment quantity (dailyConsumption × cadenceDays)
+    // and the next-arrival / load / contract-by timeline. Defaults to 7,
+    // user-set per flow.
+    cadenceDays: integer('cadence_days').notNull().default(7),
     note: text('note'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -615,6 +772,197 @@ export const locationDemandClaims = pgTable(
       name: 'ldc_location_fk',
       columns: [table.locationId],
       foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// ==================== TRIPS / SHIPMENTS (3-layer logistics) ====================
+//
+// Layer 1 — flows (logistics_flows above): demand definitions ("KW-689c needs
+//   25k H2O every 14 days, sourced from Etherwind").
+// Layer 2 — shipments: a parcel from one location to another, carrying one
+//   or more material lines. Exists in a "queued" state when not yet assigned
+//   to a trip; otherwise scheduled / in-transit / delivered with the trip.
+// Layer 3 — trips: the ship's run. A trip owns a ship, an ordered list of
+//   stops, and a set of shipments routed against those stops.
+//
+// Status lives on the trip. Shipments are containers — their effective state
+// is derived from the parent trip (or "queued" when trip_id is null).
+
+// Trip = one ship's run. The ship leaves the origin, visits each stop in
+// sequence, and finishes at the last stop.
+export const trips = pgTable(
+  'trips',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Optional ship assignment. The user picks from their fleet or leaves
+    // blank; auto-assignment is a future stage.
+    shipDbId: integer('ship_db_id'),
+    status: logisticsShipmentStatusEnum('status').notNull().default('planned'),
+    actualDispatchAt: timestamp('actual_dispatch_at'),
+    actualArrivalAt: timestamp('actual_arrival_at'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('trips_user_idx').on(table.userId),
+    statusIdx: index('trips_status_idx').on(table.userId, table.status),
+    shipFk: foreignKey({
+      name: 'trips_ship_fk',
+      columns: [table.shipDbId],
+      foreignColumns: [fioUserShips.id],
+    }),
+  })
+)
+
+// Ordered stops on a trip. `sequence` is 0-indexed, monotonically increasing.
+// `plannedArriveAt` on the FIRST stop is also the trip's "load by / dispatch"
+// time. Stops can exist without any shipment touching them (refueling /
+// maintenance), though typically they're created when shipments are assigned.
+export const tripStops = pgTable(
+  'trip_stops',
+  {
+    id: serial('id').primaryKey(),
+    tripId: integer('trip_id')
+      .notNull()
+      .references(() => trips.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    plannedArriveAt: timestamp('planned_arrive_at').notNull(),
+    notes: text('notes'),
+  },
+  table => ({
+    tripIdx: index('trip_stops_trip_idx').on(table.tripId),
+    seqUniq: uniqueIndex('trip_stops_seq_uniq').on(table.tripId, table.sequence),
+    locationFk: foreignKey({
+      name: 'trip_stops_location_fk',
+      columns: [table.locationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+  })
+)
+
+// Shipment = one parcel: materials moving from `origin_location_id` to
+// `dest_location_id`. `trip_id` is null for queued shipments (not yet bundled
+// onto a trip). When the user assigns a shipment to a trip, the system finds
+// or creates the matching trip_stops and sets origin_stop_id / dest_stop_id.
+// Both stop IDs are nullable because they only exist after assignment.
+export const shipments = pgTable(
+  'shipments',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tripId: integer('trip_id'),
+    originLocationId: varchar('origin_location_id', { length: 20 }).notNull(),
+    destLocationId: varchar('dest_location_id', { length: 20 }).notNull(),
+    originStopId: integer('origin_stop_id'),
+    destStopId: integer('dest_stop_id'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('shipments_user_idx').on(table.userId),
+    tripIdx: index('shipments_trip_idx').on(table.tripId),
+    queuedIdx: index('shipments_queued_idx').on(table.userId, table.tripId),
+    tripFk: foreignKey({
+      name: 'shipments_trip_fk',
+      columns: [table.tripId],
+      foreignColumns: [trips.id],
+    }).onDelete('set null'),
+    originLocationFk: foreignKey({
+      name: 'shipments_origin_location_fk',
+      columns: [table.originLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    destLocationFk: foreignKey({
+      name: 'shipments_dest_location_fk',
+      columns: [table.destLocationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    originStopFk: foreignKey({
+      name: 'shipments_origin_stop_fk',
+      columns: [table.originStopId],
+      foreignColumns: [tripStops.id],
+    }).onDelete('set null'),
+    destStopFk: foreignKey({
+      name: 'shipments_dest_stop_fk',
+      columns: [table.destStopId],
+      foreignColumns: [tripStops.id],
+    }).onDelete('set null'),
+  })
+)
+
+// "I handle this locally" — per-(location, ticker) entries that hide a
+// material from contract suggestions for that base. Used when the user
+// produces a material in some out-of-band way (e.g., juggling experts to
+// turn on a CLI line at a hub) that FIO production data doesn't reflect.
+// The Plan tab's contract walk treats `(location, ticker)` in this set as
+// if the location produced the ticker.
+export const logisticsSelfSupplied = pgTable(
+  'logistics_self_supplied',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    locationId: varchar('location_id', { length: 20 }).notNull(),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    note: text('note'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index('logistics_self_supplied_user_idx').on(table.userId),
+    uniq: uniqueIndex('logistics_self_supplied_user_loc_ticker_idx').on(
+      table.userId,
+      table.locationId,
+      table.commodityTicker
+    ),
+    locationFk: foreignKey({
+      name: 'logistics_self_supplied_location_fk',
+      columns: [table.locationId],
+      foreignColumns: [fioLocations.naturalId],
+    }),
+    commodityFk: foreignKey({
+      name: 'logistics_self_supplied_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+  })
+)
+
+// One material in a shipment's manifest. Lines with `flowId` fulfill a flow's
+// per-cadence quota; ad-hoc lines (`flowId = null`) are one-offs.
+export const shipmentLines = pgTable(
+  'shipment_lines',
+  {
+    id: serial('id').primaryKey(),
+    shipmentId: integer('shipment_id')
+      .notNull()
+      .references(() => shipments.id, { onDelete: 'cascade' }),
+    flowId: integer('flow_id'),
+    commodityTicker: varchar('commodity_ticker', { length: 10 }).notNull(),
+    amount: integer('amount').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  table => ({
+    shipmentIdx: index('shipment_lines_shipment_idx').on(table.shipmentId),
+    flowIdx: index('shipment_lines_flow_idx').on(table.flowId),
+    commodityFk: foreignKey({
+      name: 'shipment_lines_commodity_fk',
+      columns: [table.commodityTicker],
+      foreignColumns: [fioCommodities.ticker],
+    }),
+    flowFk: foreignKey({
+      name: 'shipment_lines_flow_fk',
+      columns: [table.flowId],
+      foreignColumns: [logisticsFlows.id],
     }),
   })
 )

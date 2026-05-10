@@ -59,7 +59,7 @@ vi.mock('@kawakawa/services/user-settings', () => ({
   getSetting: vi.fn(),
 }))
 
-vi.mock('@kawakawa/services/supply', () => ({
+vi.mock('@kawakawa/services/burn-repair', () => ({
   getRepairableTickers: vi.fn(async () => new Set(['FRM'])),
   resolveActiveMembers: vi.fn(),
   resolveDisplayUsernames: vi.fn(async () => new Map()),
@@ -78,7 +78,7 @@ import {
   getRepairableTickers,
   resolveActiveMembers,
   resolveDisplayUsernames,
-} from '@kawakawa/services/supply'
+} from '@kawakawa/services/burn-repair'
 
 describe('BurnRepairController', () => {
   let controller: BurnRepairController

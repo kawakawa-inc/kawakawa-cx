@@ -9,10 +9,11 @@ import { eq, and, inArray, ne } from 'drizzle-orm'
 import { FioClient } from '../fio/client.js'
 import { syncUserInventory } from '../fio/sync-user-inventory.js'
 import { syncUserPlanetsList, syncSinglePlanet } from '../fio/sync-user-planets.js'
+import { syncUserShips } from '../fio/sync-user-ships.js'
 import { syncCommodities } from '../fio/sync-commodities.js'
 import { syncLocations } from '../fio/sync-locations.js'
 import { syncStations } from '../fio/sync-stations.js'
-import { computeBurnRepairCache } from '../supply/burn-repair-cache.js'
+import { computeBurnRepairCache } from '../burn-repair/burn-repair-cache.js'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
 import { enqueue } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
@@ -37,6 +38,8 @@ export async function handleJob(job: SyncJob): Promise<void> {
       return handleLocations()
     case 'stations':
       return handleStations()
+    case 'user-ships':
+      return handleUserShips(job)
   }
 }
 
@@ -162,4 +165,13 @@ async function handleLocations(): Promise<void> {
 
 async function handleStations(): Promise<void> {
   await syncStations()
+}
+
+async function handleUserShips(job: SyncJob): Promise<void> {
+  if (!job.userId) throw new Error('user-ships job missing userId')
+  const { apiKey, username } = await getFioCreds(job.userId)
+  const result = await syncUserShips(job.userId, apiKey, username)
+  if (result.errors.length > 0) {
+    throw new Error(result.errors.join('; '))
+  }
 }

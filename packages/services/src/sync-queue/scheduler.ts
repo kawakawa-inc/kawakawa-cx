@@ -7,7 +7,7 @@
 import { db, users, syncJobs } from '@kawakawa/db'
 import { and, eq, sql } from 'drizzle-orm'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
-import { captureCorpStockSnapshot } from '../supply/corp-stock.js'
+import { captureCorpStockSnapshot } from '../burn-repair/corp-stock.js'
 import { enqueue, enqueueUserFullSync } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
 

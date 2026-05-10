@@ -10,7 +10,7 @@ import type {
 import { corpSnapshotTickerStock, corpSnapshotUserTicker, db } from '../db/index.js'
 import { and, between, inArray, sql } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
-import { resolveActiveMembers, resolveDisplayUsernames } from '@kawakawa/services/supply'
+import { resolveActiveMembers, resolveDisplayUsernames } from '@kawakawa/services/burn-repair'
 import { applyExclusion } from './BurnRepairController.js'
 import { BadRequest } from '../utils/errors.js'
 

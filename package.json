@@ -20,7 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "turbo run test",
-    "knip": "knip",
+    "knip": "turbo run knip",
     "knip:fix": "knip --fix"
   },
   "devDependencies": {

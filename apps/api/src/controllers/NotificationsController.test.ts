@@ -7,7 +7,6 @@ vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: {
     getForUser: vi.fn(),
     getUnreadCount: vi.fn(),
-    getById: vi.fn(),
     markAsRead: vi.fn(),
     markAllAsRead: vi.fn(),
     remove: vi.fn(),
@@ -65,25 +64,6 @@ describe('NotificationsController', () => {
       const result = await controller.getNotifications(mockRequest)
 
       expect(result).toEqual([])
-    })
-  })
-
-  describe('getNotification', () => {
-    it('should return a single notification by ID', async () => {
-      vi.mocked(notificationService.getById).mockResolvedValue(mockNotification)
-
-      const result = await controller.getNotification(1, mockRequest)
-
-      expect(notificationService.getById).toHaveBeenCalledWith(1, 1)
-      expect(result).toEqual(mockNotification)
-    })
-
-    it('should throw NotFound when notification does not exist', async () => {
-      vi.mocked(notificationService.getById).mockResolvedValue(null)
-
-      await expect(controller.getNotification(999, mockRequest)).rejects.toThrow(
-        'Notification not found'
-      )
     })
   })
 

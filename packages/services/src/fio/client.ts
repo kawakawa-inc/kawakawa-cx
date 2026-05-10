@@ -568,6 +568,59 @@ export class FioClient {
   }
 
   /**
+   * Fetch the user's ship roster (cargo volume, mass, condition, location, etc.)
+   * Endpoint: GET /ship/ships/{username}
+   */
+  async getUserShips<T>(apiKey: string, username: string): Promise<T> {
+    return this.fetchAuthedJson<T>(`/ship/ships/${encodeURIComponent(username)}`, apiKey)
+  }
+
+  /**
+   * Fetch fuel state for the user's ships (one STL store + one FTL store per ship).
+   * Endpoint: GET /ship/ships/fuel/{username}
+   */
+  async getUserShipFuel<T>(apiKey: string, username: string): Promise<T> {
+    return this.fetchAuthedJson<T>(`/ship/ships/fuel/${encodeURIComponent(username)}`, apiKey)
+  }
+
+  /**
+   * Fetch active and recent flights for the user's ships.
+   * Endpoint: GET /ship/flights/{username}
+   */
+  async getUserShipFlights<T>(apiKey: string, username: string): Promise<T> {
+    return this.fetchAuthedJson<T>(`/ship/flights/${encodeURIComponent(username)}`, apiKey)
+  }
+
+  /**
+   * Internal: same shape as getUserPlanets — Bearer-style FIOAPIKey header,
+   * but matches the convention used by `/storage/{user}` / `/sites/{user}` of
+   * passing the raw key as the Authorization header value.
+   */
+  private async fetchAuthedJson<T>(path: string, apiKey: string): Promise<T> {
+    const url = new URL(`${this.baseUrl}${path}`)
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: apiKey,
+    }
+    try {
+      const response = await fetch(url.toString(), { headers })
+      if (!response.ok) {
+        throw new FioApiError(
+          `FIO API request failed: ${response.statusText}`,
+          response.status,
+          await response.text()
+        )
+      }
+      return (await response.json()) as T
+    } catch (error) {
+      if (error instanceof FioApiError) throw error
+      throw new FioApiError(
+        `Failed to fetch ${path}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
+  }
+
+  /**
    * Get the current cache size for jump counts
    */
   getJumpCountCacheSize(): number {

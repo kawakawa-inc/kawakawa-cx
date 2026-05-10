@@ -5,7 +5,7 @@ import { Body, Controller, Delete, Get, Put, Route, Security, Tags, Request, Pat
 import type { JwtPayload } from '../utils/jwt.js'
 import { SETTING_DEFINITIONS } from '@kawakawa/types/settings'
 import * as userSettingsService from '@kawakawa/services/user-settings'
-import { computeBurnRepairCache } from '@kawakawa/services/supply'
+import { computeBurnRepairCache } from '@kawakawa/services/burn-repair'
 import { BadRequest } from '../utils/errors.js'
 import { createLogger } from '../utils/logger.js'
 

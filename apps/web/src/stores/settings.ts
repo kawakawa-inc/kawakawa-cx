@@ -246,6 +246,22 @@ export const useSettingsStore = () => {
     set: (value: string[]) => updateSetting('logistics.excludedPlanets', value),
   })
 
+  // Trip Lead Time — single knob driving both the "look-ahead" window on the
+  // Plan tab AND the contract-by deadline (max time from contract → on-ship).
+  // Stored as `logistics.tripLeadDays`; default 7 days.
+  const logisticsTripLeadDays = computed({
+    get: () => (settingsValues.value['logistics.tripLeadDays'] as number) ?? 7,
+    set: (value: number) => updateSetting('logistics.tripLeadDays', value),
+  })
+
+  // Target repair age — building age (days) the user wants to repair at. Same
+  // storage key as the Burn/Repair feature; logistics consumes it as the
+  // "next-repair anchor" for repair-event scheduling. Default 45.
+  const logisticsTargetRepairAge = computed({
+    get: () => (settingsValues.value['burnRepair.repairDays'] as number) ?? 45,
+    set: (value: number) => updateSetting('burnRepair.repairDays', value),
+  })
+
   // Discord settings
   const discordMessageVisibility = computed({
     get: () => settingsValues.value['discord.messageVisibility'] as MessageVisibility,
@@ -327,6 +343,8 @@ export const useSettingsStore = () => {
 
     // Typed computed properties - Logistics
     logisticsExcludedPlanets,
+    logisticsTripLeadDays,
+    logisticsTargetRepairAge,
 
     // Typed computed properties - Discord
     discordMessageVisibility,

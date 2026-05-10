@@ -16,13 +16,24 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the script's real location through any symlinks (e.g. `/usr/local/bin/dev`
+# in the devcontainer) so `dev <command>` works from any cwd. Falls back to
+# `dirname "$0"` on systems without GNU readlink.
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 DEV_DIR="$ROOT_DIR/.dev"
 PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
 FIFO_DIR="/tmp/kawakawa-dev"  # FIFOs need tmpfs (not supported on all filesystems)
 
 SERVICES=(bot api web sync-worker)
+
+# Shared packages we keep on `tsc --watch` while any app is running, so their
+# `dist/` stays fresh and apps' tsx-watch picks up cross-package changes.
+# These are not "services" in the user-facing sense — they have no
+# start/stop/reload semantics from the consumer's perspective. Auto-started
+# with the first app (idempotent) and stopped on `stop all`.
+PACKAGES=(types db services)
 
 # Colors
 RED='\033[0;31m'
@@ -44,6 +55,17 @@ get_service_cmd() {
     api) echo "pnpm --filter @kawakawa/api dev" ;;
     web) echo "pnpm --filter @kawakawa/web dev" ;;
     sync-worker) echo "pnpm --filter @kawakawa/sync-worker dev" ;;
+    *) echo ""; return 1 ;;
+  esac
+}
+
+#
+# Get the pnpm command for a package watcher (`tsc --watch` for shared deps).
+#
+get_package_cmd() {
+  local pkg="$1"
+  case "$pkg" in
+    types|db|services) echo "pnpm --filter @kawakawa/$pkg dev" ;;
     *) echo ""; return 1 ;;
   esac
 }
@@ -104,6 +126,94 @@ is_running() {
 }
 
 #
+# Package-watcher lifecycle. Each shared package's `tsc --watch` runs as a
+# background process under the `pkg-<name>` PID slot, sharing the same PID
+# helpers as services. They have no FIFO (no reload concept — tsc --watch
+# already incrementally rebuilds on save).
+#
+start_package_watcher() {
+  local pkg="$1"
+
+  if is_running "pkg-$pkg"; then
+    return 0
+  fi
+
+  local cmd
+  cmd=$(get_package_cmd "$pkg")
+  if [[ -z "$cmd" ]]; then
+    echo -e "${RED}Unknown package: $pkg${NC}"
+    return 1
+  fi
+
+  local logfile="$LOG_DIR/pkg-$pkg.log"
+  local pidfile="$PID_DIR/pkg-$pkg.pid"
+
+  echo -e "${CYAN}Starting package watcher: $pkg...${NC}"
+
+  cd "$ROOT_DIR"
+  setsid bash -c "$cmd" </dev/null > "$logfile" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$pidfile"
+
+  sleep 0.5
+  if kill -0 "$pid" 2>/dev/null; then
+    echo -e "${GREEN}package $pkg watcher started (PID $pid)${NC}"
+  else
+    echo -e "${RED}package $pkg watcher failed to start. Check $logfile${NC}"
+    rm -f "$pidfile"
+    return 1
+  fi
+}
+
+stop_package_watcher() {
+  local pkg="$1"
+  local pid
+  pid=$(read_pid "pkg-$pkg")
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+
+  echo -e "${CYAN}Stopping package watcher $pkg (PID $pid)...${NC}"
+  local pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+    kill -TERM "-$pgid" 2>/dev/null || true
+  else
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null && [[ $waited -lt 30 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    if [[ -n "$pgid" && "$pgid" != "0" ]]; then
+      kill -9 "-$pgid" 2>/dev/null || true
+    else
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$PID_DIR/pkg-$pkg.pid"
+  echo -e "${GREEN}package $pkg watcher stopped${NC}"
+}
+
+# Idempotent: starts watchers that aren't already running. Called whenever
+# any app starts, so the dist/ chain is always live.
+ensure_package_watchers() {
+  for pkg in "${PACKAGES[@]}"; do
+    if ! is_running "pkg-$pkg"; then
+      start_package_watcher "$pkg"
+    fi
+  done
+}
+
+stop_package_watchers() {
+  for pkg in "${PACKAGES[@]}"; do
+    stop_package_watcher "$pkg"
+  done
+}
+
+#
 # Start a service
 #
 start_service() {
@@ -122,6 +232,10 @@ start_service() {
     echo -e "${RED}Unknown service: $service${NC}"
     return 1
   fi
+
+  # Make sure the shared-package watchers are alive before any app starts.
+  # No-op if they're already running.
+  ensure_package_watchers
 
   local logfile="$LOG_DIR/$service.log"
   local pidfile="$PID_DIR/$service.pid"
@@ -290,16 +404,13 @@ reload_service() {
 # Show status of all services
 #
 show_status() {
-  echo -e "${CYAN}Service Status:${NC}"
-  echo ""
-  for service in "${SERVICES[@]}"; do
-    local pid
-    pid=$(read_pid "$service")
+  # Helper: render one row for a tracked PID (service or package watcher).
+  render_row() {
+    local label="$1"
+    local pid="$2"
     if [[ -n "$pid" ]]; then
-      # Get memory usage
       local mem
       mem=$(ps -o rss= -p "$pid" 2>/dev/null | awk '{printf "%.0fMB", $1/1024}' || echo "?")
-      # Get uptime
       local elapsed
       elapsed=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ' || echo "0")
       local uptime_str
@@ -310,10 +421,22 @@ show_status() {
       else
         uptime_str="${elapsed}s"
       fi
-      echo -e "  ${GREEN}●${NC} $service  PID=$pid  mem=$mem  up=$uptime_str"
+      echo -e "  ${GREEN}●${NC} $label  PID=$pid  mem=$mem  up=$uptime_str"
     else
-      echo -e "  ${RED}○${NC} $service  (stopped)"
+      echo -e "  ${RED}○${NC} $label  (stopped)"
     fi
+  }
+
+  echo -e "${CYAN}Service Status:${NC}"
+  echo ""
+  for service in "${SERVICES[@]}"; do
+    render_row "$service" "$(read_pid "$service")"
+  done
+  echo ""
+  echo -e "${CYAN}Package Watchers:${NC}"
+  echo ""
+  for pkg in "${PACKAGES[@]}"; do
+    render_row "$pkg" "$(read_pid "pkg-$pkg")"
   done
   echo ""
 
@@ -403,9 +526,14 @@ main() {
   case "$action" in
     start)
       if [[ "$target" == "all" || -z "$target" ]]; then
+        # Watchers come up first so their initial dist build is done (or
+        # nearly done) by the time the apps start importing.
+        ensure_package_watchers
         for service in "${SERVICES[@]}"; do
           start_service "$service"
         done
+      elif [[ "$target" == "packages" ]]; then
+        ensure_package_watchers
       else
         start_service "$target"
       fi
@@ -416,6 +544,10 @@ main() {
         for service in "${SERVICES[@]}"; do
           stop_service "$service"
         done
+        # `stop all` is the natural full-shutdown signal; watchers go too.
+        stop_package_watchers
+      elif [[ "$target" == "packages" ]]; then
+        stop_package_watchers
       else
         stop_service "$target"
       fi
@@ -425,8 +557,15 @@ main() {
       if [[ "$target" == "all" || -z "$target" ]]; then
         for service in "${SERVICES[@]}"; do
           stop_service "$service"
+        done
+        stop_package_watchers
+        ensure_package_watchers
+        for service in "${SERVICES[@]}"; do
           start_service "$service"
         done
+      elif [[ "$target" == "packages" ]]; then
+        stop_package_watchers
+        ensure_package_watchers
       else
         stop_service "$target"
         start_service "$target"
@@ -456,22 +595,29 @@ main() {
     help|--help|-h)
       echo "Kawakawa CX Dev Process Manager"
       echo ""
-      echo "Usage: ./scripts/dev.sh <command> [service]"
+      echo "Usage: ./scripts/dev.sh <command> [target]"
       echo ""
       echo "Commands:"
-      echo "  start [service]    Start service(s) (bot, api, web, all)"
-      echo "  stop [service]     Stop service(s)"
-      echo "  restart [service]  Stop then start service(s)"
+      echo "  start [target]     Start service(s) — auto-starts package watchers"
+      echo "  stop [target]      Stop service(s); 'stop all' also stops watchers"
+      echo "  restart [target]   Stop then start"
       echo "  reload <service>   Hot-reload via tsx watch stdin"
-      echo "  status             Show all service statuses"
-      echo "  logs <service>     Tail service logs"
+      echo "  status             Show all service + package-watcher statuses"
+      echo "  logs <name>        Tail logs (service: api / web / bot / sync-worker;"
+      echo "                     package: pkg-types / pkg-db / pkg-services)"
       echo ""
-      echo "Services: bot, api, web (default: all)"
+      echo "Targets:"
+      echo "  all (default)       — every service + watchers"
+      echo "  bot|api|web|sync-worker — single app"
+      echo "  packages            — all package watchers as a group"
+      echo ""
+      echo "Package watchers (auto-managed; tsc --watch keeps dist/ fresh):"
+      echo "  types, db, services"
       echo ""
       echo "Files:"
-      echo "  .dev/pids/   PID files"
-      echo "  .dev/logs/   Service logs"
-      echo "  .dev/fifos/  stdin FIFOs (for reload)"
+      echo "  .dev/pids/   PID files (services + pkg-*)"
+      echo "  .dev/logs/   Logs (pkg-*.log for watchers)"
+      echo "  .dev/fifos/  stdin FIFOs (for reload — services only)"
       ;;
 
     *)

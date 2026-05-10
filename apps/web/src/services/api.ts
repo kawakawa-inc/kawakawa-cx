@@ -1,6 +1,7 @@
 // API service that switches between mock and real backend
 import { mockApi, USE_MOCK_API } from './mockApi'
 import { fetchWithLogging } from './logService'
+import { handleAuthFailure } from './authBus'
 import type {
   User,
   Currency,
@@ -19,7 +20,6 @@ import type {
   DiscordConnectionStatus,
   DiscordCallbackRequest,
   UserDiscordProfile,
-  SettingHistoryEntry,
   DiscordAuthUrlResponse,
   DiscordAuthResult,
   DiscordRegisterRequest,
@@ -52,10 +52,10 @@ import type {
   LogisticsFlow,
   CreateLogisticsFlowRequest,
   UpdateLogisticsFlowRequest,
-  BulkCreateLogisticsFlowsRequest,
-  BulkCreateLogisticsFlowsResponse,
   BulkMultiCreateLogisticsFlowsRequest,
   BulkMultiCreateLogisticsFlowsResponse,
+  BulkMultiPreviewRequest,
+  BulkMultiPreviewResponse,
   LocationDemandClaim,
   CreateLocationDemandClaimRequest,
   UpdateLocationDemandClaimRequest,
@@ -66,6 +66,19 @@ import type {
   BurnRepairCorpMaterialBreakdown,
   BurnRepairShoppingListRequest,
   BurnRepairShoppingListResponse,
+  UserShip,
+  Trip,
+  TripStatus,
+  CreateTripRequest,
+  UpdateTripRequest,
+  RepeatTripRequest,
+  SelfSuppliedEntry,
+  CreateSelfSuppliedRequest,
+  ContractCoverageEntry,
+  Shipment,
+  CreateShipmentRequest,
+  SuggestStopTimesRequest,
+  SuggestStopTimesResponse,
 } from '@kawakawa/types'
 
 interface LoginRequest {
@@ -379,47 +392,11 @@ interface CsvRowError {
   message: string
 }
 
-interface ParsedPriceRow {
-  rowNumber: number
-  ticker: string
-  location: string
-  price: number
-  currency: Currency
-  raw: Record<string, string>
-}
-
 interface CsvImportResult {
   imported: number
   updated: number
   skipped: number
   errors: CsvRowError[]
-}
-
-interface CsvPreviewResult {
-  headers: string[]
-  sampleRows: ParsedPriceRow[]
-  parseErrors: CsvRowError[]
-  validationErrors: CsvRowError[]
-  delimiter: string
-  totalRows: number
-  validRows: number
-}
-
-interface CsvImportRequest {
-  exchangeCode: string
-  mapping: CsvFieldMapping
-  locationDefault?: string
-  currencyDefault?: Currency
-  delimiter?: string
-  hasHeader?: boolean
-}
-
-interface GoogleSheetsImportRequest {
-  url: string
-  exchangeCode: string
-  fieldMapping: CsvFieldMapping
-  locationDefault?: string | null
-  currencyDefault?: Currency | null
 }
 
 // Admin Price Settings types
@@ -429,8 +406,6 @@ interface PriceSettingsResponse {
   fioBaseUrl: string
   fioPriceField: FioPriceField
   hasGoogleSheetsApiKey: boolean
-  kawaSheetUrl: string | null
-  kawaSheetGid: number | null
 }
 
 interface UpdateFioSettingsRequest {
@@ -440,11 +415,6 @@ interface UpdateFioSettingsRequest {
 
 interface UpdateGoogleSettingsRequest {
   apiKey?: string
-}
-
-interface UpdateKawaSheetRequest {
-  url?: string
-  gid?: number | null
 }
 
 // Price List types
@@ -532,7 +502,7 @@ interface UpdatePriceListRequest {
 
 // Import Config types
 type ImportSourceType = 'csv' | 'google_sheets'
-type ImportFormat = 'flat' | 'pivot' | 'kawa'
+type ImportFormat = 'flat' | 'pivot'
 
 interface ImportConfigResponse {
   id: number
@@ -574,13 +544,6 @@ interface PivotImportResult {
 }
 
 // FIO Price Sync types
-interface ExchangeSyncStatus {
-  exchangeCode: string
-  locationId: string | null
-  lastSyncedAt: string | null
-  priceCount: number
-}
-
 interface ExchangeSyncResultResponse {
   exchangeCode: string
   locationId: string | null
@@ -880,6 +843,128 @@ function corpQueryString(excludedUserIds?: number[]): string {
   return `?excludedUserIds=${encodeURIComponent(excludedUserIds.join(','))}`
 }
 
+// ── Centralized fetch wrapper with auth + retry ──────────────────────────
+
+const MAX_RETRIES = 2
+const RETRY_BASE_DELAY_MS = 1000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Centralized fetch wrapper that handles:
+ * - Auth headers (JWT from localStorage)
+ * - Refreshed token detection (X-Refreshed-Token header)
+ * - 401 → centralized auth failure (clears token, notifies App.vue)
+ * - Network errors and 5xx → exponential backoff retry
+ *
+ * Use `authenticatedFetch` for endpoints that require a JWT.
+ * Use `rawFetch` for unauthenticated endpoints (login, register, etc.).
+ */
+async function rawFetch(url: string, init: RequestInit): Promise<Response> {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetchWithLogging(url, init)
+
+      // Always check for refreshed token before anything else
+      handleRefreshedToken(response)
+
+      // Centralized 401 handling — one place, not 60
+      if (response.status === 401) {
+        handleAuthFailure()
+        throw new Error('Session expired. Please log in again.')
+      }
+
+      // Retry on server errors (502/503/504 are transient; 500 is ambiguous but retry once)
+      if (response.status >= 500 && attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt))
+        continue
+      }
+
+      return response
+    } catch (error) {
+      // Don't retry auth failures or application errors
+      if (error instanceof Error && error.message === 'Session expired. Please log in again.') {
+        throw error
+      }
+
+      lastError = error
+
+      // Only retry on network errors (TypeError from fetch), not application errors
+      if (error instanceof TypeError && attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt))
+        continue
+      }
+
+      throw error
+    }
+  }
+
+  throw lastError
+}
+
+/** Authenticated fetch — adds Bearer token and Content-Type headers. */
+async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return rawFetch(url, {
+    ...init,
+    headers: {
+      ...getAuthHeaders(),
+      ...(init.headers || {}),
+    },
+  })
+}
+
+/** Authenticated fetch for FormData — adds Bearer token but NOT Content-Type (browser sets it for multipart). */
+async function authenticatedFormFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const token = getAuthToken()
+  return rawFetch(url, {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers || {}),
+    },
+  })
+}
+
+/**
+ * Check a response for non-success status and throw a descriptive error.
+ * Call this AFTER rawFetch/authenticatedFetch handles 401 + retry.
+ * Use `expectOk` for methods that return parsed JSON or void.
+ */
+function ensureOk(response: Response, context: string): void {
+  if (!response.ok) {
+    throw new Error(`${context}: ${response.statusText}`)
+  }
+}
+
+// ── Typed convenience wrappers ────────────────────────────────────────────
+// Collapse the authenticatedFetch → ensureOk → response.json() pattern
+// that ~90% of methods follow into one-liners.
+
+async function apiGet<T>(url: string): Promise<T> {
+  const response = await authenticatedFetch(url)
+  ensureOk(response, `GET ${url}`)
+  return response.json()
+}
+
+async function apiPut<T>(url: string, body?: unknown): Promise<T> {
+  const response = await authenticatedFetch(url, {
+    method: 'PUT',
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+  ensureOk(response, `PUT ${url}`)
+  return response.json()
+}
+
+async function apiDelete<T = void>(url: string): Promise<T> {
+  const response = await authenticatedFetch(url, { method: 'DELETE' })
+  ensureOk(response, `DELETE ${url}`)
+  return response.json() as T
+}
+
 // Real API calls (to be used when backend is ready)
 const realApi = {
   login: async (request: LoginRequest): Promise<Response> => {
@@ -909,66 +994,17 @@ const realApi = {
     })
   },
 
-  getProfile: async (): Promise<User> => {
-    const response = await fetchWithLogging('/api/account', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  getProfile: () => apiGet<User>('/api/account'),
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        // Clear auth and redirect to login
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get profile: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updateProfile: async (updates: UpdateProfileRequest): Promise<User> => {
-    const response = await fetchWithLogging('/api/account', {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(updates),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to update profile: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  updateProfile: (updates: UpdateProfileRequest) => apiPut<User>('/api/account', updates),
 
   changePassword: async (request: ChangePasswordRequest): Promise<void> => {
-    const response = await fetchWithLogging('/api/account/password', {
+    const response = await authenticatedFetch('/api/account/password', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         throw new Error('Current password is incorrect')
       }
@@ -977,15 +1013,11 @@ const realApi = {
   },
 
   deleteAccount: async (): Promise<void> => {
-    const response = await fetchWithLogging('/api/account', {
+    const response = await authenticatedFetch('/api/account', {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
     if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Unauthorized')
-      }
       if (response.status === 404) {
         throw new Error('Account not found')
       }
@@ -1008,20 +1040,11 @@ const realApi = {
     })
     if (search) params.append('search', search)
 
-    const response = await fetchWithLogging(`/api/admin/users?${params}`, {
+    const response = await authenticatedFetch(`/api/admin/users?${params}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1032,21 +1055,12 @@ const realApi = {
   },
 
   updateUser: async (userId: number, updates: UpdateUserRequest): Promise<AdminUser> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(updates),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1061,20 +1075,11 @@ const realApi = {
   },
 
   listRoles: async (): Promise<Role[]> => {
-    const response = await fetchWithLogging('/api/admin/roles', {
+    const response = await authenticatedFetch('/api/admin/roles', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1085,20 +1090,11 @@ const realApi = {
   },
 
   generatePasswordResetLink: async (userId: number): Promise<PasswordResetLinkResponse> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}/reset-password`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}/reset-password`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1112,20 +1108,11 @@ const realApi = {
   },
 
   syncUserFio: async (userId: number): Promise<AdminFioSyncEnqueueResponse> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}/sync-fio`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}/sync-fio`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1142,20 +1129,11 @@ const realApi = {
   },
 
   startFioSyncAll: async (): Promise<FioSyncEnqueueResponse> => {
-    const response = await fetchWithLogging('/api/fio/sync-all', {
+    const response = await authenticatedFetch('/api/fio/sync-all', {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
         throw new Error(error.message || 'FIO credentials not configured')
@@ -1167,20 +1145,11 @@ const realApi = {
   },
 
   deleteUser: async (userId: number): Promise<{ success: boolean; username: string }> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1200,20 +1169,11 @@ const realApi = {
   disconnectUserDiscord: async (
     userId: number
   ): Promise<{ success: boolean; username: string }> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}/discord`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}/discord`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1231,20 +1191,11 @@ const realApi = {
 
   // Pending approvals
   getPendingApprovalsCount: async (): Promise<{ count: number }> => {
-    const response = await fetchWithLogging('/api/admin/pending-approvals/count', {
+    const response = await authenticatedFetch('/api/admin/pending-approvals/count', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1255,20 +1206,11 @@ const realApi = {
   },
 
   listPendingApprovals: async (): Promise<AdminUser[]> => {
-    const response = await fetchWithLogging('/api/admin/pending-approvals', {
+    const response = await authenticatedFetch('/api/admin/pending-approvals', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1279,21 +1221,12 @@ const realApi = {
   },
 
   approveUser: async (userId: number, roleId?: string): Promise<AdminUser> => {
-    const response = await fetchWithLogging(`/api/admin/users/${userId}/approve`, {
+    const response = await authenticatedFetch(`/api/admin/users/${userId}/approve`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ roleId }),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1376,13 +1309,10 @@ const realApi = {
   completeDiscordLink: async (
     request: CompleteDiscordLinkRequest
   ): Promise<{ message: string }> => {
-    const response = await fetchWithLogging('/api/auth/complete-discord-link', {
+    const response = await authenticatedFetch('/api/auth/complete-discord-link', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
@@ -1394,13 +1324,10 @@ const realApi = {
 
   // Role management
   createRole: async (request: CreateRoleRequest): Promise<Role> => {
-    const response = await fetchWithLogging('/api/admin/roles', {
+    const response = await authenticatedFetch('/api/admin/roles', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 409) {
@@ -1413,13 +1340,10 @@ const realApi = {
   },
 
   updateRole: async (roleId: string, updates: { name?: string; color?: string }): Promise<Role> => {
-    const response = await fetchWithLogging(`/api/admin/roles/${roleId}`, {
+    const response = await authenticatedFetch(`/api/admin/roles/${roleId}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(updates),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1432,12 +1356,9 @@ const realApi = {
   },
 
   deleteRole: async (roleId: string): Promise<void> => {
-    const response = await fetchWithLogging(`/api/admin/roles/${roleId}`, {
+    const response = await authenticatedFetch(`/api/admin/roles/${roleId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1452,44 +1373,15 @@ const realApi = {
   },
 
   // Permission management
-  listPermissions: async (): Promise<Permission[]> => {
-    const response = await fetchWithLogging('/api/admin/permissions', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  listPermissions: () => apiGet<Permission[]>('/api/admin/permissions'),
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to list permissions: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  listRolePermissions: async (): Promise<RolePermissionWithDetails[]> => {
-    const response = await fetchWithLogging('/api/admin/role-permissions', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to list role permissions: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  listRolePermissions: () => apiGet<RolePermissionWithDetails[]>('/api/admin/role-permissions'),
 
   setRolePermission: async (request: SetRolePermissionRequest): Promise<RolePermission> => {
-    const response = await fetchWithLogging('/api/admin/role-permissions', {
+    const response = await authenticatedFetch('/api/admin/role-permissions', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1503,12 +1395,9 @@ const realApi = {
   },
 
   deleteRolePermission: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/admin/role-permissions/${id}`, {
+    const response = await authenticatedFetch(`/api/admin/role-permissions/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1519,134 +1408,23 @@ const realApi = {
   },
 
   // FIO Inventory methods
-  getFioInventory: async (): Promise<FioInventoryItem[]> => {
-    const response = await fetchWithLogging('/api/fio/inventory', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  getFioInventory: () => apiGet<FioInventoryItem[]>('/api/fio/inventory'),
 
-    handleRefreshedToken(response)
+  getFioLastSync: () => apiGet<FioLastSyncResponse>('/api/fio/inventory/last-sync'),
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get FIO inventory: ${response.statusText}`)
-    }
+  getFioStats: () => apiGet<FioStatsResponse>('/api/fio/inventory/stats'),
 
-    return response.json()
-  },
+  getFioStorageLocations: () => apiGet<{ locationIds: string[] }>('/api/fio/inventory/locations'),
 
-  getFioLastSync: async (): Promise<FioLastSyncResponse> => {
-    const response = await fetchWithLogging('/api/fio/inventory/last-sync', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get last sync time: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getFioStats: async (): Promise<FioStatsResponse> => {
-    const response = await fetchWithLogging('/api/fio/inventory/stats', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get FIO stats: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getFioStorageLocations: async (): Promise<{ locationIds: string[] }> => {
-    const response = await fetchWithLogging('/api/fio/inventory/locations', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get FIO storage locations: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  clearFioInventory: async (): Promise<FioClearResponse> => {
-    const response = await fetchWithLogging('/api/fio/inventory', {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to clear FIO inventory: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  clearFioInventory: () => apiDelete<FioClearResponse>('/api/fio/inventory'),
 
   // Sell Orders methods
-  getSellOrders: async (): Promise<SellOrderResponse[]> => {
-    const response = await fetchWithLogging('/api/sell-orders', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get sell orders: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getSellOrders: () => apiGet<SellOrderResponse[]>('/api/sell-orders'),
 
   getSellOrder: async (id: number): Promise<SellOrderResponse> => {
-    const response = await fetchWithLogging(`/api/sell-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/sell-orders/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1659,13 +1437,10 @@ const realApi = {
   },
 
   createSellOrder: async (request: CreateSellOrderRequest): Promise<SellOrderResponse> => {
-    const response = await fetchWithLogging('/api/sell-orders', {
+    const response = await authenticatedFetch('/api/sell-orders', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -1686,13 +1461,10 @@ const realApi = {
     id: number,
     request: UpdateSellOrderRequest
   ): Promise<SellOrderResponse> => {
-    const response = await fetchWithLogging(`/api/sell-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/sell-orders/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1713,12 +1485,9 @@ const realApi = {
   },
 
   deleteSellOrder: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/sell-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/sell-orders/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1735,9 +1504,7 @@ const realApi = {
       headers: { 'Content-Type': 'application/json' },
     })
 
-    if (!response.ok) {
-      throw new Error(`Failed to get roles: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get roles')
 
     return response.json()
   },
@@ -1754,22 +1521,11 @@ const realApi = {
     if (destination) params.append('destination', destination)
 
     const url = `/api/market/listings${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get market listings: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get market listings')
 
     return response.json()
   },
@@ -1785,55 +1541,22 @@ const realApi = {
     if (destination) params.append('destination', destination)
 
     const url = `/api/market/buy-requests${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get market buy requests: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get market buy requests')
 
     return response.json()
   },
 
   // Buy Orders methods
-  getBuyOrders: async (): Promise<BuyOrderResponse[]> => {
-    const response = await fetchWithLogging('/api/buy-orders', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get buy orders: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getBuyOrders: () => apiGet<BuyOrderResponse[]>('/api/buy-orders'),
 
   getBuyOrder: async (id: number): Promise<BuyOrderResponse> => {
-    const response = await fetchWithLogging(`/api/buy-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/buy-orders/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1846,13 +1569,10 @@ const realApi = {
   },
 
   createBuyOrder: async (request: CreateBuyOrderRequest): Promise<BuyOrderResponse> => {
-    const response = await fetchWithLogging('/api/buy-orders', {
+    const response = await authenticatedFetch('/api/buy-orders', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -1870,13 +1590,10 @@ const realApi = {
   },
 
   updateBuyOrder: async (id: number, request: UpdateBuyOrderRequest): Promise<BuyOrderResponse> => {
-    const response = await fetchWithLogging(`/api/buy-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/buy-orders/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1897,12 +1614,9 @@ const realApi = {
   },
 
   deleteBuyOrder: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/buy-orders/${id}`, {
+    const response = await authenticatedFetch(`/api/buy-orders/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -1914,20 +1628,11 @@ const realApi = {
 
   // Admin Discord methods
   getDiscordSettings: async (): Promise<DiscordSettings> => {
-    const response = await fetchWithLogging('/api/admin/discord/settings', {
+    const response = await authenticatedFetch('/api/admin/discord/settings', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1940,21 +1645,12 @@ const realApi = {
   updateDiscordSettings: async (
     settings: UpdateDiscordSettingsRequest
   ): Promise<DiscordSettings> => {
-    const response = await fetchWithLogging('/api/admin/discord/settings', {
+    const response = await authenticatedFetch('/api/admin/discord/settings', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(settings),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1965,20 +1661,11 @@ const realApi = {
   },
 
   testDiscordConnection: async (): Promise<DiscordTestConnectionResponse> => {
-    const response = await fetchWithLogging('/api/admin/discord/settings/test-connection', {
+    const response = await authenticatedFetch('/api/admin/discord/settings/test-connection', {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -1990,20 +1677,11 @@ const realApi = {
   },
 
   getDiscordGuildRoles: async (): Promise<DiscordRole[]> => {
-    const response = await fetchWithLogging('/api/admin/discord/guild/roles', {
+    const response = await authenticatedFetch('/api/admin/discord/guild/roles', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2017,20 +1695,11 @@ const realApi = {
   },
 
   getDiscordGuildChannels: async (): Promise<Array<{ id: string; name: string }>> => {
-    const response = await fetchWithLogging('/api/admin/discord/guild/channels', {
+    const response = await authenticatedFetch('/api/admin/discord/guild/channels', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2044,20 +1713,11 @@ const realApi = {
   },
 
   getDiscordRoleMappings: async (): Promise<DiscordRoleMapping[]> => {
-    const response = await fetchWithLogging('/api/admin/discord/role-mappings', {
+    const response = await authenticatedFetch('/api/admin/discord/role-mappings', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2070,21 +1730,12 @@ const realApi = {
   createDiscordRoleMapping: async (
     mapping: DiscordRoleMappingRequest
   ): Promise<DiscordRoleMapping> => {
-    const response = await fetchWithLogging('/api/admin/discord/role-mappings', {
+    const response = await authenticatedFetch('/api/admin/discord/role-mappings', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(mapping),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2101,21 +1752,12 @@ const realApi = {
     id: number,
     mapping: DiscordRoleMappingRequest
   ): Promise<DiscordRoleMapping> => {
-    const response = await fetchWithLogging(`/api/admin/discord/role-mappings/${id}`, {
+    const response = await authenticatedFetch(`/api/admin/discord/role-mappings/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(mapping),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2129,20 +1771,11 @@ const realApi = {
   },
 
   deleteDiscordRoleMapping: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/admin/discord/role-mappings/${id}`, {
+    const response = await authenticatedFetch(`/api/admin/discord/role-mappings/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2153,49 +1786,13 @@ const realApi = {
     }
   },
 
-  getSettingsHistory: async (key: string): Promise<SettingHistoryEntry[]> => {
-    const response = await fetchWithLogging(
-      `/api/admin/discord/settings/history/${encodeURIComponent(key)}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get settings history: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   // Channel Config methods
   getChannelConfigs: async (): Promise<ChannelConfigMap[]> => {
-    const response = await fetchWithLogging('/api/admin/discord/channel-config', {
+    const response = await authenticatedFetch('/api/admin/discord/channel-config', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2205,55 +1802,19 @@ const realApi = {
     return response.json()
   },
 
-  getChannelConfig: async (channelId: string): Promise<ChannelConfigMap> => {
-    const response = await fetchWithLogging(
-      `/api/admin/discord/channel-config/${encodeURIComponent(channelId)}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get channel config: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   updateChannelConfig: async (
     channelId: string,
     data: UpdateChannelConfigRequest
   ): Promise<ChannelConfigMap> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/admin/discord/channel-config/${encodeURIComponent(channelId)}`,
       {
         method: 'PUT',
-        headers: getAuthHeaders(),
         body: JSON.stringify(data),
       }
     )
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2264,23 +1825,14 @@ const realApi = {
   },
 
   deleteChannelConfig: async (channelId: string): Promise<void> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/admin/discord/channel-config/${encodeURIComponent(channelId)}`,
       {
         method: 'DELETE',
-        headers: getAuthHeaders(),
       }
     )
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2293,20 +1845,11 @@ const realApi = {
 
   // Admin Global Defaults methods
   getGlobalDefaults: async (): Promise<GlobalDefaultsResponse> => {
-    const response = await fetchWithLogging('/api/admin/global-defaults', {
+    const response = await authenticatedFetch('/api/admin/global-defaults', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2319,21 +1862,12 @@ const realApi = {
   updateGlobalDefaults: async (
     request: UpdateGlobalDefaultsRequest
   ): Promise<GlobalDefaultsResponse> => {
-    const response = await fetchWithLogging('/api/admin/global-defaults', {
+    const response = await authenticatedFetch('/api/admin/global-defaults', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2345,23 +1879,14 @@ const realApi = {
   },
 
   resetGlobalDefault: async (key: string): Promise<GlobalDefaultsResponse> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/admin/global-defaults/${encodeURIComponent(key)}`,
       {
         method: 'DELETE',
-        headers: getAuthHeaders(),
       }
     )
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -2372,73 +1897,18 @@ const realApi = {
     return response.json()
   },
 
-  getGlobalDefaultHistory: async (key: string): Promise<SettingHistoryEntry[]> => {
-    const response = await fetchWithLogging(
-      `/api/admin/global-defaults/history/${encodeURIComponent(key)}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      throw new Error(`Failed to get global default history: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   // User Discord methods
-  getDiscordAuthUrl: async (): Promise<{ url: string; state: string }> => {
-    const response = await fetchWithLogging('/api/discord/auth-url', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get Discord auth URL: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getDiscordAuthUrl: () => apiGet<{ url: string; state: string }>('/api/discord/auth-url'),
 
   handleDiscordCallback: async (
     request: DiscordCallbackRequest
   ): Promise<{ success: boolean; profile: UserDiscordProfile }> => {
-    const response = await fetchWithLogging('/api/discord/callback', {
+    const response = await authenticatedFetch('/api/discord/callback', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
         throw new Error(error.message || 'Invalid callback request')
@@ -2450,20 +1920,11 @@ const realApi = {
   },
 
   disconnectDiscord: async (): Promise<void> => {
-    const response = await fetchWithLogging('/api/discord/connection', {
+    const response = await authenticatedFetch('/api/discord/connection', {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         throw new Error('Discord is not connected to this account')
       }
@@ -2472,20 +1933,11 @@ const realApi = {
   },
 
   syncDiscordRoles: async (): Promise<{ synced: boolean; rolesAdded: string[] }> => {
-    const response = await fetchWithLogging('/api/discord/sync-roles', {
+    const response = await authenticatedFetch('/api/discord/sync-roles', {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         const error = await response.json()
         throw new Error(error.message || 'Failed to sync Discord roles')
@@ -2496,26 +1948,7 @@ const realApi = {
     return response.json()
   },
 
-  getDiscordStatus: async (): Promise<DiscordConnectionStatus> => {
-    const response = await fetchWithLogging('/api/discord/status', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get Discord status: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getDiscordStatus: () => apiGet<DiscordConnectionStatus>('/api/discord/status'),
 
   // Discord auth (unauthenticated - for login/register)
   getDiscordLoginAuthUrl: async (prompt?: 'none' | 'consent'): Promise<DiscordAuthUrlResponse> => {
@@ -2527,9 +1960,7 @@ const realApi = {
       },
     })
 
-    if (!response.ok) {
-      throw new Error(`Failed to get Discord auth URL: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get Discord auth URL')
 
     return response.json()
   },
@@ -2553,9 +1984,7 @@ const realApi = {
       },
     })
 
-    if (!response.ok) {
-      throw new Error(`Failed to handle Discord callback: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to handle Discord callback')
 
     return response.json()
   },
@@ -2594,33 +2023,19 @@ const realApi = {
     if (unreadOnly !== undefined) params.append('unreadOnly', String(unreadOnly))
 
     const url = `/api/notifications${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get notifications: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get notifications')
 
     return response.json()
   },
 
   markNotificationAsRead: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/notifications/${id}/read`, {
+    const response = await authenticatedFetch(`/api/notifications/${id}/read`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -2630,28 +2045,12 @@ const realApi = {
     }
   },
 
-  markAllNotificationsAsRead: async (): Promise<{ count: number }> => {
-    const response = await fetchWithLogging('/api/notifications/read-all', {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to mark all as read: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  markAllNotificationsAsRead: () => apiPut<{ count: number }>('/api/notifications/read-all'),
 
   deleteNotification: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/notifications/${id}`, {
+    const response = await authenticatedFetch(`/api/notifications/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -2671,40 +2070,11 @@ const realApi = {
     if (status) params.append('status', status)
 
     const url = `/api/reservations${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get reservations: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getReservation: async (id: number): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('Reservation not found')
-      }
-      throw new Error(`Failed to get reservation: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get reservations')
 
     return response.json()
   },
@@ -2718,7 +2088,7 @@ const realApi = {
       `/api/reservations/sell-order/${sellOrderId}${params}`,
       { method: 'GET', headers: getAuthHeaders() }
     )
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 403) throw new Error('Permission denied')
       if (response.status === 404) throw new Error('Sell order not found')
@@ -2732,11 +2102,13 @@ const realApi = {
     opts?: { all?: boolean }
   ): Promise<OrderReservationSummary[]> => {
     const params = opts?.all ? '?all=true' : ''
-    const response = await fetchWithLogging(`/api/reservations/buy-order/${buyOrderId}${params}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
+    const response = await authenticatedFetch(
+      `/api/reservations/buy-order/${buyOrderId}${params}`,
+      {
+        method: 'GET',
+      }
+    )
+
     if (!response.ok) {
       if (response.status === 403) throw new Error('Permission denied')
       if (response.status === 404) throw new Error('Buy order not found')
@@ -2748,13 +2120,10 @@ const realApi = {
   createSellOrderReservation: async (
     request: CreateSellOrderReservationRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging('/api/reservations/sell-order', {
+    const response = await authenticatedFetch('/api/reservations/sell-order', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2774,13 +2143,10 @@ const realApi = {
   createBuyOrderReservation: async (
     request: CreateBuyOrderReservationRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging('/api/reservations/buy-order', {
+    const response = await authenticatedFetch('/api/reservations/buy-order', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2801,13 +2167,10 @@ const realApi = {
     id: number,
     request?: UpdateReservationStatusRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}/confirm`, {
+    const response = await authenticatedFetch(`/api/reservations/${id}/confirm`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request || {}),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2828,13 +2191,10 @@ const realApi = {
     id: number,
     request?: UpdateReservationStatusRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}/reject`, {
+    const response = await authenticatedFetch(`/api/reservations/${id}/reject`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request || {}),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2855,13 +2215,10 @@ const realApi = {
     id: number,
     request?: UpdateReservationStatusRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}/fulfill`, {
+    const response = await authenticatedFetch(`/api/reservations/${id}/fulfill`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request || {}),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2882,13 +2239,10 @@ const realApi = {
     id: number,
     request?: UpdateReservationStatusRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}/cancel`, {
+    const response = await authenticatedFetch(`/api/reservations/${id}/cancel`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request || {}),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2909,13 +2263,10 @@ const realApi = {
     id: number,
     request?: UpdateReservationStatusRequest
   ): Promise<ReservationWithDetails> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}/reopen`, {
+    const response = await authenticatedFetch(`/api/reservations/${id}/reopen`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request || {}),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -2932,102 +2283,22 @@ const realApi = {
     return response.json()
   },
 
-  deleteReservation: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/reservations/${id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Cannot delete reservation')
-      }
-      if (response.status === 403) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Permission denied')
-      }
-      if (response.status === 404) {
-        throw new Error('Reservation not found')
-      }
-      throw new Error(`Failed to delete reservation: ${response.statusText}`)
-    }
-  },
-
-  // Location distance
-  getLocationDistance: async (
-    from: string,
-    to: string
-  ): Promise<{ from: string; to: string; jumpCount: number | null }> => {
-    const params = new URLSearchParams({ from, to })
-    const response = await fetchWithLogging(`/api/locations/distance?${params}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get distance: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  // Price List methods
-  getPrices: async (
-    exchange?: string,
-    location?: string,
-    commodity?: string,
-    currency?: Currency
-  ): Promise<PriceListResponse[]> => {
-    const params = new URLSearchParams()
-    if (exchange) params.append('exchange', exchange)
-    if (location) params.append('location', location)
-    if (commodity) params.append('commodity', commodity)
-    if (currency) params.append('currency', currency)
-
-    const url = `/api/prices${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get prices: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   getPricesByExchange: async (exchange: string, version?: number): Promise<PriceListResponse[]> => {
     const params = version !== undefined ? `?version=${version}` : ''
-    const response = await fetchWithLogging(`/api/prices/${exchange}${params}`, {
+    const response = await authenticatedFetch(`/api/prices/${exchange}${params}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get prices: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get prices')
 
     return response.json()
   },
 
   createPrice: async (request: CreatePriceRequest): Promise<PriceListResponse> => {
-    const response = await fetchWithLogging('/api/prices', {
+    const response = await authenticatedFetch('/api/prices', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400 || response.status === 409) {
@@ -3044,13 +2315,10 @@ const realApi = {
   },
 
   updatePrice: async (id: number, request: UpdatePriceRequest): Promise<PriceListResponse> => {
-    const response = await fetchWithLogging(`/api/prices/${id}`, {
+    const response = await authenticatedFetch(`/api/prices/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -3066,12 +2334,9 @@ const realApi = {
   },
 
   deletePrice: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/prices/${id}`, {
+    const response = await authenticatedFetch(`/api/prices/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -3101,19 +2366,14 @@ const realApi = {
     if (options?.version !== undefined) {
       params.set('version', String(options.version))
     }
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/prices/effective/${exchange}/${locationId}?${params}`,
       {
         method: 'GET',
-        headers: getAuthHeaders(),
       }
     )
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get effective prices: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get effective prices')
 
     return response.json()
   },
@@ -3130,34 +2390,11 @@ const realApi = {
     if (activeOnly !== undefined) params.append('activeOnly', String(activeOnly))
 
     const url = `/api/price-adjustments${params.toString() ? '?' + params.toString() : ''}`
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get price adjustments: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getPriceAdjustment: async (id: number): Promise<PriceAdjustmentResponse> => {
-    const response = await fetchWithLogging(`/api/price-adjustments/${id}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error('Adjustment not found')
-      }
-      throw new Error(`Failed to get adjustment: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get price adjustments')
 
     return response.json()
   },
@@ -3165,13 +2402,10 @@ const realApi = {
   createPriceAdjustment: async (
     request: CreatePriceAdjustmentRequest
   ): Promise<PriceAdjustmentResponse> => {
-    const response = await fetchWithLogging('/api/price-adjustments', {
+    const response = await authenticatedFetch('/api/price-adjustments', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -3191,13 +2425,10 @@ const realApi = {
     id: number,
     request: UpdatePriceAdjustmentRequest
   ): Promise<PriceAdjustmentResponse> => {
-    const response = await fetchWithLogging(`/api/price-adjustments/${id}`, {
+    const response = await authenticatedFetch(`/api/price-adjustments/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -3217,12 +2448,9 @@ const realApi = {
   },
 
   deletePriceAdjustment: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/price-adjustments/${id}`, {
+    const response = await authenticatedFetch(`/api/price-adjustments/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -3236,36 +2464,7 @@ const realApi = {
   },
 
   // FIO Exchanges methods
-  getFioExchanges: async (): Promise<FioExchangeResponse[]> => {
-    const response = await fetchWithLogging('/api/fio-exchanges', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get FIO exchanges: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  // FIO Price Sync methods
-  getFioPriceSyncStatus: async (): Promise<ExchangeSyncStatus[]> => {
-    const response = await fetchWithLogging('/api/prices/sync/fio/status', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get sync status: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getFioExchanges: () => apiGet<FioExchangeResponse[]>('/api/fio-exchanges'),
 
   syncFioPrices: async (
     exchangeCode?: string,
@@ -3275,13 +2474,10 @@ const realApi = {
       ? `/api/prices/sync/fio/${exchangeCode}${priceField ? '?priceField=' + priceField : ''}`
       : '/api/prices/sync/fio'
 
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: exchangeCode ? undefined : JSON.stringify({ priceField }),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3294,142 +2490,17 @@ const realApi = {
     return response.json()
   },
 
-  // CSV Import methods
-  previewCsvImport: async (file: File, config: CsvImportRequest): Promise<CsvPreviewResult> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('config', JSON.stringify(config))
-
-    const response = await fetchWithLogging('/api/import-configs/csv/preview', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('jwt')}`,
-      },
-      body: formData,
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview CSV: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  importCsv: async (file: File, config: CsvImportRequest): Promise<CsvImportResult> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('config', JSON.stringify(config))
-
-    const response = await fetchWithLogging('/api/import-configs/csv', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('jwt')}`,
-      },
-      body: formData,
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to import CSV: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  // Google Sheets Import methods
-  previewGoogleSheetsImport: async (
-    request: GoogleSheetsImportRequest
-  ): Promise<CsvPreviewResult> => {
-    const response = await fetchWithLogging('/api/import-configs/google-sheets/preview', {
-      method: 'POST',
-      headers: {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview Google Sheets: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  importGoogleSheets: async (request: GoogleSheetsImportRequest): Promise<CsvImportResult> => {
-    const response = await fetchWithLogging('/api/import-configs/google-sheets', {
-      method: 'POST',
-      headers: {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(
-        error.message || `Failed to import from Google Sheets: ${response.statusText}`
-      )
-    }
-
-    return response.json()
-  },
-
   // Price Lists methods
   getPriceLists: async (): Promise<PriceListDefinition[]> => {
-    const response = await fetchWithLogging('/api/price-lists', {
+    const response = await authenticatedFetch('/api/price-lists', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('Permission denied')
       }
       throw new Error(`Failed to get price lists: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getPriceList: async (code: string): Promise<PriceListDefinition> => {
-    const response = await fetchWithLogging(`/api/price-lists/${encodeURIComponent(code)}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Price list '${code}' not found`)
-      }
-      throw new Error(`Failed to get price list: ${response.statusText}`)
     }
 
     return response.json()
@@ -3444,8 +2515,6 @@ const realApi = {
       },
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3474,8 +2543,6 @@ const realApi = {
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('Permission denied')
@@ -3491,12 +2558,9 @@ const realApi = {
   },
 
   deletePriceList: async (code: string): Promise<void> => {
-    const response = await fetchWithLogging(`/api/price-lists/${encodeURIComponent(code)}`, {
+    const response = await authenticatedFetch(`/api/price-lists/${encodeURIComponent(code)}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3512,42 +2576,18 @@ const realApi = {
 
   // Price List Version methods
   getPriceListVersions: async (code: string): Promise<VersionSummary[]> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/price-lists/${encodeURIComponent(code)}/versions`,
       {
         method: 'GET',
-        headers: getAuthHeaders(),
       }
     )
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error(`Price list '${code}' not found`)
       }
       throw new Error(`Failed to get versions: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getPriceListVersion: async (code: string, version: number): Promise<VersionDetail> => {
-    const response = await fetchWithLogging(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Version not found`)
-      }
-      throw new Error(`Failed to get version: ${response.statusText}`)
     }
 
     return response.json()
@@ -3569,8 +2609,6 @@ const realApi = {
       }
     )
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('Permission denied')
@@ -3582,46 +2620,13 @@ const realApi = {
     return response.json()
   },
 
-  updatePriceListVersion: async (
-    code: string,
-    version: number,
-    request: UpdateVersionRequest
-  ): Promise<VersionDetail> => {
-    const response = await fetchWithLogging(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
-      {
-        method: 'PUT',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to update version: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   promotePriceListVersion: async (code: string, version: number): Promise<VersionDetail> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/promote`,
       {
         method: 'POST',
-        headers: getAuthHeaders(),
       }
     )
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3635,15 +2640,12 @@ const realApi = {
   },
 
   deletePriceListVersion: async (code: string, version: number): Promise<void> => {
-    const response = await fetchWithLogging(
+    const response = await authenticatedFetch(
       `/api/price-lists/${encodeURIComponent(code)}/versions/${version}`,
       {
         method: 'DELETE',
-        headers: getAuthHeaders(),
       }
     )
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3654,60 +2656,22 @@ const realApi = {
     }
   },
 
-  diffPriceListVersions: async (
-    code: string,
-    version: number,
-    otherVersion: number
-  ): Promise<VersionDiff> => {
-    const response = await fetchWithLogging(
-      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    )
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to diff versions: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  diffPriceListVersions: (code: string, version: number, otherVersion: number) =>
+    apiGet<VersionDiff>(
+      `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`
+    ),
 
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
-    const response = await fetchWithLogging('/api/import-configs', {
+    const response = await authenticatedFetch('/api/import-configs', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('Permission denied')
       }
       throw new Error(`Failed to get import configs: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getImportConfig: async (id: number): Promise<ImportConfigResponse> => {
-    const response = await fetchWithLogging(`/api/import-configs/${id}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Import config not found`)
-      }
-      throw new Error(`Failed to get import config: ${response.statusText}`)
     }
 
     return response.json()
@@ -3722,8 +2686,6 @@ const realApi = {
       },
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3749,8 +2711,6 @@ const realApi = {
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('Permission denied')
@@ -3766,12 +2726,9 @@ const realApi = {
   },
 
   deleteImportConfig: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/import-configs/${id}`, {
+    const response = await authenticatedFetch(`/api/import-configs/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3790,12 +2747,9 @@ const realApi = {
     version?: number
   ): Promise<CsvImportResult | PivotImportResult> => {
     const params = version !== undefined ? `?version=${version}` : ''
-    const response = await fetchWithLogging(`/api/import-configs/${id}/sync${params}`, {
+    const response = await authenticatedFetch(`/api/import-configs/${id}/sync${params}`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3822,15 +2776,10 @@ const realApi = {
       formData.append('version', String(version))
     }
 
-    const response = await fetchWithLogging(`/api/import-configs/${id}/sync/upload`, {
+    const response = await authenticatedFormFetch(`/api/import-configs/${id}/sync/upload`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('jwt')}`,
-      },
       body: formData,
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -3846,44 +2795,13 @@ const realApi = {
     return response.json()
   },
 
-  previewImportConfig: async (id: number): Promise<CsvPreviewResult | PivotImportResult> => {
-    const response = await fetchWithLogging(`/api/import-configs/${id}/preview`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('Permission denied')
-      }
-      if (response.status === 404) {
-        throw new Error(`Import config not found`)
-      }
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || `Failed to preview import config: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   // Admin Price Settings methods
   getPriceSettings: async (): Promise<PriceSettingsResponse> => {
-    const response = await fetchWithLogging('/api/admin/price-settings', {
+    const response = await authenticatedFetch('/api/admin/price-settings', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -3894,21 +2812,12 @@ const realApi = {
   },
 
   updateFioSettings: async (request: UpdateFioSettingsRequest): Promise<PriceSettingsResponse> => {
-    const response = await fetchWithLogging('/api/admin/price-settings/fio', {
+    const response = await authenticatedFetch('/api/admin/price-settings/fio', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
@@ -3925,113 +2834,16 @@ const realApi = {
   updateGoogleSettings: async (
     request: UpdateGoogleSettingsRequest
   ): Promise<PriceSettingsResponse> => {
-    const response = await fetchWithLogging('/api/admin/price-settings/google', {
+    const response = await authenticatedFetch('/api/admin/price-settings/google', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 403) {
         throw new Error('Administrator access required')
       }
       throw new Error(`Failed to update Google settings: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updateKawaSheetSettings: async (
-    request: UpdateKawaSheetRequest
-  ): Promise<PriceSettingsResponse> => {
-    const response = await fetchWithLogging('/api/admin/price-settings/kawa-sheet', {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Invalid KAWA sheet settings')
-      }
-      throw new Error(`Failed to update KAWA sheet settings: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  previewKawaSheet: async (): Promise<KawaSheetPreviewResponse> => {
-    const response = await fetchWithLogging('/api/admin/price-settings/kawa-sheet/preview', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Failed to preview KAWA sheet')
-      }
-      throw new Error(`Failed to preview KAWA sheet: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  syncKawaSheet: async (request: KawaSheetSyncRequest): Promise<CsvImportResult> => {
-    const response = await fetchWithLogging('/api/admin/price-settings/kawa-sheet/sync', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      if (response.status === 403) {
-        throw new Error('Administrator access required')
-      }
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Failed to sync KAWA sheet')
-      }
-      throw new Error(`Failed to sync KAWA sheet: ${response.statusText}`)
     }
 
     return response.json()
@@ -4044,15 +2856,7 @@ const realApi = {
       headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       throw new Error('Failed to get user settings')
     }
 
@@ -4060,21 +2864,12 @@ const realApi = {
   },
 
   updateUserSettings: async (settings: Record<string, unknown>): Promise<UserSettingsResponse> => {
-    const response = await fetchWithLogging('/api/user-settings', {
+    const response = await authenticatedFetch('/api/user-settings', {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ settings }),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
         throw new Error(error.message || 'Invalid settings')
@@ -4086,20 +2881,11 @@ const realApi = {
   },
 
   resetUserSetting: async (key: string): Promise<UserSettingsResponse> => {
-    const response = await fetchWithLogging(`/api/user-settings/${encodeURIComponent(key)}`, {
+    const response = await authenticatedFetch(`/api/user-settings/${encodeURIComponent(key)}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
         throw new Error(error.message || 'Invalid setting key')
@@ -4111,20 +2897,11 @@ const realApi = {
   },
 
   resetAllUserSettings: async (): Promise<UserSettingsResponse> => {
-    const response = await fetchWithLogging('/api/user-settings', {
+    const response = await authenticatedFetch('/api/user-settings', {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
     if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
       throw new Error('Failed to reset user settings')
     }
 
@@ -4139,33 +2916,19 @@ const realApi = {
     if (status) params.append('status', status)
     const url = `/api/invoices${params.toString() ? `?${params}` : ''}`
 
-    const response = await fetchWithLogging(url, {
+    const response = await authenticatedFetch(url, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get invoices: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to get invoices')
 
     return response.json()
   },
 
   getInvoice: async (id: number): Promise<Invoice> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+    const response = await authenticatedFetch(`/api/invoices/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -4181,12 +2944,9 @@ const realApi = {
   },
 
   getOrCreateInvoiceForPartner: async (counterpartyUserId: number): Promise<Invoice> => {
-    const response = await fetchWithLogging(`/api/invoices/for-partner/${counterpartyUserId}`, {
+    const response = await authenticatedFetch(`/api/invoices/for-partner/${counterpartyUserId}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4202,65 +2962,10 @@ const realApi = {
     return response.json()
   },
 
-  createInvoice: async (request: CreateInvoiceRequest): Promise<Invoice> => {
-    const response = await fetchWithLogging('/api/invoices', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Invalid request')
-      }
-      if (response.status === 404) {
-        throw new Error('Counterparty user not found')
-      }
-      throw new Error(`Failed to create invoice: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  updateInvoice: async (
-    id: number,
-    request: { name?: string; notes?: string }
-  ): Promise<Invoice> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}`, {
-      method: 'PUT',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(request),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 400) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || 'Only draft invoices can be updated')
-      }
-      if (response.status === 403) {
-        throw new Error('You do not have access to this invoice')
-      }
-      if (response.status === 404) {
-        throw new Error('Invoice not found')
-      }
-      throw new Error(`Failed to update invoice: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
   deleteInvoice: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}`, {
+    const response = await authenticatedFetch(`/api/invoices/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4281,13 +2986,10 @@ const realApi = {
     invoiceId: number,
     request: AddLineItemRequest
   ): Promise<InvoiceLineItem> => {
-    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items`, {
+    const response = await authenticatedFetch(`/api/invoices/${invoiceId}/items`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4311,13 +3013,10 @@ const realApi = {
     itemId: number,
     request: UpdateLineItemRequest
   ): Promise<InvoiceLineItem> => {
-    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+    const response = await authenticatedFetch(`/api/invoices/${invoiceId}/items/${itemId}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4337,12 +3036,9 @@ const realApi = {
   },
 
   removeInvoiceLineItem: async (invoiceId: number, itemId: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/invoices/${invoiceId}/items/${itemId}`, {
+    const response = await authenticatedFetch(`/api/invoices/${invoiceId}/items/${itemId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4360,12 +3056,9 @@ const realApi = {
   },
 
   submitInvoice: async (id: number): Promise<SubmitInvoiceResponse> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}/submit`, {
+    const response = await authenticatedFetch(`/api/invoices/${id}/submit`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4385,12 +3078,9 @@ const realApi = {
   },
 
   cancelInvoice: async (id: number): Promise<Invoice> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}/cancel`, {
+    const response = await authenticatedFetch(`/api/invoices/${id}/cancel`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4410,12 +3100,9 @@ const realApi = {
   },
 
   fulfillInvoice: async (id: number): Promise<Invoice> => {
-    const response = await fetchWithLogging(`/api/invoices/${id}/fulfill`, {
+    const response = await authenticatedFetch(`/api/invoices/${id}/fulfill`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4435,34 +3122,12 @@ const realApi = {
   },
 
   // Shopping Lists API
-  getShoppingLists: async (): Promise<ShoppingListSummary[]> => {
-    const response = await fetchWithLogging('/api/lists', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('jwt')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        throw new Error('Unauthorized')
-      }
-      throw new Error(`Failed to get shopping lists: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getShoppingLists: () => apiGet<ShoppingListSummary[]>('/api/lists'),
 
   getShoppingList: async (id: number): Promise<SavedShoppingList> => {
-    const response = await fetchWithLogging(`/api/lists/${id}`, {
+    const response = await authenticatedFetch(`/api/lists/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -4478,13 +3143,10 @@ const realApi = {
   },
 
   createShoppingList: async (request: CreateShoppingListRequest): Promise<SavedShoppingList> => {
-    const response = await fetchWithLogging('/api/lists', {
+    const response = await authenticatedFetch('/api/lists', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4501,13 +3163,10 @@ const realApi = {
     id: number,
     request: UpdateShoppingListRequest
   ): Promise<SavedShoppingList> => {
-    const response = await fetchWithLogging(`/api/lists/${id}`, {
+    const response = await authenticatedFetch(`/api/lists/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4527,12 +3186,9 @@ const realApi = {
   },
 
   deleteShoppingList: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/lists/${id}`, {
+    const response = await authenticatedFetch(`/api/lists/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -4546,35 +3202,9 @@ const realApi = {
   },
 
   // Saved Market Filters API
-  getSavedFilters: async (): Promise<SavedMarketFilter[]> => {
-    const response = await fetchWithLogging('/api/saved-filters', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
+  getSavedFilters: () => apiGet<SavedMarketFilter[]>('/api/saved-filters'),
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get saved filters: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  getPinnedFilters: async (): Promise<SavedMarketFilter[]> => {
-    const response = await fetchWithLogging('/api/saved-filters/pinned', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get pinned filters: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
+  getPinnedFilters: () => apiGet<SavedMarketFilter[]>('/api/saved-filters/pinned'),
 
   browsePublicFilters: async (search?: string, page?: number): Promise<SavedMarketFilter[]> => {
     const params = new URLSearchParams()
@@ -4582,27 +3212,19 @@ const realApi = {
     if (page) params.set('page', String(page))
     const query = params.toString() ? `?${params.toString()}` : ''
 
-    const response = await fetchWithLogging(`/api/saved-filters/browse${query}`, {
+    const response = await authenticatedFetch(`/api/saved-filters/browse${query}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
 
-    handleRefreshedToken(response)
-
-    if (!response.ok) {
-      throw new Error(`Failed to browse public filters: ${response.statusText}`)
-    }
+    ensureOk(response, 'Failed to browse public filters')
 
     return response.json()
   },
 
   getSavedFilter: async (id: number): Promise<SavedMarketFilter> => {
-    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+    const response = await authenticatedFetch(`/api/saved-filters/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -4615,13 +3237,10 @@ const realApi = {
   },
 
   createSavedFilter: async (request: CreateSavedFilterRequest): Promise<SavedMarketFilter> => {
-    const response = await fetchWithLogging('/api/saved-filters', {
+    const response = await authenticatedFetch('/api/saved-filters', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4638,13 +3257,10 @@ const realApi = {
     id: number,
     request: UpdateSavedFilterRequest
   ): Promise<SavedMarketFilter> => {
-    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+    const response = await authenticatedFetch(`/api/saved-filters/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4664,12 +3280,9 @@ const realApi = {
   },
 
   deleteSavedFilter: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/saved-filters/${id}`, {
+    const response = await authenticatedFetch(`/api/saved-filters/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 403) {
@@ -4683,12 +3296,9 @@ const realApi = {
   },
 
   togglePinSavedFilter: async (id: number): Promise<SavedMarketFilter> => {
-    const response = await fetchWithLogging(`/api/saved-filters/${id}/pin`, {
+    const response = await authenticatedFetch(`/api/saved-filters/${id}/pin`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
     })
-
-    handleRefreshedToken(response)
 
     if (!response.ok) {
       if (response.status === 400) {
@@ -4710,22 +3320,11 @@ const realApi = {
   // ==================== CORP OVERVIEW VIEWS ====================
 
   listCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
-    const response = await fetchWithLogging('/api/corp-overview-views', {
+    const response = await authenticatedFetch('/api/corp-overview-views', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to list views: ${response.statusText}`)
-    return response.json()
-  },
 
-  getPinnedCorpOverviewViews: async (): Promise<CorpOverviewView[]> => {
-    const response = await fetchWithLogging('/api/corp-overview-views/pinned', {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to get pinned views: ${response.statusText}`)
+    if (!response.ok) throw new Error(`Failed to list views: ${response.statusText}`)
     return response.json()
   },
 
@@ -4734,21 +3333,19 @@ const realApi = {
     if (search) params.set('search', search)
     if (page) params.set('page', String(page))
     const query = params.toString() ? `?${params.toString()}` : ''
-    const response = await fetchWithLogging(`/api/corp-overview-views/browse${query}`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/browse${query}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to browse views: ${response.statusText}`)
     return response.json()
   },
 
   getCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 404) throw new Error('View not found')
       throw new Error(`Failed to get view: ${response.statusText}`)
@@ -4759,12 +3356,11 @@ const realApi = {
   createCorpOverviewView: async (
     request: CreateCorpOverviewViewRequest
   ): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging('/api/corp-overview-views', {
+    const response = await authenticatedFetch('/api/corp-overview-views', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
@@ -4779,12 +3375,11 @@ const realApi = {
     id: number,
     request: UpdateCorpOverviewViewRequest
   ): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
@@ -4800,11 +3395,10 @@ const realApi = {
   },
 
   deleteCorpOverviewView: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 403) {
         throw new Error('You do not have permission to delete this view')
@@ -4815,11 +3409,10 @@ const realApi = {
   },
 
   togglePinCorpOverviewView: async (id: number): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/pin`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}/pin`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
@@ -4835,12 +3428,11 @@ const realApi = {
   },
 
   addCorpOverviewViewOwner: async (id: number, userId: number): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/owners`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}/owners`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ userId }),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 400 || response.status === 409) {
         const error = await response.json().catch(() => ({}))
@@ -4856,11 +3448,10 @@ const realApi = {
   },
 
   removeCorpOverviewViewOwner: async (id: number, userId: number): Promise<CorpOverviewView> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/owners/${userId}`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}/owners/${userId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       // 409 covers the last-owner refusal — preserve the server's message so
       // the UI can show "delete the view instead" verbatim.
@@ -4884,30 +3475,16 @@ const realApi = {
    * non-fatal — the user can still see the view they just navigated to.
    */
   recordCorpOverviewViewVisit: async (id: number): Promise<void> => {
-    const response = await fetchWithLogging(`/api/corp-overview-views/${id}/visit`, {
+    const response = await authenticatedFetch(`/api/corp-overview-views/${id}/visit`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok && response.status !== 404) {
       // Don't throw on 404 — view became inaccessible between fetch and visit;
       // not worth interrupting the user. Other errors propagate so callers can
       // log them.
       throw new Error(`Failed to record visit: ${response.statusText}`)
     }
-  },
-
-  getVisitedCorpOverviewViews: async (page?: number): Promise<CorpOverviewView[]> => {
-    const params = new URLSearchParams()
-    if (page) params.set('page', String(page))
-    const query = params.toString() ? `?${params.toString()}` : ''
-    const response = await fetchWithLogging(`/api/corp-overview-views/visited${query}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    })
-    handleRefreshedToken(response)
-    if (!response.ok) throw new Error(`Failed to list visited views: ${response.statusText}`)
-    return response.json()
   },
 
   // ==================== CORP SNAPSHOTS (histogram query) ====================
@@ -4927,11 +3504,10 @@ const realApi = {
     }
     if (req.includeOther) params.set('includeOther', 'true')
 
-    const response = await fetchWithLogging(`/api/corp-snapshots?${params.toString()}`, {
+    const response = await authenticatedFetch(`/api/corp-snapshots?${params.toString()}`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       if (response.status === 400) {
         const error = await response.json().catch(() => ({}))
@@ -4945,32 +3521,29 @@ const realApi = {
   // ==================== LOGISTICS ====================
 
   getLogisticsGraph: async (): Promise<LogisticsGraph> => {
-    const response = await fetchWithLogging('/api/logistics/graph', {
+    const response = await authenticatedFetch('/api/logistics/graph', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get logistics graph: ${response.statusText}`)
     return response.json()
   },
 
   listLogisticsFlows: async (): Promise<LogisticsFlow[]> => {
-    const response = await fetchWithLogging('/api/logistics/flows', {
+    const response = await authenticatedFetch('/api/logistics/flows', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to list logistics flows: ${response.statusText}`)
     return response.json()
   },
 
   createLogisticsFlow: async (body: CreateLogisticsFlowRequest): Promise<LogisticsFlow> => {
-    const response = await fetchWithLogging('/api/logistics/flows', {
+    const response = await authenticatedFetch('/api/logistics/flows', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to create logistics flow')
@@ -4978,34 +3551,32 @@ const realApi = {
     return response.json()
   },
 
-  bulkCreateLogisticsFlows: async (
-    body: BulkCreateLogisticsFlowsRequest
-  ): Promise<BulkCreateLogisticsFlowsResponse> => {
-    const response = await fetchWithLogging('/api/logistics/flows/bulk', {
+  bulkMultiCreateLogisticsFlows: async (
+    body: BulkMultiCreateLogisticsFlowsRequest
+  ): Promise<BulkMultiCreateLogisticsFlowsResponse> => {
+    const response = await authenticatedFetch('/api/logistics/flows/bulk-multi', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to bulk create logistics flows')
+      throw new Error(error.message || 'Failed to bulk-multi create logistics flows')
     }
     return response.json()
   },
 
-  bulkMultiCreateLogisticsFlows: async (
-    body: BulkMultiCreateLogisticsFlowsRequest
-  ): Promise<BulkMultiCreateLogisticsFlowsResponse> => {
-    const response = await fetchWithLogging('/api/logistics/flows/bulk-multi', {
+  previewBulkMultiCreateLogisticsFlows: async (
+    body: BulkMultiPreviewRequest
+  ): Promise<BulkMultiPreviewResponse> => {
+    const response = await authenticatedFetch('/api/logistics/flows/bulk-multi/preview', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || 'Failed to bulk-multi create logistics flows')
+      throw new Error(error.message || 'Failed to preview bulk-multi logistics flows')
     }
     return response.json()
   },
@@ -5014,12 +3585,11 @@ const realApi = {
     id: number,
     body: UpdateLogisticsFlowRequest
   ): Promise<LogisticsFlow> => {
-    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+    const response = await authenticatedFetch(`/api/logistics/flows/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to update logistics flow')
@@ -5028,21 +3598,19 @@ const realApi = {
   },
 
   deleteLogisticsFlow: async (id: number): Promise<{ success: boolean }> => {
-    const response = await fetchWithLogging(`/api/logistics/flows/${id}`, {
+    const response = await authenticatedFetch(`/api/logistics/flows/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to delete logistics flow: ${response.statusText}`)
     return response.json()
   },
 
   listLogisticsClaims: async (): Promise<LocationDemandClaim[]> => {
-    const response = await fetchWithLogging('/api/logistics/claims', {
+    const response = await authenticatedFetch('/api/logistics/claims', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to list logistics claims: ${response.statusText}`)
     return response.json()
   },
@@ -5050,12 +3618,11 @@ const realApi = {
   createLogisticsClaim: async (
     body: CreateLocationDemandClaimRequest
   ): Promise<LocationDemandClaim> => {
-    const response = await fetchWithLogging('/api/logistics/claims', {
+    const response = await authenticatedFetch('/api/logistics/claims', {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to create claim')
@@ -5067,12 +3634,11 @@ const realApi = {
     id: number,
     body: UpdateLocationDemandClaimRequest
   ): Promise<LocationDemandClaim> => {
-    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+    const response = await authenticatedFetch(`/api/logistics/claims/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.message || 'Failed to update claim')
@@ -5081,21 +3647,189 @@ const realApi = {
   },
 
   deleteLogisticsClaim: async (id: number): Promise<{ success: boolean }> => {
-    const response = await fetchWithLogging(`/api/logistics/claims/${id}`, {
+    const response = await authenticatedFetch(`/api/logistics/claims/${id}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to delete claim: ${response.statusText}`)
     return response.json()
   },
 
-  getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
-    const response = await fetchWithLogging('/api/supply-planning/planets', {
+  // ==================== CONTRACT COVERAGE (buy-invoice incoming) ====================
+  listContractCoverage: () => apiGet<ContractCoverageEntry[]>('/api/logistics/contract-coverage'),
+
+  // ==================== SELF-SUPPLIED (hide-from-contracts) ====================
+  listSelfSupplied: async (): Promise<SelfSuppliedEntry[]> => {
+    const response = await authenticatedFetch('/api/logistics/self-supplied', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
+    if (!response.ok) throw new Error(`Failed to list self-supplied: ${response.statusText}`)
+    return response.json()
+  },
+
+  createSelfSupplied: async (body: CreateSelfSuppliedRequest): Promise<SelfSuppliedEntry> => {
+    const response = await authenticatedFetch('/api/logistics/self-supplied', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to mark self-supplied')
+    }
+    return response.json()
+  },
+
+  deleteSelfSupplied: async (id: number): Promise<{ success: boolean }> => {
+    const response = await authenticatedFetch(`/api/logistics/self-supplied/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) throw new Error(`Failed to remove self-supplied: ${response.statusText}`)
+    return response.json()
+  },
+
+  listShips: async (): Promise<UserShip[]> => {
+    const response = await authenticatedFetch('/api/ships', {
+      method: 'GET',
+    })
+
+    if (!response.ok) throw new Error(`Failed to list ships: ${response.statusText}`)
+    return response.json()
+  },
+
+  // ==================== TRIPS (the ship's run) ====================
+  listTrips: async (): Promise<Trip[]> => {
+    const response = await authenticatedFetch('/api/logistics/trips', {
+      method: 'GET',
+    })
+
+    if (!response.ok) throw new Error(`Failed to list trips: ${response.statusText}`)
+    return response.json()
+  },
+
+  createTrip: async (body: CreateTripRequest): Promise<Trip> => {
+    const response = await authenticatedFetch('/api/logistics/trips', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create trip')
+    }
+    return response.json()
+  },
+
+  updateTrip: async (id: number, body: UpdateTripRequest): Promise<Trip> => {
+    const response = await authenticatedFetch(`/api/logistics/trips/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update trip')
+    }
+    return response.json()
+  },
+
+  setTripStatus: async (id: number, status: TripStatus): Promise<Trip> => {
+    const response = await authenticatedFetch(`/api/logistics/trips/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to update trip status')
+    }
+    return response.json()
+  },
+
+  deleteTrip: async (id: number): Promise<{ success: boolean }> => {
+    const response = await authenticatedFetch(`/api/logistics/trips/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) throw new Error(`Failed to delete trip: ${response.statusText}`)
+    return response.json()
+  },
+
+  repeatTrip: async (id: number, body: RepeatTripRequest): Promise<Trip> => {
+    const response = await authenticatedFetch(`/api/logistics/trips/${id}/repeat`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to repeat trip')
+    }
+    return response.json()
+  },
+
+  suggestStopTimes: async (body: SuggestStopTimesRequest): Promise<SuggestStopTimesResponse> => {
+    const response = await authenticatedFetch('/api/logistics/trips/suggest-times', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to suggest stop times')
+    }
+    return response.json()
+  },
+
+  // ==================== SHIPMENTS (parcels — queued + assigned) ====================
+  listShipments: async (queued?: boolean): Promise<Shipment[]> => {
+    const url = queued ? '/api/logistics/shipments?queued=true' : '/api/logistics/shipments'
+    const response = await authenticatedFetch(url, {
+      method: 'GET',
+    })
+
+    if (!response.ok) throw new Error(`Failed to list shipments: ${response.statusText}`)
+    return response.json()
+  },
+
+  getShipment: async (id: number): Promise<Shipment> => {
+    const response = await authenticatedFetch(`/api/logistics/shipments/${id}`, {
+      method: 'GET',
+    })
+
+    if (!response.ok) throw new Error(`Failed to get shipment: ${response.statusText}`)
+    return response.json()
+  },
+
+  createShipment: async (body: CreateShipmentRequest): Promise<Shipment> => {
+    const response = await authenticatedFetch('/api/logistics/shipments', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'Failed to create shipment')
+    }
+    return response.json()
+  },
+
+  deleteShipment: async (id: number): Promise<{ success: boolean }> => {
+    const response = await authenticatedFetch(`/api/logistics/shipments/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) throw new Error(`Failed to delete shipment: ${response.statusText}`)
+    return response.json()
+  },
+
+  getSupplyPlanets: async (): Promise<SupplyPlanetSummary[]> => {
+    const response = await authenticatedFetch('/api/supply-planning/planets', {
+      method: 'GET',
+    })
+
     if (!response.ok) throw new Error(`Failed to get supply planets: ${response.statusText}`)
     return response.json()
   },
@@ -5103,11 +3837,10 @@ const realApi = {
   // ==================== BURN & REPAIR ====================
 
   getBurnRepairMyBases: async (): Promise<BurnRepairMyBasesResponse> => {
-    const response = await fetchWithLogging('/api/burn-repair/my-bases', {
+    const response = await authenticatedFetch('/api/burn-repair/my-bases', {
       method: 'GET',
-      headers: getAuthHeaders(),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get burn/repair data: ${response.statusText}`)
     return response.json()
   },
@@ -5121,7 +3854,7 @@ const realApi = {
       `/api/burn-repair/corp${corpQueryString(excludedUserIds)}`,
       { method: 'GET', headers: getAuthHeaders() }
     )
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get corp burn/repair: ${response.statusText}`)
     return response.json()
   },
@@ -5133,7 +3866,7 @@ const realApi = {
       `/api/burn-repair/corp/buildings${corpQueryString(excludedUserIds)}`,
       { method: 'GET', headers: getAuthHeaders() }
     )
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get corp buildings: ${response.statusText}`)
     return response.json()
   },
@@ -5145,7 +3878,7 @@ const realApi = {
       `/api/burn-repair/corp/workforce${corpQueryString(excludedUserIds)}`,
       { method: 'GET', headers: getAuthHeaders() }
     )
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
     return response.json()
   },
@@ -5158,7 +3891,7 @@ const realApi = {
       `/api/burn-repair/corp/material/${encodeURIComponent(ticker)}${corpQueryString(excludedUserIds)}`,
       { method: 'GET', headers: getAuthHeaders() }
     )
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get material breakdown: ${response.statusText}`)
     return response.json()
   },
@@ -5171,7 +3904,7 @@ const realApi = {
       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    handleRefreshedToken(response)
+
     if (!response.ok) throw new Error(`Failed to get shopping list: ${response.statusText}`)
     return response.json()
   },
@@ -5182,21 +3915,6 @@ interface SupplyPlanetSummary {
   planetNaturalId: string
   planetName: string
   lastSyncedAt: string
-}
-
-// Types for KAWA sheet preview and sync
-interface KawaSheetPreviewResponse {
-  headers: string[]
-  rows: string[][]
-}
-
-interface KawaSheetSyncRequest {
-  tickerColumn: string | number
-  priceColumn: string | number
-  locationColumn?: string | number
-  locationDefault?: string
-  currencyColumn?: string | number
-  currencyDefault?: 'ICA' | 'CIS' | 'AIC' | 'NCC'
 }
 
 // Export the API interface that automatically uses mock or real based on configuration
@@ -5288,9 +4006,7 @@ export const api = {
     updateRoleMapping: (id: number, mapping: DiscordRoleMappingRequest) =>
       realApi.updateDiscordRoleMapping(id, mapping),
     deleteRoleMapping: (id: number) => realApi.deleteDiscordRoleMapping(id),
-    getSettingsHistory: (key: string) => realApi.getSettingsHistory(key),
     getChannelConfigs: () => realApi.getChannelConfigs(),
-    getChannelConfig: (channelId: string) => realApi.getChannelConfig(channelId),
     updateChannelConfig: (channelId: string, data: UpdateChannelConfigRequest) =>
       realApi.updateChannelConfig(channelId, data),
     deleteChannelConfig: (channelId: string) => realApi.deleteChannelConfig(channelId),
@@ -5319,7 +4035,6 @@ export const api = {
   reservations: {
     list: (role?: 'owner' | 'counterparty' | 'all', status?: ReservationStatus) =>
       realApi.getReservations(role, status),
-    get: (id: number) => realApi.getReservation(id),
     createForSellOrder: (request: CreateSellOrderReservationRequest) =>
       realApi.createSellOrderReservation(request),
     createForBuyOrder: (request: CreateBuyOrderReservationRequest) =>
@@ -5334,7 +4049,6 @@ export const api = {
       realApi.cancelReservation(id, request),
     reopen: (id: number, request?: UpdateReservationStatusRequest) =>
       realApi.reopenReservation(id, request),
-    delete: (id: number) => realApi.deleteReservation(id),
     forSellOrder: (sellOrderId: number, opts?: { all?: boolean }) =>
       realApi.getReservationsForSellOrder(sellOrderId, opts),
     forBuyOrder: (buyOrderId: number, opts?: { all?: boolean }) =>
@@ -5347,9 +4061,6 @@ export const api = {
     get: (id: number) => realApi.getInvoice(id),
     getOrCreateForPartner: (counterpartyUserId: number) =>
       realApi.getOrCreateInvoiceForPartner(counterpartyUserId),
-    create: (request: CreateInvoiceRequest) => realApi.createInvoice(request),
-    update: (id: number, request: { name?: string; notes?: string }) =>
-      realApi.updateInvoice(id, request),
     delete: (id: number) => realApi.deleteInvoice(id),
     addLineItem: (invoiceId: number, request: AddLineItemRequest) =>
       realApi.addInvoiceLineItem(invoiceId, request),
@@ -5369,12 +4080,7 @@ export const api = {
       realApi.updateShoppingList(id, request),
     delete: (id: number) => realApi.deleteShoppingList(id),
   },
-  locations: {
-    getDistance: (from: string, to: string) => realApi.getLocationDistance(from, to),
-  },
   prices: {
-    list: (exchange?: string, location?: string, commodity?: string, currency?: Currency) =>
-      realApi.getPrices(exchange, location, commodity, currency),
     getByExchange: (exchange: string, version?: number) =>
       realApi.getPricesByExchange(exchange, version),
     create: (request: CreatePriceRequest) => realApi.createPrice(request),
@@ -5390,7 +4096,6 @@ export const api = {
   priceAdjustments: {
     list: (exchange?: string, location?: string, activeOnly?: boolean) =>
       realApi.getPriceAdjustments(exchange, location, activeOnly),
-    get: (id: number) => realApi.getPriceAdjustment(id),
     create: (request: CreatePriceAdjustmentRequest) => realApi.createPriceAdjustment(request),
     update: (id: number, request: UpdatePriceAdjustmentRequest) =>
       realApi.updatePriceAdjustment(id, request),
@@ -5400,46 +4105,29 @@ export const api = {
     list: () => realApi.getFioExchanges(),
   },
   fioPriceSync: {
-    getStatus: () => realApi.getFioPriceSyncStatus(),
-    syncAll: (priceField?: string) => realApi.syncFioPrices(undefined, priceField),
     syncExchange: (exchangeCode: string, priceField?: string) =>
       realApi.syncFioPrices(exchangeCode, priceField),
-  },
-  priceImport: {
-    previewCsv: (file: File, config: CsvImportRequest) => realApi.previewCsvImport(file, config),
-    importCsv: (file: File, config: CsvImportRequest) => realApi.importCsv(file, config),
-    previewGoogleSheets: (request: GoogleSheetsImportRequest) =>
-      realApi.previewGoogleSheetsImport(request),
-    importGoogleSheets: (request: GoogleSheetsImportRequest) => realApi.importGoogleSheets(request),
   },
   adminPriceSettings: {
     get: () => realApi.getPriceSettings(),
     updateFio: (request: UpdateFioSettingsRequest) => realApi.updateFioSettings(request),
     updateGoogle: (request: UpdateGoogleSettingsRequest) => realApi.updateGoogleSettings(request),
-    updateKawaSheet: (request: UpdateKawaSheetRequest) => realApi.updateKawaSheetSettings(request),
-    previewKawaSheet: () => realApi.previewKawaSheet(),
-    syncKawaSheet: (request: KawaSheetSyncRequest) => realApi.syncKawaSheet(request),
   },
   adminGlobalDefaults: {
     get: () => realApi.getGlobalDefaults(),
     update: (request: UpdateGlobalDefaultsRequest) => realApi.updateGlobalDefaults(request),
     reset: (key: string) => realApi.resetGlobalDefault(key),
-    getHistory: (key: string) => realApi.getGlobalDefaultHistory(key),
   },
   priceLists: {
     list: () => realApi.getPriceLists(),
-    get: (code: string) => realApi.getPriceList(code),
     create: (request: CreatePriceListRequest) => realApi.createPriceList(request),
     update: (code: string, request: UpdatePriceListRequest) =>
       realApi.updatePriceList(code, request),
     delete: (code: string) => realApi.deletePriceList(code),
     versions: {
       list: (code: string) => realApi.getPriceListVersions(code),
-      get: (code: string, version: number) => realApi.getPriceListVersion(code, version),
       create: (code: string, request: CreateVersionRequest) =>
         realApi.createPriceListVersion(code, request),
-      update: (code: string, version: number, request: UpdateVersionRequest) =>
-        realApi.updatePriceListVersion(code, version, request),
       promote: (code: string, version: number) => realApi.promotePriceListVersion(code, version),
       delete: (code: string, version: number) => realApi.deletePriceListVersion(code, version),
       diff: (code: string, version: number, otherVersion: number) =>
@@ -5448,7 +4136,6 @@ export const api = {
   },
   importConfigs: {
     list: () => realApi.getImportConfigs(),
-    get: (id: number) => realApi.getImportConfig(id),
     create: (request: CreateImportConfigRequest) => realApi.createImportConfig(request),
     update: (id: number, request: UpdateImportConfigRequest) =>
       realApi.updateImportConfig(id, request),
@@ -5456,7 +4143,6 @@ export const api = {
     sync: (id: number, version?: number) => realApi.syncImportConfig(id, version),
     syncUpload: (id: number, file: File, version?: number) =>
       realApi.syncImportConfigUpload(id, file, version),
-    preview: (id: number) => realApi.previewImportConfig(id),
   },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
@@ -5476,9 +4162,7 @@ export const api = {
   },
   corpOverviewViews: {
     list: () => realApi.listCorpOverviewViews(),
-    getPinned: () => realApi.getPinnedCorpOverviewViews(),
     browse: (search?: string, page?: number) => realApi.browseCorpOverviewViews(search, page),
-    visited: (page?: number) => realApi.getVisitedCorpOverviewViews(page),
     get: (id: number) => realApi.getCorpOverviewView(id),
     create: (request: CreateCorpOverviewViewRequest) => realApi.createCorpOverviewView(request),
     update: (id: number, request: UpdateCorpOverviewViewRequest) =>
@@ -5510,10 +4194,10 @@ export const api = {
     graph: () => realApi.getLogisticsGraph(),
     listFlows: () => realApi.listLogisticsFlows(),
     createFlow: (body: CreateLogisticsFlowRequest) => realApi.createLogisticsFlow(body),
-    bulkCreateFlows: (body: BulkCreateLogisticsFlowsRequest) =>
-      realApi.bulkCreateLogisticsFlows(body),
     bulkMultiCreateFlows: (body: BulkMultiCreateLogisticsFlowsRequest) =>
       realApi.bulkMultiCreateLogisticsFlows(body),
+    previewBulkMultiFlows: (body: BulkMultiPreviewRequest) =>
+      realApi.previewBulkMultiCreateLogisticsFlows(body),
     updateFlow: (id: number, body: UpdateLogisticsFlowRequest) =>
       realApi.updateLogisticsFlow(id, body),
     deleteFlow: (id: number) => realApi.deleteLogisticsFlow(id),
@@ -5522,6 +4206,31 @@ export const api = {
     updateClaim: (id: number, body: UpdateLocationDemandClaimRequest) =>
       realApi.updateLogisticsClaim(id, body),
     deleteClaim: (id: number) => realApi.deleteLogisticsClaim(id),
+
+    // Contract coverage (buy-invoice incoming offsets)
+    listContractCoverage: () => realApi.listContractCoverage(),
+
+    // Self-supplied (hide-from-contracts)
+    listSelfSupplied: () => realApi.listSelfSupplied(),
+    createSelfSupplied: (body: CreateSelfSuppliedRequest) => realApi.createSelfSupplied(body),
+    deleteSelfSupplied: (id: number) => realApi.deleteSelfSupplied(id),
+
+    listShips: () => realApi.listShips(),
+
+    // Trips (the ship's run — owns status, stops, assigned shipments)
+    listTrips: () => realApi.listTrips(),
+    createTrip: (body: CreateTripRequest) => realApi.createTrip(body),
+    updateTrip: (id: number, body: UpdateTripRequest) => realApi.updateTrip(id, body),
+    setTripStatus: (id: number, status: TripStatus) => realApi.setTripStatus(id, status),
+    deleteTrip: (id: number) => realApi.deleteTrip(id),
+    repeatTrip: (id: number, body: RepeatTripRequest = {}) => realApi.repeatTrip(id, body),
+    suggestStopTimes: (body: SuggestStopTimesRequest) => realApi.suggestStopTimes(body),
+
+    // Shipments (parcels — queued or assigned to a trip)
+    listShipments: (queued?: boolean) => realApi.listShipments(queued),
+    getShipment: (id: number) => realApi.getShipment(id),
+    createShipment: (body: CreateShipmentRequest) => realApi.createShipment(body),
+    deleteShipment: (id: number) => realApi.deleteShipment(id),
   },
 }
 
@@ -5565,22 +4274,16 @@ export type {
   CreatePriceAdjustmentRequest,
   UpdatePriceAdjustmentRequest,
   FioExchangeResponse,
-  ExchangeSyncStatus,
   SyncPricesResponse,
   // Import types
   CsvFieldMapping,
   CsvRowError,
-  ParsedPriceRow,
   CsvImportResult,
-  CsvPreviewResult,
-  CsvImportRequest,
-  GoogleSheetsImportRequest,
   // Admin Price Settings types
   FioPriceField,
   PriceSettingsResponse,
   UpdateFioSettingsRequest,
   UpdateGoogleSettingsRequest,
-  UpdateKawaSheetRequest,
   // Price List types
   PriceListType,
   PriceListDefinition,
@@ -5600,8 +4303,6 @@ export type {
   CreateImportConfigRequest,
   UpdateImportConfigRequest,
   PivotImportResult,
-  KawaSheetPreviewResponse,
-  KawaSheetSyncRequest,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

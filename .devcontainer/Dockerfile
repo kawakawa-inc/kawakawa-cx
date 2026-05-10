@@ -7,7 +7,12 @@ RUN DOCTL_VERSION=$(curl -s https://api.github.com/repos/digitalocean/doctl/rele
     && apt-get update \
     && apt install -y postgresql-common \
     && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
-    && apt-get install -y postgresql-client-18
+    && apt-get install -y postgresql-client-18 neovim
+
+RUN ln -s /workspace/scripts/dev.sh /usr/local/bin/dev
+
+# Install opencode
+RUN curl -fsSL https://opencode.ai/install | bash
 
 # Enable corepack and prepare pnpm (requires root)
 RUN corepack enable && corepack prepare pnpm@9.14.2 --activate

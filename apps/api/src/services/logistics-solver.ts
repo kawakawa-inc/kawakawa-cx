@@ -23,6 +23,10 @@ export interface SolverEdge {
   /** Total amount already converted against burnDays; required when kind='fixed', ignored otherwise */
   amountOverride: number | null
   priority: number | null
+  /** Days for one ship trip from source to destination. Mirrored to EdgeState. */
+  transitDays: number
+  /** Days between shipments on this flow. Mirrored to EdgeState. */
+  cadenceDays: number
   note: string | null
 }
 
@@ -243,6 +247,16 @@ export function solve(input: SolverInput): LogisticsGraph {
       derivedOutflow,
       balance,
       shoppingList,
+      // Timing fields are populated by the loader (logistics-graph-loader);
+      // the solver itself only sees totals, not daily rates.
+      dailyConsumption: {},
+      dailyProduction: {},
+      daysOfStock: {},
+      runOutAt: {},
+      latestContractAt: {},
+      dailyOutflow: {},
+      dailyInflow: {},
+      chainSource: {},
       warnings: [],
     })
   }
@@ -257,13 +271,30 @@ export function solve(input: SolverInput): LogisticsGraph {
     isBottleneck: false,
     isOverride: e.kind === 'fixed',
     priority: e.priority,
+    transitDays: e.transitDays,
+    cadenceDays: e.cadenceDays,
+    perShipmentAmount: 0, // populated by the loader
+    nextArrivalAt: null, // populated by the loader
+    loadAt: null, // populated by the loader
+    shipBy: null, // populated by the loader
+    contractBy: null, // populated by the loader
     note: e.note,
   }))
 
   return {
-    settings,
+    settings: {
+      burnDays: settings.burnDays,
+      repairDays: settings.repairDays,
+      conditionMode: settings.conditionMode,
+      stockMode: settings.stockMode,
+      // Loader overwrites this with the user's setting; default to 7 days.
+      tripLeadDays: 7,
+    },
     nodes: nodeStates,
     edges: edgeStates,
+    // Loader overwrites this with the user's actual building data; the solver
+    // itself doesn't reason about repair.
+    repairEvents: [],
     warnings,
   }
 }

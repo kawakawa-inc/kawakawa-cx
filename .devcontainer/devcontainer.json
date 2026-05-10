@@ -3,21 +3,7 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "Vue.volar",
-        "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "cweijan.vscode-postgresql-client2",
-        "Anthropic.claude-code"
-      ],
-      "settings": {
-        "editor.formatOnSave": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
-      }
-    }
-  },
+  "updateRemoteUserUID": false,
   "remoteEnv": {
     "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
   },

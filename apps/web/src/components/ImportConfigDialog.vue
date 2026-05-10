@@ -225,89 +225,6 @@
               </v-expansion-panel-text>
             </v-expansion-panel>
           </v-expansion-panels>
-
-          <v-expansion-panels v-if="form.format === 'kawa'" class="mb-4">
-            <v-expansion-panel title="KAWA Format Help">
-              <v-expansion-panel-text>
-                <p class="text-body-2 mb-2">
-                  KAWA format uses 2 rows per commodity. Location names are in the commodity's info
-                  row (not header), with prices directly below:
-                </p>
-                <v-table density="compact" class="mb-2">
-                  <thead>
-                    <tr class="text-medium-emphasis">
-                      <th>A</th>
-                      <th>B</th>
-                      <th>C</th>
-                      <th>D</th>
-                      <th>E</th>
-                      <th>F</th>
-                      <th>G</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr class="text-disabled">
-                      <td colspan="4">Updated 2023-Feb-19</td>
-                      <td></td>
-                      <td></td>
-                      <td></td>
-                    </tr>
-                    <tr class="text-disabled">
-                      <td>Category</td>
-                      <td>Ticker</td>
-                      <td>Material</td>
-                      <td>Source</td>
-                      <td>...</td>
-                      <td></td>
-                      <td></td>
-                    </tr>
-                    <tr>
-                      <td>Consumables</td>
-                      <td class="font-weight-bold">DW</td>
-                      <td>Drinking Water</td>
-                      <td>KW-602c</td>
-                      <td class="text-info">Montem</td>
-                      <td class="text-info">Vallis</td>
-                      <td class="text-info">Benten</td>
-                    </tr>
-                    <tr>
-                      <td></td>
-                      <td></td>
-                      <td></td>
-                      <td></td>
-                      <td class="text-success">24</td>
-                      <td class="text-success">25</td>
-                      <td class="text-success">26</td>
-                    </tr>
-                    <tr>
-                      <td></td>
-                      <td class="font-weight-bold">RAT</td>
-                      <td>Basic Rations</td>
-                      <td>Milliways</td>
-                      <td class="text-info">Montem</td>
-                      <td class="text-info">Katoa</td>
-                      <td class="text-info">Umbra</td>
-                    </tr>
-                    <tr>
-                      <td></td>
-                      <td></td>
-                      <td></td>
-                      <td></td>
-                      <td class="text-success">39</td>
-                      <td class="text-success">40</td>
-                      <td class="text-success">41</td>
-                    </tr>
-                  </tbody>
-                </v-table>
-                <p class="text-caption text-medium-emphasis">
-                  <strong>Ticker</strong> in column B,
-                  <strong class="text-info">locations</strong> in columns E+ of the info row,
-                  <strong class="text-success">prices</strong> in the row below. Each commodity can
-                  have different locations.
-                </p>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
         </v-form>
 
         <v-alert
@@ -399,7 +316,6 @@ const sourceTypeOptions = [
 const formatOptions = [
   { title: 'Flat (ticker, price per row)', value: 'flat' },
   { title: 'Pivot (tickers as rows, locations as columns)', value: 'pivot' },
-  { title: 'KAWA (2-row format: ticker row + price row)', value: 'kawa' },
 ]
 
 const availableFormatOptions = computed(() => {

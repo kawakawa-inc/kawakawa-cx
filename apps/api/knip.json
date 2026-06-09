@@ -3,6 +3,14 @@
   "entry": ["src/index.ts", "src/scripts/*.ts", "src/controllers/*.ts"],
   "project": ["src/**/*.ts", "!src/**/*.test.ts"],
   "ignore": ["src/generated/**"],
-  "ignoreDependencies": ["@tsoa/runtime", "multer", "@types/multer", "@kawakawa/db", "@kawakawa/services", "@kawakawa/types", "@vitest/coverage-v8"],
+  "ignoreDependencies": [
+    "@tsoa/runtime",
+    "multer",
+    "@types/multer",
+    "@kawakawa/db",
+    "@kawakawa/services",
+    "@kawakawa/types",
+    "@vitest/coverage-v8"
+  ],
   "ignoreExportsUsedInFile": true
 }

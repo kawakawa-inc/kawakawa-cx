@@ -211,6 +211,27 @@ function formatPrice(price: number): string {
 }
 
 /**
+ * Build a price list display string with version info.
+ *
+ * Examples:
+ * - No priceListCode: ""
+ * - Fixed price (no version): "KAWA"
+ * - Dynamic pricing, no label: "KAWA v2"
+ * - Dynamic pricing, with label: "KAWA v2 — Phase 1"
+ */
+function buildPlDisplay(
+  priceListCode: string | null,
+  version: number | null,
+  versionLabel: string | null
+): string {
+  if (!priceListCode) return ''
+  const code = priceListCode.toUpperCase()
+  if (version === null) return code
+  const versionPart = `${code} v${version}`
+  return versionLabel ? `${versionPart} — ${versionLabel}` : versionPart
+}
+
+/**
  * Format FIO age as a human-readable string
  */
 function formatFioAge(fioUploadedAt: Date | null): string {
@@ -558,8 +579,11 @@ export async function formatGroupedOrdersMulti(
     })
     const displayPrice = priceInfo ? formatPrice(priceInfo.price) : '??'
     const currencySymbol = formatCurrencySymbol(priceInfo?.currency ?? order.currency)
-    // Only show price list code if it exists, empty for custom prices
-    const plDisplay = order.priceListCode?.toUpperCase() ?? ''
+    const plDisplay = buildPlDisplay(
+      order.priceListCode,
+      priceInfo?.version ?? null,
+      priceInfo?.versionLabel ?? null
+    )
 
     const userName = order.user.fioUsername ?? order.user.displayName
     const nameOrLocation = groupBy === 'location' ? userName : locationDisplay
@@ -606,8 +630,11 @@ export async function formatGroupedOrdersMulti(
     })
     const displayPrice = priceInfo ? formatPrice(priceInfo.price) : '??'
     const currencySymbol = formatCurrencySymbol(priceInfo?.currency ?? order.currency)
-    // Only show price list code if it exists, empty for custom prices
-    const plDisplay = order.priceListCode?.toUpperCase() ?? ''
+    const plDisplay = buildPlDisplay(
+      order.priceListCode,
+      priceInfo?.version ?? null,
+      priceInfo?.versionLabel ?? null
+    )
 
     const userName = order.user.fioUsername ?? order.user.displayName
     const nameOrLocation = groupBy === 'location' ? userName : locationDisplay

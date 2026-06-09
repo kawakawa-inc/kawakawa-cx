@@ -23,6 +23,8 @@ export interface AppliedAdjustment {
 
 export interface EffectivePrice {
   priceListCode: string
+  version: number
+  versionLabel: string | null
   commodityTicker: string
   commodityName: string | null
   locationId: string
@@ -43,21 +45,37 @@ export interface EffectivePrice {
 /**
  * Calculate the effective price for a commodity at a specific price list and location
  * Applies all matching adjustments in priority order
+ *
+ * @param version - Optional version number. If omitted, uses the price list's currentVersion.
  */
 export async function calculateEffectivePrice(
   exchange: string,
   ticker: string,
   locationId: string,
-  currency: Currency
+  currency: Currency,
+  version?: number
 ): Promise<EffectivePrice | null> {
   const priceListCode = exchange.toUpperCase()
   const commodityTicker = ticker.toUpperCase()
   const location = locationId // Location IDs are case-sensitive (e.g., KW-020c)
 
-  // Get the base price from prices table, joined with priceLists for currency
+  // Resolve version: if not provided, look up the price list's currentVersion
+  let resolvedVersion = version
+  if (resolvedVersion === undefined) {
+    const plResult = await db
+      .select({ currentVersion: priceLists.currentVersion })
+      .from(priceLists)
+      .where(eq(priceLists.code, priceListCode))
+      .limit(1)
+    resolvedVersion = plResult[0]?.currentVersion ?? 1
+  }
+
+  // Get the base price from prices table, joined with priceLists for currency and version label
   const basePriceResult = await db
     .select({
       priceListCode: prices.priceListCode,
+      version: prices.version,
+      versionLabel: priceListVersions.label,
       commodityTicker: prices.commodityTicker,
       commodityName: fioCommodities.name,
       locationId: prices.locationId,
@@ -69,11 +87,19 @@ export async function calculateEffectivePrice(
     })
     .from(prices)
     .innerJoin(priceLists, eq(prices.priceListCode, priceLists.code))
+    .innerJoin(
+      priceListVersions,
+      and(
+        eq(priceListVersions.priceListCode, prices.priceListCode),
+        eq(priceListVersions.version, prices.version)
+      )
+    )
     .leftJoin(fioCommodities, eq(prices.commodityTicker, fioCommodities.ticker))
     .leftJoin(fioLocations, eq(prices.locationId, fioLocations.naturalId))
     .where(
       and(
         eq(prices.priceListCode, priceListCode),
+        eq(prices.version, resolvedVersion),
         eq(prices.commodityTicker, commodityTicker),
         eq(prices.locationId, location),
         eq(priceLists.currency, currency)
@@ -157,6 +183,8 @@ export async function calculateEffectivePrice(
 
   return {
     priceListCode: baseRecord.priceListCode,
+    version: baseRecord.version,
+    versionLabel: baseRecord.versionLabel,
     commodityTicker: baseRecord.commodityTicker,
     commodityName: baseRecord.commodityName,
     locationId: baseRecord.locationId,
@@ -178,14 +206,30 @@ export async function calculateEffectivePrice(
  *
  * Note: The currency parameter is ignored - we use the price list's currency instead.
  * This ensures dynamic pricing always works regardless of what currency was stored on the order.
+ *
+ * @param version - Optional version number. If omitted, uses the price list's currentVersion.
  */
 export async function calculateEffectivePriceWithFallback(
   priceListCode: string,
   ticker: string,
   locationId: string,
-  _currency: Currency // Ignored - we use the price list's currency
+  _currency: Currency, // Ignored - we use the price list's currency
+  version?: number
 ): Promise<EffectivePrice | null> {
-  // Get the price list's currency and the current version's required default location
+  const code = priceListCode.toUpperCase()
+
+  // Resolve version: if not provided, look up the price list's currentVersion
+  let resolvedVersion = version
+  if (resolvedVersion === undefined) {
+    const plResult = await db
+      .select({ currentVersion: priceLists.currentVersion })
+      .from(priceLists)
+      .where(eq(priceLists.code, code))
+      .limit(1)
+    resolvedVersion = plResult[0]?.currentVersion ?? 1
+  }
+
+  // Get the price list's currency and the resolved version's required default location
   const priceListResult = await db
     .select({
       currency: priceLists.currency,
@@ -196,10 +240,10 @@ export async function calculateEffectivePriceWithFallback(
       priceListVersions,
       and(
         eq(priceListVersions.priceListCode, priceLists.code),
-        eq(priceListVersions.version, priceLists.currentVersion)
+        eq(priceListVersions.version, resolvedVersion)
       )
     )
-    .where(eq(priceLists.code, priceListCode.toUpperCase()))
+    .where(eq(priceLists.code, code))
     .limit(1)
 
   if (priceListResult.length === 0) {
@@ -210,7 +254,13 @@ export async function calculateEffectivePriceWithFallback(
   const defaultLocationId = priceListResult[0].defaultLocationId
 
   // First try the requested location with the price list's currency
-  let result = await calculateEffectivePrice(priceListCode, ticker, locationId, priceListCurrency)
+  let result = await calculateEffectivePrice(
+    priceListCode,
+    ticker,
+    locationId,
+    priceListCurrency,
+    resolvedVersion
+  )
 
   if (result !== null) {
     return result
@@ -226,7 +276,8 @@ export async function calculateEffectivePriceWithFallback(
     priceListCode,
     ticker,
     defaultLocationId,
-    priceListCurrency
+    priceListCurrency,
+    resolvedVersion
   )
 
   // Mark result as fallback with the original requested location
@@ -246,7 +297,7 @@ export async function calculateEffectivePriceWithFallback(
  * Handles both fixed and dynamic pricing modes.
  *
  * @param order - Order with price data
- * @returns Display price and currency, or null if price can't be determined
+ * @returns Display price, currency, and version info, or null if price can't be determined
  */
 export async function getOrderDisplayPrice(order: {
   price: string | number
@@ -254,7 +305,12 @@ export async function getOrderDisplayPrice(order: {
   priceListCode: string | null
   commodityTicker: string
   locationId: string
-}): Promise<{ price: number; currency: Currency } | null> {
+}): Promise<{
+  price: number
+  currency: Currency
+  version: number | null
+  versionLabel: string | null
+} | null> {
   const storedPrice = typeof order.price === 'string' ? parseFloat(order.price) : order.price
 
   // Dynamic pricing: priceListCode is set and stored price is 0
@@ -270,6 +326,8 @@ export async function getOrderDisplayPrice(order: {
       return {
         price: effectivePrice.finalPrice,
         currency: effectivePrice.currency,
+        version: effectivePrice.version,
+        versionLabel: effectivePrice.versionLabel,
       }
     }
 
@@ -281,5 +339,7 @@ export async function getOrderDisplayPrice(order: {
   return {
     price: storedPrice,
     currency: order.currency,
+    version: null,
+    versionLabel: null,
   }
 }

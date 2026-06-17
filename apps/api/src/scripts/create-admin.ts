@@ -55,6 +55,7 @@ async function createAdmin(username: string, displayName?: string, email?: strin
       passwordHash,
       displayName: displayName || username,
       isLocked: false,
+      lastActiveAt: new Date(),
     })
     .returning()
 

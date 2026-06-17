@@ -53,7 +53,7 @@ interface AdminUser {
   username: string
   email: string | null
   displayName: string
-  isActive: boolean
+  isLocked: boolean
   roles: Role[]
   fioSync: FioSyncInfo
   discord: DiscordInfo
@@ -68,7 +68,7 @@ interface AdminUserListResponse {
 }
 
 interface UpdateUserRequest {
-  isActive?: boolean
+  isLocked?: boolean
   roles?: string[] // Array of role IDs to assign
 }
 
@@ -191,7 +191,7 @@ export class AdminController extends Controller {
         username: users.username,
         email: users.email,
         displayName: users.displayName,
-        isActive: users.isActive,
+        isLocked: users.isLocked,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -237,7 +237,7 @@ export class AdminController extends Controller {
         username: user.username,
         email: user.email,
         displayName: user.displayName,
-        isActive: user.isActive,
+        isLocked: user.isLocked,
         createdAt: user.createdAt,
         roles: rolesData,
         fioSync: {
@@ -322,7 +322,7 @@ export class AdminController extends Controller {
         username: users.username,
         email: users.email,
         displayName: users.displayName,
-        isActive: users.isActive,
+        isLocked: users.isLocked,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -367,7 +367,7 @@ export class AdminController extends Controller {
         username: user.username,
         email: user.email,
         displayName: user.displayName,
-        isActive: user.isActive,
+        isLocked: user.isLocked,
         createdAt: user.createdAt,
         roles: rolesData,
         fioSync: {
@@ -501,7 +501,7 @@ export class AdminController extends Controller {
         username: users.username,
         email: users.email,
         displayName: users.displayName,
-        isActive: users.isActive,
+        isLocked: users.isLocked,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -547,7 +547,7 @@ export class AdminController extends Controller {
       username: user.username,
       email: user.email,
       displayName: user.displayName,
-      isActive: user.isActive,
+      isLocked: user.isLocked,
       createdAt: user.createdAt,
       roles: rolesData,
       fioSync: {
@@ -586,12 +586,12 @@ export class AdminController extends Controller {
       throw NotFound('User not found')
     }
 
-    // Update isActive if provided
-    if (body.isActive !== undefined) {
+    // Update isLocked if provided
+    if (body.isLocked !== undefined) {
       await db
         .update(users)
         .set({
-          isActive: body.isActive,
+          isLocked: body.isLocked,
           updatedAt: new Date(),
         })
         .where(eq(users.id, userId))

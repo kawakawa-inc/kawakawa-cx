@@ -41,7 +41,7 @@ function setupDiscordOnlyMock() {
       id: 1,
       username: 'testuser',
       displayName: 'Test User',
-      isActive: true,
+      isLocked: false,
       passwordHash: 'discord:123456789:1234567890',
     },
   })
@@ -168,7 +168,7 @@ describe('unlink command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
         passwordHash: '$2b$10$hashedpassword',
       },
     })
@@ -195,7 +195,7 @@ describe('unlink command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
         passwordHash: '$2b$10$hashedpassword',
       },
     })

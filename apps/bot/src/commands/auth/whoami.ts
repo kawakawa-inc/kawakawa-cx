@@ -57,7 +57,7 @@ export const whoami: Command = {
       .addFields(
         { name: 'Username', value: user.username, inline: true },
         { name: 'Display Name', value: user.displayName || user.username, inline: true },
-        { name: 'Status', value: user.isActive ? 'Active' : 'Inactive', inline: true },
+        { name: 'Status', value: user.isLocked ? 'Locked' : 'Unlocked', inline: true },
         { name: 'Roles', value: roleNames, inline: false }
       )
       .setFooter({ text: `Account ID: ${user.id}` })

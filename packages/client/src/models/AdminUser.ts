@@ -10,7 +10,7 @@ export type AdminUser = {
   username: string
   email: string | null
   displayName: string
-  isActive: boolean
+  isLocked: boolean
   roles: Array<Role>
   fioSync: FioSyncInfo
   discord: DiscordInfo

@@ -179,7 +179,7 @@ export const register: Command = {
             username,
             displayName,
             passwordHash: placeholderPassword, // Cannot be used for login
-            isActive: true,
+            isLocked: false,
           })
           .returning()
 

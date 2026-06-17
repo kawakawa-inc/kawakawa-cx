@@ -35,7 +35,7 @@ vi.mock('../db/index.js', () => ({
     displayName: 'displayName',
     email: 'email',
     passwordHash: 'passwordHash',
-    isActive: 'isActive',
+    isLocked: 'isLocked',
   },
   userDiscordProfiles: {
     id: 'id',

@@ -38,8 +38,8 @@
             <h3 class="text-h6 mb-2">4. Data Storage</h3>
             <p class="mb-4">
               Your data is stored on secure servers. We retain your data only as long as your
-              account is active. You may request deletion of your account and associated data at any
-              time.
+              account is in good standing. You may request deletion of your account and associated
+              data at any time.
             </p>
 
             <h3 class="text-h6 mb-2">5. Cookies</h3>

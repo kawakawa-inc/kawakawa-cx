@@ -124,9 +124,9 @@ export class DiscordAuthController extends Controller {
           return { type: 'error', message: 'User account not found' }
         }
 
-        // Check if user is active
-        if (!user.isActive) {
-          return { type: 'error', message: 'Account is inactive. Please contact an administrator.' }
+        // Check if user is locked
+        if (user.isLocked) {
+          return { type: 'error', message: 'Your account has been locked. Please contact support@kawakawa.cx for assistance.' }
         }
 
         // Update stored tokens
@@ -264,7 +264,7 @@ export class DiscordAuthController extends Controller {
         email: email || null,
         displayName: displayName.trim(),
         passwordHash: '', // Empty password - can only auth via Discord until they set one
-        isActive: true,
+        isLocked: false,
       })
       .returning()
 

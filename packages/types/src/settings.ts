@@ -21,6 +21,7 @@ export const SETTING_CATEGORIES = {
   FIO: 'fio',
   DISCORD: 'discord',
   BURN_REPAIR: 'burnRepair',
+  ACTIVITY: 'activity',
 } as const
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[keyof typeof SETTING_CATEGORIES]
@@ -57,6 +58,10 @@ export const SETTING_CATEGORY_INFO: Record<
   [SETTING_CATEGORIES.BURN_REPAIR]: {
     label: 'Burn & Repair',
     description: 'Workforce burn, production inputs, and building repair settings',
+  },
+  [SETTING_CATEGORIES.ACTIVITY]: {
+    label: 'Activity',
+    description: 'User activity tracking and inactivity thresholds',
   },
 }
 
@@ -393,6 +398,16 @@ export const SETTING_DEFINITIONS = {
     description: 'How to display commodity names in Discord (compact for mobile)',
     enumOptions: ['ticker-only', 'name-only', 'both'] as const,
   } satisfies SettingDef<CommodityDisplayMode, 'enum'>,
+
+  // ==================== ACTIVITY SETTINGS ====================
+  'activity.inactiveDays': {
+    key: 'activity.inactiveDays',
+    type: 'number',
+    defaultValue: 30,
+    category: SETTING_CATEGORIES.ACTIVITY,
+    label: 'Inactive Days',
+    description: 'Number of days of inactivity before a user is considered inactive',
+  } satisfies SettingDef<number, 'number'>,
 } as const
 
 // Type-safe setting keys

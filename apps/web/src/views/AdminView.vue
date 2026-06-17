@@ -144,9 +144,9 @@
             :loading="loading"
             @update:options="loadUsers"
           >
-            <template #item.isActive="{ item }">
-              <v-chip :color="item.isActive ? 'success' : 'error'" size="small">
-                {{ item.isActive ? 'Active' : 'Inactive' }}
+            <template #item.isLocked="{ item }">
+              <v-chip :color="item.isLocked ? 'error' : 'success'" size="small">
+                {{ item.isLocked ? 'Locked' : 'Unlocked' }}
               </v-chip>
             </template>
 
@@ -1991,10 +1991,10 @@
               disabled
             />
             <v-switch
-              v-model="editForm.isActive"
-              label="Account Active"
-              color="success"
-              hint="Inactive accounts cannot log in"
+              v-model="editForm.isLocked"
+              label="Account Locked"
+              color="error"
+              hint="Locked accounts cannot log in"
               persistent-hint
             />
             <v-select
@@ -2519,7 +2519,7 @@ interface AdminUser {
   username: string
   email: string | null
   displayName: string
-  isActive: boolean
+  isLocked: boolean
   roles: Role[]
   fioSync: FioSyncInfo
   discord: DiscordInfo
@@ -2565,7 +2565,7 @@ const activeTab = useUrlTab({
 const userHeaders = [
   { title: 'Username', key: 'username', sortable: false },
   { title: 'Display Name', key: 'displayName', sortable: false },
-  { title: 'Status', key: 'isActive', sortable: false },
+  { title: 'Status', key: 'isLocked', sortable: false },
   { title: 'Roles', key: 'roles', sortable: false },
   { title: 'Discord', key: 'discord', sortable: false, width: 120 },
   { title: 'FIO Sync', key: 'fioSync', sortable: false },
@@ -2586,7 +2586,7 @@ const availableRoles = ref<Role[]>([])
 const editDialog = ref(false)
 const editingUser = ref<AdminUser | null>(null)
 const editForm = ref({
-  isActive: true,
+  isLocked: false,
   roles: [] as string[],
 })
 const saving = ref(false)
@@ -3044,7 +3044,7 @@ const loadPermissions = async () => {
 const openEditDialog = (user: AdminUser) => {
   editingUser.value = user
   editForm.value = {
-    isActive: user.isActive,
+    isLocked: user.isLocked,
     roles: user.roles.map(r => r.id),
   }
   editDialog.value = true
@@ -3056,7 +3056,7 @@ const saveUser = async () => {
   try {
     saving.value = true
     await api.admin.updateUser(editingUser.value.id, {
-      isActive: editForm.value.isActive,
+      isLocked: editForm.value.isLocked,
       roles: editForm.value.roles,
     })
     showSnackbar('User updated successfully')
@@ -3283,9 +3283,9 @@ const rejectUser = async () => {
 
   try {
     rejectingLoading.value = true
-    // Rejecting = deactivating the account
+    // Rejecting = locking the account
     await api.admin.updateUser(rejectingUser.value.id, {
-      isActive: false,
+      isLocked: true,
       roles: ['unverified'],
     })
     showSnackbar(`${rejectingUser.value.displayName} has been rejected`)

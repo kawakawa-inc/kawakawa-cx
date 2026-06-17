@@ -11,8 +11,11 @@ RUN DOCTL_VERSION=$(curl -s https://api.github.com/repos/digitalocean/doctl/rele
 
 RUN ln -s /workspace/scripts/dev.sh /usr/local/bin/dev
 
-# Install opencode
-RUN curl -fsSL https://opencode.ai/install | bash
+# Install opencode, rust, and zellij
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && curl https://sh.rustup.rs -sSf | sh -s -- -y \
+    && source $HOME/.bashrc \
+    && cargo install --locked zellij
 
 # Enable corepack and prepare pnpm (requires root)
 RUN corepack enable && corepack prepare pnpm@9.14.2 --activate

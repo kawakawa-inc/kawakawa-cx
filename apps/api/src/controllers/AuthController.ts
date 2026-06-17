@@ -106,9 +106,9 @@ export class AuthController extends Controller {
       throw Unauthorized('Invalid username or password')
     }
 
-    // Check if account is active
-    if (!user.isActive) {
-      throw Forbidden('Account is inactive. Please contact an administrator.')
+    // Check if account is locked
+    if (user.isLocked) {
+      throw Forbidden('Your account has been locked. Please contact support@kawakawa.cx for assistance.')
     }
 
     // Get user roles with names and colors
@@ -187,7 +187,7 @@ export class AuthController extends Controller {
         email: body.email,
         displayName: body.displayName,
         passwordHash,
-        isActive: true,
+        isLocked: false,
       })
       .returning()
 

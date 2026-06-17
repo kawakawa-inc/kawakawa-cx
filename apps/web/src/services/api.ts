@@ -123,7 +123,7 @@ interface AdminUser {
   username: string
   email: string | null
   displayName: string
-  isActive: boolean
+  isLocked: boolean
   roles: Role[]
   fioSync: FioSyncInfo
   discord: DiscordInfo
@@ -173,7 +173,7 @@ interface AdminUserListResponse {
 }
 
 interface UpdateUserRequest {
-  isActive?: boolean
+  isLocked?: boolean
   roles?: string[]
 }
 

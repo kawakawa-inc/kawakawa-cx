@@ -71,7 +71,7 @@ describe('whoami command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
       },
     })
 
@@ -105,7 +105,7 @@ describe('whoami command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
       },
     })
 
@@ -125,15 +125,15 @@ describe('whoami command', () => {
     // The embed will contain "None" for roles - verified via mock structure
   })
 
-  it('shows inactive status correctly', async () => {
+  it('shows locked status correctly', async () => {
     mockFindFirst.mockResolvedValueOnce({
       userId: 1,
       discordId: '123456789',
       user: {
         id: 1,
-        username: 'inactiveuser',
-        displayName: 'Inactive User',
-        isActive: false,
+        username: 'lockeduser',
+        displayName: 'Locked User',
+        isLocked: true,
       },
     })
 
@@ -159,7 +159,7 @@ describe('whoami command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
       },
     })
 
@@ -188,7 +188,7 @@ describe('whoami command', () => {
         id: 1,
         username: 'testuser',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
       },
     })
 

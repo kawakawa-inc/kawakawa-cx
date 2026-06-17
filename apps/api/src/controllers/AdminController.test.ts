@@ -50,7 +50,7 @@ vi.mock('../db/index.js', () => ({
     username: 'username',
     email: 'email',
     displayName: 'displayName',
-    isActive: 'isActive',
+    isLocked: 'isLocked',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
   },
@@ -135,7 +135,7 @@ describe('AdminController', () => {
           username: 'user1',
           email: 'user1@test.com',
           displayName: 'User 1',
-          isActive: true,
+          isLocked: false,
           createdAt: new Date(),
           rolesJson: JSON.stringify([{ id: 'member', name: 'Member', color: 'blue' }]),
           lastSyncedAt: new Date(),
@@ -149,7 +149,7 @@ describe('AdminController', () => {
           username: 'user2',
           email: null,
           displayName: 'User 2',
-          isActive: false,
+          isLocked: true,
           createdAt: new Date(),
           rolesJson: JSON.stringify([{ id: 'member', name: 'Member', color: 'blue' }]),
           lastSyncedAt: null,
@@ -200,7 +200,7 @@ describe('AdminController', () => {
           username: 'searchuser',
           email: 'search@test.com',
           displayName: 'Search User',
-          isActive: true,
+          isLocked: false,
           createdAt: new Date(),
           rolesJson: JSON.stringify([{ id: 'member', name: 'Member', color: 'blue' }]),
           lastSyncedAt: null,
@@ -241,7 +241,7 @@ describe('AdminController', () => {
         username: 'testuser',
         email: 'test@test.com',
         displayName: 'Test User',
-        isActive: true,
+        isLocked: false,
         createdAt: new Date(),
         rolesJson: JSON.stringify([
           { id: 'member', name: 'Member', color: 'blue' },
@@ -299,13 +299,13 @@ describe('AdminController', () => {
   })
 
   describe('updateUser', () => {
-    it('should update user isActive status', async () => {
+    it('should update user isLocked status', async () => {
       const mockUserWithDetails = {
         id: 5,
         username: 'testuser',
         email: null,
         displayName: 'Test',
-        isActive: false,
+        isLocked: true,
         createdAt: new Date(),
         rolesJson: JSON.stringify([{ id: 'member', name: 'Member', color: 'blue' }]),
         lastSyncedAt: null,
@@ -346,11 +346,11 @@ describe('AdminController', () => {
       }
       vi.mocked(db.update).mockReturnValue(updateMock as any)
 
-      const result = await controller.updateUser({ user: adminUser }, 5, { isActive: false })
+      const result = await controller.updateUser({ user: adminUser }, 5, { isLocked: true })
 
       expect(db.update).toHaveBeenCalled()
       expect(updateMock.set).toHaveBeenCalledWith({
-        isActive: false,
+        isLocked: true,
         updatedAt: expect.any(Date),
       })
       expect(result.id).toBe(5)
@@ -362,7 +362,7 @@ describe('AdminController', () => {
         username: 'testuser',
         email: null,
         displayName: 'Test',
-        isActive: true,
+        isLocked: false,
         createdAt: new Date(),
         rolesJson: JSON.stringify([
           { id: 'member', name: 'Member', color: 'blue' },
@@ -432,7 +432,7 @@ describe('AdminController', () => {
 
     it('should return 400 when updating own account', async () => {
       await expect(
-        controller.updateUser({ user: adminUser }, 1, { isActive: false })
+        controller.updateUser({ user: adminUser }, 1, { isLocked: true })
       ).rejects.toThrow('Cannot modify your own account through admin panel')
       expect(setStatusSpy).toHaveBeenCalledWith(400)
     })
@@ -445,7 +445,7 @@ describe('AdminController', () => {
       vi.mocked(db.select).mockReturnValue(selectMock as any)
 
       await expect(
-        controller.updateUser({ user: adminUser }, 999, { isActive: false })
+        controller.updateUser({ user: adminUser }, 999, { isLocked: true })
       ).rejects.toThrow('User not found')
       expect(setStatusSpy).toHaveBeenCalledWith(404)
     })

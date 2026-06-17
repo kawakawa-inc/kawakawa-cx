@@ -246,7 +246,7 @@ export const users = pgTable('users', {
   email: varchar('email', { length: 255 }), // Optional email for password resets
   displayName: varchar('display_name', { length: 100 }).notNull(), // Display name
   passwordHash: text('password_hash').notNull(), // Bcrypt hashed password with salt
-  isActive: boolean('is_active').notNull().default(true), // Account active status
+  isLocked: boolean('is_locked').notNull().default(false), // Account locked status
   tokenVersion: integer('token_version').notNull().default(0), // Bumped on password change to invalidate JWTs
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

@@ -130,6 +130,84 @@
                     </template>
                   </v-text-field>
                 </v-form>
+
+                <v-divider class="mb-6" />
+
+                <!-- Vacation Mode -->
+                <div class="text-subtitle-1 font-weight-bold mb-3">Vacation Mode</div>
+                <p class="text-body-2 text-medium-emphasis mb-3">
+                  Pause your market activity while you're away. Your orders will be hidden until
+                  your vacation ends or you clear it.
+                </p>
+
+                <v-alert
+                  v-if="isOnVacation"
+                  type="warning"
+                  variant="tonal"
+                  density="compact"
+                  class="mb-3"
+                >
+                  On vacation until {{ formatVacationDate(account.inactiveUntil) }}
+                </v-alert>
+
+                <div class="d-flex flex-wrap ga-2 mb-3">
+                  <v-btn
+                    size="small"
+                    variant="tonal"
+                    :color="isOnVacation ? 'default' : 'primary'"
+                    @click="setVacation(7)"
+                  >
+                    1 Week
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    variant="tonal"
+                    :color="isOnVacation ? 'default' : 'primary'"
+                    @click="setVacation(14)"
+                  >
+                    2 Weeks
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    variant="tonal"
+                    :color="isOnVacation ? 'default' : 'primary'"
+                    @click="setVacation(30)"
+                  >
+                    1 Month
+                  </v-btn>
+                  <v-btn
+                    v-if="isOnVacation"
+                    size="small"
+                    variant="tonal"
+                    color="success"
+                    @click="clearVacation"
+                  >
+                    Clear Vacation
+                  </v-btn>
+                </div>
+
+                <v-menu v-model="customDateMenu" :close-on-content-click="false">
+                  <template #activator="{ props }">
+                    <v-btn size="small" variant="outlined" v-bind="props"> Custom Date </v-btn>
+                  </template>
+                  <v-card width="300">
+                    <v-card-text>
+                      <v-date-picker v-model="customVacationDate" :min="tomorrow" hide-header />
+                    </v-card-text>
+                    <v-card-actions>
+                      <v-spacer />
+                      <v-btn size="small" @click="customDateMenu = false">Cancel</v-btn>
+                      <v-btn
+                        size="small"
+                        color="primary"
+                        :disabled="!customVacationDate"
+                        @click="setCustomVacation"
+                      >
+                        Set
+                      </v-btn>
+                    </v-card-actions>
+                  </v-card>
+                </v-menu>
               </v-card-text>
             </v-card>
           </v-tabs-window-item>
@@ -1227,12 +1305,69 @@ const account = ref<{
   displayName: string
   email: string | null
   roles: Role[]
+  inactiveUntil: string | null
 }>({
   username: '',
   displayName: '',
   email: null,
   roles: [],
+  inactiveUntil: null,
 })
+
+// Vacation mode
+const customDateMenu = ref(false)
+const customVacationDate = ref<string | null>(null)
+const tomorrow = new Date(Date.now() + 86400000).toISOString().substring(0, 10)
+
+const isOnVacation = computed(() => {
+  if (!account.value.inactiveUntil) return false
+  return new Date(account.value.inactiveUntil) > new Date()
+})
+
+function formatVacationDate(isoDate: string | null): string {
+  if (!isoDate) return ''
+  return new Date(isoDate).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+async function setVacation(days: number) {
+  const until = new Date()
+  until.setDate(until.getDate() + days)
+  try {
+    const result = await api.account.setInactiveUntil(until.toISOString())
+    account.value.inactiveUntil = result.inactiveUntil
+    showSnackbar(`Vacation mode set for ${days} days`)
+  } catch {
+    showSnackbar('Failed to set vacation mode', 'error')
+  }
+}
+
+async function setCustomVacation() {
+  if (!customVacationDate.value) return
+  const until = new Date(customVacationDate.value + 'T23:59:59')
+  try {
+    const result = await api.account.setInactiveUntil(until.toISOString())
+    account.value.inactiveUntil = result.inactiveUntil
+    customDateMenu.value = false
+    customVacationDate.value = null
+    showSnackbar('Vacation mode set')
+  } catch {
+    showSnackbar('Failed to set vacation mode', 'error')
+  }
+}
+
+async function clearVacation() {
+  try {
+    const result = await api.account.setInactiveUntil(null)
+    account.value.inactiveUntil = result.inactiveUntil
+    showSnackbar('Vacation mode cleared')
+  } catch {
+    showSnackbar('Failed to clear vacation mode', 'error')
+  }
+}
 
 // Timezone options
 const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -1568,6 +1703,7 @@ onMounted(async () => {
       displayName: profile.displayName,
       email: profile.email ?? null,
       roles: profile.roles,
+      inactiveUntil: profile.inactiveUntil ?? null,
     }
     userStore.setUser(profile)
 
@@ -1594,6 +1730,7 @@ onMounted(async () => {
         displayName: cachedUser.displayName,
         email: cachedUser.email ?? null,
         roles: cachedUser.roles,
+        inactiveUntil: cachedUser.inactiveUntil ?? null,
       }
       // Settings should be loaded from cache by settings store
       initDatetimeFormat(settingsStore.datetimeFormat.value)

@@ -97,6 +97,7 @@ export interface User {
   email: string | null
   roles: Role[] // One user to many roles
   permissions: string[] // Permission IDs granted to this user based on their roles
+  inactiveUntil: string | null // ISO timestamp if on vacation, null otherwise
 }
 
 // Known permission IDs (for type safety in frontend)

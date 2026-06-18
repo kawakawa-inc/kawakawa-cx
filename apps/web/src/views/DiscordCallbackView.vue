@@ -55,6 +55,7 @@ const discordAuthUserToUser = (authUser: DiscordAuthUser): User => ({
   email: null,
   roles: authUser.roles,
   permissions: authUser.permissions,
+  inactiveUntil: null,
 })
 
 const handleCallback = async () => {

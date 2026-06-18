@@ -15,6 +15,7 @@ interface UserProfile {
   email: string | null
   roles: Role[]
   permissions: string[] // Permission IDs granted to this user
+  inactiveUntil: string | null // ISO timestamp if on vacation, null otherwise
 }
 
 // Update profile request
@@ -27,6 +28,10 @@ interface UpdateProfileRequest {
 interface ChangePasswordRequest {
   currentPassword: string
   newPassword: string
+}
+
+interface SetInactiveUntilRequest {
+  inactiveUntil: string | null // ISO timestamp to set, null to clear
 }
 
 @Route('account')
@@ -43,6 +48,7 @@ export class AccountController extends Controller {
         username: users.username,
         displayName: users.displayName,
         email: users.email,
+        inactiveUntil: users.inactiveUntil,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -82,6 +88,7 @@ export class AccountController extends Controller {
       email: user.email,
       roles: rolesArray,
       permissions: permissionIds,
+      inactiveUntil: user.inactiveUntil ? user.inactiveUntil.toISOString() : null,
     }
   }
 
@@ -153,6 +160,31 @@ export class AccountController extends Controller {
       .where(eq(users.id, userId))
 
     return { success: true }
+  }
+
+  @Put('inactive-until')
+  public async setInactiveUntil(
+    @Body() body: SetInactiveUntilRequest,
+    @Request() request: { user: JwtPayload }
+  ): Promise<{ inactiveUntil: string | null }> {
+    const userId = request.user.userId
+
+    // Parse and validate the datetime if provided
+    let inactiveUntilDate: Date | null = null
+    if (body.inactiveUntil !== null) {
+      inactiveUntilDate = new Date(body.inactiveUntil)
+      if (isNaN(inactiveUntilDate.getTime())) {
+        this.setStatus(400)
+        throw BadRequest('Invalid date format')
+      }
+    }
+
+    await db
+      .update(users)
+      .set({ inactiveUntil: inactiveUntilDate, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+
+    return { inactiveUntil: inactiveUntilDate ? inactiveUntilDate.toISOString() : null }
   }
 
   /**

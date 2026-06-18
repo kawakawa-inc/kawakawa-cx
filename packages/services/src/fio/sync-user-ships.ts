@@ -31,6 +31,7 @@ const log = createLogger({ service: 'fio-sync', entity: 'user-ships' })
 export interface UserShipsSyncResult extends SyncResult {
   shipsSynced: number
   flightsSynced: number
+  fioLastSync: string | null // Most recent FIO data timestamp from ships
 }
 
 /**
@@ -141,6 +142,7 @@ export async function syncUserShips(
     errors: [],
     shipsSynced: 0,
     flightsSynced: 0,
+    fioLastSync: null,
   }
 
   try {
@@ -170,6 +172,14 @@ export async function syncUserShips(
 
     const now = new Date()
     const fioShipIds = ships.map(s => s.ShipId)
+    const timestamps: Date[] = []
+
+    // Collect FIO data timestamps from ships
+    for (const ship of ships) {
+      if (ship.Timestamp) {
+        timestamps.push(new Date(ship.Timestamp))
+      }
+    }
 
     // Upsert ships. We do a delete+insert pattern because the unique key is
     // (userId, fioShipId) and we want to handle removals (ship sold/scrapped).
@@ -380,6 +390,11 @@ export async function syncUserShips(
         else result.inserted++
         result.flightsSynced++
       }
+    }
+
+    if (timestamps.length > 0) {
+      const mostRecent = new Date(Math.max(...timestamps.map(t => t.getTime())))
+      result.fioLastSync = mostRecent.toISOString()
     }
 
     result.success = result.errors.length === 0

@@ -129,6 +129,7 @@ export const mockApi = {
             email: null,
             roles: user.roles,
             permissions: getPermissionsForRoles(user.roles),
+            inactiveUntil: null,
           },
         }
 

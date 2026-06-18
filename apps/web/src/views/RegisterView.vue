@@ -260,6 +260,7 @@ const discordAuthUserToUser = (authUser: DiscordAuthUser): User => ({
   email: null,
   roles: authUser.roles,
   permissions: authUser.permissions,
+  inactiveUntil: null,
 })
 
 // Computed Discord avatar URL

@@ -25,6 +25,7 @@ import { bulksell } from './inventory/bulksell.js'
 import { bulkbuy } from './inventory/bulkbuy.js'
 // Settings commands
 import { settings } from './settings/settings.js'
+import { vacation } from './settings/vacation.js'
 // Lists commands
 import { list } from './lists/list.js'
 import { lists } from './lists/lists.js'
@@ -59,6 +60,7 @@ export const commands: Command[] = [
   bulkbuy,
   // Settings
   settings,
+  vacation,
   // Lists
   list,
   lists,

@@ -79,6 +79,7 @@ describe('AccountController', () => {
         username: 'testuser',
         displayName: 'Test User',
         email: 'test@example.com',
+        inactiveUntil: null,
       }
       const mockRoles = [
         { roleId: 'member', roleName: 'Member', roleColor: 'blue' },
@@ -104,6 +105,7 @@ describe('AccountController', () => {
           { id: 'lead', name: 'Lead', color: 'green' },
         ],
         permissions: ['orders.view_internal', 'orders.post_internal'],
+        inactiveUntil: null,
       })
       expect(db.select).toHaveBeenCalledTimes(2)
       expect(permissionService.getPermissions).toHaveBeenCalledWith(['member', 'lead'])
@@ -114,6 +116,7 @@ describe('AccountController', () => {
         username: 'newuser',
         displayName: 'New User',
         email: null,
+        inactiveUntil: null,
       }
 
       mockSelect.where.mockResolvedValueOnce([mockUser]).mockResolvedValueOnce([])
@@ -129,6 +132,7 @@ describe('AccountController', () => {
         email: null,
         roles: [],
         permissions: [],
+        inactiveUntil: null,
       })
     })
 

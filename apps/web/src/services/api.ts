@@ -1029,6 +1029,20 @@ const realApi = {
     localStorage.removeItem('user')
   },
 
+  setInactiveUntil: async (inactiveUntil: string | null): Promise<{ inactiveUntil: string | null }> => {
+    const response = await authenticatedFetch('/api/account/inactive-until', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inactiveUntil }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to update vacation mode: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
   listUsers: async (
     page: number = 1,
     pageSize: number = 20,
@@ -3938,6 +3952,7 @@ export const api = {
     updateProfile: (updates: UpdateProfileRequest) => realApi.updateProfile(updates),
     changePassword: (request: ChangePasswordRequest) => realApi.changePassword(request),
     deleteAccount: () => realApi.deleteAccount(),
+    setInactiveUntil: (inactiveUntil: string | null) => realApi.setInactiveUntil(inactiveUntil),
   },
   admin: {
     listUsers: (page?: number, pageSize?: number, search?: string) =>

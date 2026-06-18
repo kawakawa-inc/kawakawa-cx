@@ -126,8 +126,15 @@ export class DiscordAuthController extends Controller {
 
         // Check if user is locked
         if (user.isLocked) {
-          return { type: 'error', message: 'Your account has been locked. Please contact support@kawakawa.cx for assistance.' }
+          return {
+            type: 'error',
+            message:
+              'Your account has been locked. Please contact support@kawakawa.cx for assistance.',
+          }
         }
+
+        // Track login activity
+        await db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, user.id))
 
         // Update stored tokens
         await db
@@ -265,6 +272,7 @@ export class DiscordAuthController extends Controller {
         displayName: displayName.trim(),
         passwordHash: '', // Empty password - can only auth via Discord until they set one
         isLocked: false,
+        lastActiveAt: new Date(),
       })
       .returning()
 

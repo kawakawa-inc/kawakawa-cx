@@ -180,6 +180,7 @@ export const register: Command = {
             displayName,
             passwordHash: placeholderPassword, // Cannot be used for login
             isLocked: false,
+            lastActiveAt: new Date(),
           })
           .returning()
 

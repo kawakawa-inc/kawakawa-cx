@@ -18,6 +18,7 @@ import { db, channelConfig } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
 import { MessageInteractionAdapter } from '../adapters/messageInteraction.js'
 import logger from '../utils/logger.js'
+import { touchActivity } from '../utils/auth.js'
 
 /** Default prefix for DMs when no prefixes are configured anywhere */
 const DM_DEFAULT_PREFIX = '!'
@@ -347,6 +348,7 @@ export async function handleMessageCommand(message: Message, client: BotClient):
   }
 
   logger.info(logContext, 'Prefix command invoked')
+  touchActivity(message.author.id)
 
   try {
     // Execute command with adapter

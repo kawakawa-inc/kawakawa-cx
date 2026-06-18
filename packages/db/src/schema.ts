@@ -247,6 +247,7 @@ export const users = pgTable('users', {
   displayName: varchar('display_name', { length: 100 }).notNull(), // Display name
   passwordHash: text('password_hash').notNull(), // Bcrypt hashed password with salt
   isLocked: boolean('is_locked').notNull().default(false), // Account locked status
+  lastActiveAt: timestamp('last_active_at'), // Last activity timestamp (login, bot use, FIO data age)
   tokenVersion: integer('token_version').notNull().default(0), // Bumped on password change to invalidate JWTs
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

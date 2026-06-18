@@ -4,7 +4,7 @@
 //
 // Keep these thin — delegate real work to the existing sync-* modules.
 
-import { db, syncJobs } from '@kawakawa/db'
+import { db, syncJobs, users } from '@kawakawa/db'
 import { eq, and, inArray, ne } from 'drizzle-orm'
 import { FioClient } from '../fio/client.js'
 import { syncUserInventory } from '../fio/sync-user-inventory.js'
@@ -101,6 +101,12 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
   if (result.errors.length > 0) {
     throw new Error(result.errors.join('; '))
   }
+  if (result.fioLastSync) {
+    await db
+      .update(users)
+      .set({ lastActiveAt: new Date(result.fioLastSync) })
+      .where(eq(users.id, job.userId))
+  }
 }
 
 async function handleUserPlanetsList(job: SyncJob): Promise<void> {
@@ -173,5 +179,11 @@ async function handleUserShips(job: SyncJob): Promise<void> {
   const result = await syncUserShips(job.userId, apiKey, username)
   if (result.errors.length > 0) {
     throw new Error(result.errors.join('; '))
+  }
+  if (result.fioLastSync) {
+    await db
+      .update(users)
+      .set({ lastActiveAt: new Date(result.fioLastSync) })
+      .where(eq(users.id, job.userId))
   }
 }

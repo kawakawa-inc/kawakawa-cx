@@ -108,8 +108,13 @@ export class AuthController extends Controller {
 
     // Check if account is locked
     if (user.isLocked) {
-      throw Forbidden('Your account has been locked. Please contact support@kawakawa.cx for assistance.')
+      throw Forbidden(
+        'Your account has been locked. Please contact support@kawakawa.cx for assistance.'
+      )
     }
+
+    // Track login activity
+    await db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, user.id))
 
     // Get user roles with names and colors
     const userRolesData = await db
@@ -188,6 +193,7 @@ export class AuthController extends Controller {
         displayName: body.displayName,
         passwordHash,
         isLocked: false,
+        lastActiveAt: new Date(),
       })
       .returning()
 

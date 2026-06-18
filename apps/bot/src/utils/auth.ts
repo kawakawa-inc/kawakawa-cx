@@ -3,8 +3,9 @@
  */
 import { MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
-import { db, userDiscordProfiles } from '@kawakawa/db'
+import { db, userDiscordProfiles, users } from '@kawakawa/db'
 import { eq } from 'drizzle-orm'
+import logger from './logger.js'
 
 /**
  * Message shown when user doesn't have a linked account
@@ -62,4 +63,25 @@ export async function requireLinkedUser(
   }
 
   return { userId: profile.user.id, profile }
+}
+
+/**
+ * Update last_active_at for the linked user.
+ * Fire-and-forget — logs errors but does not block the caller.
+ */
+export function touchActivity(discordId: string): void {
+  db.update(users)
+    .set({ lastActiveAt: new Date() })
+    .where(
+      eq(
+        users.id,
+        db
+          .select({ id: userDiscordProfiles.userId })
+          .from(userDiscordProfiles)
+          .where(eq(userDiscordProfiles.discordId, discordId))
+          .limit(1)
+      )
+    )
+    .then(() => {})
+    .catch(err => logger.warn({ err, discordId }, 'Failed to touch activity'))
 }

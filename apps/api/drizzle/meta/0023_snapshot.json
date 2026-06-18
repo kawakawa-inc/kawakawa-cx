@@ -1,6 +1,6 @@
 {
-  "id": "2e03a086-a8cb-40b0-9953-791b27432ae7",
-  "prevId": "df480393-0c40-4a88-abe4-bc8f195e356f",
+  "id": "b59aa9f6-04a7-4345-a74d-53ccba4f06fe",
+  "prevId": "2e03a086-a8cb-40b0-9953-791b27432ae7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5792,6 +5792,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "last_active_at": {
+          "name": "last_active_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},

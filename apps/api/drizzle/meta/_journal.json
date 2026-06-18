@@ -162,6 +162,13 @@
       "when": 1778500000000,
       "tag": "0022_rename_is_active_to_is_locked",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778600000000,
+      "tag": "0023_add_last_active_at",
+      "breakpoints": true
     }
   ]
 }

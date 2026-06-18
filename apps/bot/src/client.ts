@@ -12,6 +12,7 @@ import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'disco
 import { getConfig } from './config.js'
 import logger from './utils/logger.js'
 import { handleMessageCommand } from './services/messageCommands.js'
+import { touchActivity } from './utils/auth.js'
 
 export type HelpCategory =
   | 'getting_started'
@@ -113,6 +114,7 @@ export function setupEventHandlers(client: BotClient): void {
       }
 
       logger.info(logContext, 'Command invoked')
+      touchActivity(interaction.user.id)
 
       try {
         await command.execute(interaction)

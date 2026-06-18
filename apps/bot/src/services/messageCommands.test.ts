@@ -15,16 +15,28 @@ vi.mock('./channelConfig.js', () => ({
 vi.mock('@kawakawa/db', () => ({
   db: {
     select: mockDbSelect,
+    update: vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
+    }),
   },
   channelConfig: {
     key: 'key',
     value: 'value',
   },
+  users: { id: 'id', lastActiveAt: 'lastActiveAt' },
+  userDiscordProfiles: { userId: 'userId', discordId: 'discordId' },
 }))
 
 // Mock drizzle-orm eq function
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn(),
+}))
+
+// Mock auth utils (touchActivity is fire-and-forget, not under test here)
+vi.mock('../utils/auth.js', () => ({
+  touchActivity: vi.fn(),
 }))
 
 // Mock the MessageInteractionAdapter

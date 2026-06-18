@@ -188,17 +188,11 @@
 
                 <v-menu v-model="customDateMenu" :close-on-content-click="false">
                   <template #activator="{ props }">
-                    <v-btn size="small" variant="outlined" v-bind="props">
-                      Custom Date
-                    </v-btn>
+                    <v-btn size="small" variant="outlined" v-bind="props"> Custom Date </v-btn>
                   </template>
                   <v-card width="300">
                     <v-card-text>
-                      <v-date-picker
-                        v-model="customVacationDate"
-                        :min="tomorrow"
-                        hide-header
-                      />
+                      <v-date-picker v-model="customVacationDate" :min="tomorrow" hide-header />
                     </v-card-text>
                     <v-card-actions>
                       <v-spacer />

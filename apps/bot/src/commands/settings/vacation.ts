@@ -41,9 +41,7 @@ export const vacation: Command = {
         .setName('until')
         .setDescription('Duration (e.g. "1 week", "2 months") or date (YYYY-MM-DD)')
     )
-    .addBooleanOption(option =>
-      option.setName('clear').setDescription('End vacation mode early')
-    ),
+    .addBooleanOption(option => option.setName('clear').setDescription('End vacation mode early')),
 
   helpInfo: {
     category: 'settings',
@@ -71,7 +69,8 @@ export const vacation: Command = {
 
     const clear = interaction.options.getBoolean('clear')
     // Support both slash command (until:) and prefix command (input fallback)
-    const untilInput = interaction.options.getString('until') ?? interaction.options.getString('input')
+    const untilInput =
+      interaction.options.getString('until') ?? interaction.options.getString('input')
 
     if (clear || untilInput?.toLowerCase() === 'clear') {
       await db.update(users).set({ inactiveUntil: null }).where(eq(users.id, userId))
@@ -123,10 +122,7 @@ export const vacation: Command = {
       return
     }
 
-    await db
-      .update(users)
-      .set({ inactiveUntil: until })
-      .where(eq(users.id, userId))
+    await db.update(users).set({ inactiveUntil: until }).where(eq(users.id, userId))
 
     const formattedDate = until.toLocaleDateString(undefined, {
       year: 'numeric',

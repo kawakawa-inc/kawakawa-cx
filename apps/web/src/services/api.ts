@@ -1029,7 +1029,9 @@ const realApi = {
     localStorage.removeItem('user')
   },
 
-  setInactiveUntil: async (inactiveUntil: string | null): Promise<{ inactiveUntil: string | null }> => {
+  setInactiveUntil: async (
+    inactiveUntil: string | null
+  ): Promise<{ inactiveUntil: string | null }> => {
     const response = await authenticatedFetch('/api/account/inactive-until', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

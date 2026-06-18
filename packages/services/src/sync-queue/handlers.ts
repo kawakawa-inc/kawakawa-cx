@@ -102,7 +102,10 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
     throw new Error(result.errors.join('; '))
   }
   if (result.fioLastSync) {
-    await db.update(users).set({ lastActiveAt: new Date(result.fioLastSync) }).where(eq(users.id, job.userId))
+    await db
+      .update(users)
+      .set({ lastActiveAt: new Date(result.fioLastSync) })
+      .where(eq(users.id, job.userId))
   }
 }
 
@@ -178,6 +181,9 @@ async function handleUserShips(job: SyncJob): Promise<void> {
     throw new Error(result.errors.join('; '))
   }
   if (result.fioLastSync) {
-    await db.update(users).set({ lastActiveAt: new Date(result.fioLastSync) }).where(eq(users.id, job.userId))
+    await db
+      .update(users)
+      .set({ lastActiveAt: new Date(result.fioLastSync) })
+      .where(eq(users.id, job.userId))
   }
 }

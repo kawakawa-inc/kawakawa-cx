@@ -108,7 +108,9 @@ export class AuthController extends Controller {
 
     // Check if account is locked
     if (user.isLocked) {
-      throw Forbidden('Your account has been locked. Please contact support@kawakawa.cx for assistance.')
+      throw Forbidden(
+        'Your account has been locked. Please contact support@kawakawa.cx for assistance.'
+      )
     }
 
     // Track login activity

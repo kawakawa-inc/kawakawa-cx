@@ -126,7 +126,11 @@ export class DiscordAuthController extends Controller {
 
         // Check if user is locked
         if (user.isLocked) {
-          return { type: 'error', message: 'Your account has been locked. Please contact support@kawakawa.cx for assistance.' }
+          return {
+            type: 'error',
+            message:
+              'Your account has been locked. Please contact support@kawakawa.cx for assistance.',
+          }
         }
 
         // Track login activity

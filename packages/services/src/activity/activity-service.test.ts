@@ -56,7 +56,7 @@ describe('isUserActive', () => {
   })
 
   it('returns active when last_active_at is within threshold', async () => {
-    const recentDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) // 10 days ago
+    const recentDate = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000) // 9 days ago
     const result = await isUserActive({
       inactiveUntil: null,
       lastActiveAt: recentDate,

@@ -151,6 +151,7 @@ vi.mock('@kawakawa/db', () => ({
 vi.mock('drizzle-orm', () => ({
   eq: vi.fn().mockImplementation((a, b) => ({ field: a, value: b })),
   and: vi.fn().mockImplementation((...args) => ({ and: args })),
+  isNull: vi.fn().mockImplementation(field => ({ isNull: field })),
 }))
 
 // Import after mocks

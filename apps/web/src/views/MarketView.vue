@@ -183,6 +183,7 @@
           :get-commodity-display="getCommodityDisplay"
           :get-location-display="getLocationDisplay"
           :get-commodity-name="getCommodityName"
+          :available-user-names="userFilterOptions"
           :help-tokens="marketHelpTokens"
           history-key="market"
           placeholder="Search: COF, BEN, Buy, Sell..."

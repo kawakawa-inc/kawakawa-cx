@@ -256,6 +256,7 @@ export const orders: Command = {
         ? []
         : await db.query.sellOrders.findMany({
             where: and(
+              isNull(sellOrders.deletedAt),
               eq(sellOrders.userId, currentUserId), // Always filter by current user
               resolvedCommodity
                 ? eq(sellOrders.commodityTicker, resolvedCommodity.ticker)
@@ -285,6 +286,7 @@ export const orders: Command = {
         ? []
         : await db.query.buyOrders.findMany({
             where: and(
+              isNull(buyOrders.deletedAt),
               eq(buyOrders.userId, currentUserId), // Always filter by current user
               resolvedCommodity
                 ? eq(buyOrders.commodityTicker, resolvedCommodity.ticker)
@@ -499,12 +501,12 @@ async function sendOrdersWithManage(
 
             // Fetch user's own orders
             const userSellOrders = await db.query.sellOrders.findMany({
-              where: eq(sellOrders.userId, currentUserId),
+              where: and(isNull(sellOrders.deletedAt), eq(sellOrders.userId, currentUserId)),
               with: { commodity: true, location: true },
               orderBy: [desc(sellOrders.updatedAt)],
             })
             const userBuyOrders = await db.query.buyOrders.findMany({
-              where: eq(buyOrders.userId, currentUserId),
+              where: and(isNull(buyOrders.deletedAt), eq(buyOrders.userId, currentUserId)),
               with: { commodity: true, location: true },
               orderBy: [desc(buyOrders.updatedAt)],
             })

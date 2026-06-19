@@ -68,6 +68,7 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'sync_queued',
   'sync_completed',
   'sync_failed',
+  'fio_data_stale',
 ])
 export const reservationStatusEnum = pgEnum('reservation_status', [
   'pending',

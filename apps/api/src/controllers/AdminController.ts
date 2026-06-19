@@ -35,6 +35,7 @@ import crypto from 'crypto'
 import { enqueueUserFullSync } from '@kawakawa/services/sync-queue'
 import { notificationService } from '@kawakawa/services/notifications'
 import * as userSettingsService from '@kawakawa/services/user-settings'
+import { isUserActive } from '@kawakawa/services/activity'
 
 interface FioSyncInfo {
   fioUsername: string | null
@@ -58,6 +59,9 @@ interface AdminUser {
   fioSync: FioSyncInfo
   discord: DiscordInfo
   createdAt: Date
+  lastActiveAt: Date | null
+  inactiveUntil: Date | null
+  activity: { active: boolean; reason?: string }
 }
 
 interface AdminUserListResponse {
@@ -70,6 +74,7 @@ interface AdminUserListResponse {
 interface UpdateUserRequest {
   isLocked?: boolean
   roles?: string[] // Array of role IDs to assign
+  inactiveUntil?: string | null // ISO timestamp to set, null to clear
 }
 
 interface PasswordResetLinkResponse {
@@ -192,6 +197,8 @@ export class AdminController extends Controller {
         email: users.email,
         displayName: users.displayName,
         isLocked: users.isLocked,
+        lastActiveAt: users.lastActiveAt,
+        inactiveUntil: users.inactiveUntil,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -211,47 +218,57 @@ export class AdminController extends Controller {
       .offset(offset)
 
     // Transform results to AdminUser format
-    const usersWithDetails: AdminUser[] = userList.map(user => {
-      // Parse roles from JSON aggregation (may already be parsed by Drizzle)
-      const rolesData: Role[] = user.rolesJson
-        ? typeof user.rolesJson === 'string'
-          ? JSON.parse(user.rolesJson)
-          : user.rolesJson
-        : []
+    const usersWithDetails: AdminUser[] = await Promise.all(
+      userList.map(async user => {
+        // Parse roles from JSON aggregation (may already be parsed by Drizzle)
+        const rolesData: Role[] = user.rolesJson
+          ? typeof user.rolesJson === 'string'
+            ? JSON.parse(user.rolesJson)
+            : user.rolesJson
+          : []
 
-      // Parse FIO username from JSON string (stored as JSON in userSettings)
-      let fioUsername: string | null = null
-      if (user.fioUsernameRaw) {
-        try {
-          fioUsername =
-            typeof user.fioUsernameRaw === 'string'
-              ? JSON.parse(user.fioUsernameRaw)
-              : user.fioUsernameRaw
-        } catch {
-          fioUsername = null
+        // Parse FIO username from JSON string (stored as JSON in userSettings)
+        let fioUsername: string | null = null
+        if (user.fioUsernameRaw) {
+          try {
+            fioUsername =
+              typeof user.fioUsernameRaw === 'string'
+                ? JSON.parse(user.fioUsernameRaw)
+                : user.fioUsernameRaw
+          } catch {
+            fioUsername = null
+          }
         }
-      }
 
-      return {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        isLocked: user.isLocked,
-        createdAt: user.createdAt,
-        roles: rolesData,
-        fioSync: {
-          fioUsername,
-          lastSyncedAt: user.lastSyncedAt || null,
-        },
-        discord: {
-          connected: !!user.discordId,
-          discordUsername: user.discordUsername || null,
-          discordId: user.discordId || null,
-          connectedAt: user.discordConnectedAt || null,
-        },
-      }
-    })
+        const activity = await isUserActive({
+          inactiveUntil: user.inactiveUntil,
+          lastActiveAt: user.lastActiveAt,
+        })
+
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          displayName: user.displayName,
+          isLocked: user.isLocked,
+          createdAt: user.createdAt,
+          roles: rolesData,
+          fioSync: {
+            fioUsername,
+            lastSyncedAt: user.lastSyncedAt || null,
+          },
+          discord: {
+            connected: !!user.discordId,
+            discordUsername: user.discordUsername || null,
+            discordId: user.discordId || null,
+            connectedAt: user.discordConnectedAt || null,
+          },
+          lastActiveAt: user.lastActiveAt || null,
+          inactiveUntil: user.inactiveUntil || null,
+          activity,
+        }
+      })
+    )
 
     return {
       users: usersWithDetails,
@@ -323,6 +340,8 @@ export class AdminController extends Controller {
         email: users.email,
         displayName: users.displayName,
         isLocked: users.isLocked,
+        lastActiveAt: users.lastActiveAt,
+        inactiveUntil: users.inactiveUntil,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -341,47 +360,57 @@ export class AdminController extends Controller {
       .orderBy(desc(users.createdAt))
 
     // Transform results to AdminUser format
-    return userList.map(user => {
-      // Parse roles from JSON aggregation (may already be parsed by Drizzle)
-      const rolesData: Role[] = user.rolesJson
-        ? typeof user.rolesJson === 'string'
-          ? JSON.parse(user.rolesJson)
-          : user.rolesJson
-        : []
+    return Promise.all(
+      userList.map(async user => {
+        // Parse roles from JSON aggregation (may already be parsed by Drizzle)
+        const rolesData: Role[] = user.rolesJson
+          ? typeof user.rolesJson === 'string'
+            ? JSON.parse(user.rolesJson)
+            : user.rolesJson
+          : []
 
-      // Parse FIO username from JSON string (stored as JSON in userSettings)
-      let fioUsername: string | null = null
-      if (user.fioUsernameRaw) {
-        try {
-          fioUsername =
-            typeof user.fioUsernameRaw === 'string'
-              ? JSON.parse(user.fioUsernameRaw)
-              : user.fioUsernameRaw
-        } catch {
-          fioUsername = null
+        // Parse FIO username from JSON string (stored as JSON in userSettings)
+        let fioUsername: string | null = null
+        if (user.fioUsernameRaw) {
+          try {
+            fioUsername =
+              typeof user.fioUsernameRaw === 'string'
+                ? JSON.parse(user.fioUsernameRaw)
+                : user.fioUsernameRaw
+          } catch {
+            fioUsername = null
+          }
         }
-      }
 
-      return {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        isLocked: user.isLocked,
-        createdAt: user.createdAt,
-        roles: rolesData,
-        fioSync: {
-          fioUsername,
-          lastSyncedAt: user.lastSyncedAt || null,
-        },
-        discord: {
-          connected: !!user.discordId,
-          discordUsername: user.discordUsername || null,
-          discordId: user.discordId || null,
-          connectedAt: user.discordConnectedAt || null,
-        },
-      }
-    })
+        const activity = await isUserActive({
+          inactiveUntil: user.inactiveUntil,
+          lastActiveAt: user.lastActiveAt,
+        })
+
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          displayName: user.displayName,
+          isLocked: user.isLocked,
+          createdAt: user.createdAt,
+          roles: rolesData,
+          fioSync: {
+            fioUsername,
+            lastSyncedAt: user.lastSyncedAt || null,
+          },
+          discord: {
+            connected: !!user.discordId,
+            discordUsername: user.discordUsername || null,
+            discordId: user.discordId || null,
+            connectedAt: user.discordConnectedAt || null,
+          },
+          lastActiveAt: user.lastActiveAt || null,
+          inactiveUntil: user.inactiveUntil || null,
+          activity,
+        }
+      })
+    )
   }
 
   /**
@@ -502,6 +531,8 @@ export class AdminController extends Controller {
         email: users.email,
         displayName: users.displayName,
         isLocked: users.isLocked,
+        lastActiveAt: users.lastActiveAt,
+        inactiveUntil: users.inactiveUntil,
         createdAt: users.createdAt,
         rolesJson: userRolesSubquery.rolesJson,
         lastSyncedAt: fioSyncSubquery.lastSyncedAt,
@@ -542,6 +573,11 @@ export class AdminController extends Controller {
       }
     }
 
+    const activity = await isUserActive({
+      inactiveUntil: user.inactiveUntil,
+      lastActiveAt: user.lastActiveAt,
+    })
+
     return {
       id: user.id,
       username: user.username,
@@ -560,6 +596,9 @@ export class AdminController extends Controller {
         discordId: user.discordId || null,
         connectedAt: user.discordConnectedAt || null,
       },
+      lastActiveAt: user.lastActiveAt || null,
+      inactiveUntil: user.inactiveUntil || null,
+      activity,
     }
   }
 
@@ -592,6 +631,25 @@ export class AdminController extends Controller {
         .update(users)
         .set({
           isLocked: body.isLocked,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId))
+    }
+
+    // Update inactiveUntil if provided
+    if (body.inactiveUntil !== undefined) {
+      let inactiveUntilDate: Date | null = null
+      if (body.inactiveUntil !== null) {
+        inactiveUntilDate = new Date(body.inactiveUntil)
+        if (isNaN(inactiveUntilDate.getTime())) {
+          this.setStatus(400)
+          throw BadRequest('Invalid date format for inactiveUntil')
+        }
+      }
+      await db
+        .update(users)
+        .set({
+          inactiveUntil: inactiveUntilDate,
           updatedAt: new Date(),
         })
         .where(eq(users.id, userId))

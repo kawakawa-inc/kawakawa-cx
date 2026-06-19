@@ -128,6 +128,9 @@ interface AdminUser {
   fioSync: FioSyncInfo
   discord: DiscordInfo
   createdAt: string
+  lastActiveAt: string | null
+  inactiveUntil: string | null
+  activity: { active: boolean; reason?: string }
 }
 
 interface Permission {
@@ -175,6 +178,7 @@ interface AdminUserListResponse {
 interface UpdateUserRequest {
   isLocked?: boolean
   roles?: string[]
+  inactiveUntil?: string | null
 }
 
 interface PasswordResetLinkResponse {

@@ -403,10 +403,20 @@ export const SETTING_DEFINITIONS = {
   'activity.inactiveDays': {
     key: 'activity.inactiveDays',
     type: 'number',
-    defaultValue: 30,
+    defaultValue: 10,
     category: SETTING_CATEGORIES.ACTIVITY,
     label: 'Inactive Days',
-    description: 'Number of days of inactivity before a user is considered inactive',
+    description:
+      'Number of days since last FIO inventory sync before a user is considered inactive',
+  } satisfies SettingDef<number, 'number'>,
+  'activity.staleNotificationDays': {
+    key: 'activity.staleNotificationDays',
+    type: 'number',
+    defaultValue: 7,
+    category: SETTING_CATEGORIES.ACTIVITY,
+    label: 'Stale Data Notification Days',
+    description:
+      'Number of days since last FIO inventory sync before sending a stale data notification',
   } satisfies SettingDef<number, 'number'>,
 } as const
 

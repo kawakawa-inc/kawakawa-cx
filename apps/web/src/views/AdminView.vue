@@ -150,6 +150,19 @@
               </v-chip>
             </template>
 
+            <template #item.activity="{ item }">
+              <v-chip
+                :color="item.activity.active ? 'success' : 'warning'"
+                size="small"
+                variant="tonal"
+              >
+                <template v-if="item.activity.active">Active</template>
+                <template v-else-if="item.activity.reason === 'vacation'">Vacation</template>
+                <template v-else-if="item.activity.reason === 'stale'">Inactive</template>
+                <template v-else>No Activity</template>
+              </v-chip>
+            </template>
+
             <template #item.roles="{ item }">
               <div class="d-flex flex-wrap ga-1">
                 <v-chip v-for="role in item.roles" :key="role.id" size="small" :color="role.color">
@@ -1934,6 +1947,31 @@
                               )
                             "
                           />
+                          <!-- Number type -->
+                          <v-text-field
+                            v-else-if="setting.definition.type === 'number'"
+                            type="number"
+                            :model-value="
+                              (globalDefaultsForm[setting.key] ??
+                                setting.effectiveDefault) as number
+                            "
+                            density="compact"
+                            hide-details
+                            variant="outlined"
+                            :loading="savingGlobalDefault === setting.key"
+                            @blur="
+                              saveGlobalDefault(
+                                setting.key,
+                                Number(($event.target as HTMLInputElement).value)
+                              )
+                            "
+                            @keyup.enter="
+                              saveGlobalDefault(
+                                setting.key,
+                                Number(($event.target as HTMLInputElement).value)
+                              )
+                            "
+                          />
                         </v-col>
                         <v-col cols="12" md="3" class="text-md-right">
                           <div
@@ -1997,6 +2035,60 @@
               hint="Locked accounts cannot log in"
               persistent-hint
             />
+            <div class="text-subtitle-2 mt-3 mb-1">Vacation Override</div>
+            <p class="text-body-2 text-medium-emphasis mb-2">
+              Set a vacation period on behalf of this user. Their orders will be hidden until the
+              date expires.
+            </p>
+            <v-alert
+              v-if="editForm.inactiveUntil && new Date(editForm.inactiveUntil) > new Date()"
+              type="warning"
+              variant="tonal"
+              density="compact"
+              class="mb-2"
+            >
+              On vacation until {{ new Date(editForm.inactiveUntil).toLocaleDateString() }}
+            </v-alert>
+            <div class="d-flex flex-wrap ga-2 mb-2">
+              <v-btn size="small" variant="tonal" @click="setAdminVacation(7)">1 Week</v-btn>
+              <v-btn size="small" variant="tonal" @click="setAdminVacation(14)">2 Weeks</v-btn>
+              <v-btn size="small" variant="tonal" @click="setAdminVacation(30)">1 Month</v-btn>
+              <v-btn
+                v-if="editForm.inactiveUntil"
+                size="small"
+                variant="tonal"
+                color="success"
+                @click="editForm.inactiveUntil = null"
+              >
+                Clear
+              </v-btn>
+            </div>
+            <v-menu v-model="adminCustomDateMenu" :close-on-content-click="false">
+              <template #activator="{ props }">
+                <v-btn size="small" variant="outlined" v-bind="props">Custom Date</v-btn>
+              </template>
+              <v-card width="300">
+                <v-card-text>
+                  <v-date-picker
+                    v-model="adminCustomVacationDate"
+                    :min="new Date(Date.now() + 86400000).toISOString().substring(0, 10)"
+                    hide-header
+                  />
+                </v-card-text>
+                <v-card-actions>
+                  <v-spacer />
+                  <v-btn size="small" @click="adminCustomDateMenu = false">Cancel</v-btn>
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    :disabled="!adminCustomVacationDate"
+                    @click="setAdminCustomVacation"
+                  >
+                    Set
+                  </v-btn>
+                </v-card-actions>
+              </v-card>
+            </v-menu>
             <v-select
               v-model="editForm.roles"
               :items="availableRoles"
@@ -2524,6 +2616,9 @@ interface AdminUser {
   fioSync: FioSyncInfo
   discord: DiscordInfo
   createdAt: string
+  lastActiveAt: string | null
+  inactiveUntil: string | null
+  activity: { active: boolean; reason?: string }
 }
 
 interface PasswordResetLinkData {
@@ -2566,6 +2661,7 @@ const userHeaders = [
   { title: 'Username', key: 'username', sortable: false },
   { title: 'Display Name', key: 'displayName', sortable: false },
   { title: 'Status', key: 'isLocked', sortable: false },
+  { title: 'Activity', key: 'activity', sortable: false },
   { title: 'Roles', key: 'roles', sortable: false },
   { title: 'Discord', key: 'discord', sortable: false, width: 120 },
   { title: 'FIO Sync', key: 'fioSync', sortable: false },
@@ -2588,8 +2684,11 @@ const editingUser = ref<AdminUser | null>(null)
 const editForm = ref({
   isLocked: false,
   roles: [] as string[],
+  inactiveUntil: null as string | null,
 })
 const saving = ref(false)
+const adminCustomDateMenu = ref(false)
+const adminCustomVacationDate = ref<string | null>(null)
 
 const snackbar = ref({
   show: false,
@@ -2834,6 +2933,15 @@ function getCategoryInfo(category: string): { id: string; label: string; descrip
     market: { label: 'Market', description: 'Trading preferences' },
     notifications: { label: 'Notifications', description: 'Notification preferences' },
     fio: { label: 'FIO Integration', description: 'FIO data synchronization settings' },
+    discord: { label: 'Discord', description: 'Discord bot preferences' },
+    burnRepair: {
+      label: 'Burn & Repair',
+      description: 'Workforce burn, production inputs, and building repair settings',
+    },
+    activity: {
+      label: 'Activity',
+      description: 'User activity tracking and inactivity thresholds',
+    },
   }
   return { id: category, ...(categoryMap[category] || { label: category, description: '' }) }
 }
@@ -3046,8 +3154,23 @@ const openEditDialog = (user: AdminUser) => {
   editForm.value = {
     isLocked: user.isLocked,
     roles: user.roles.map(r => r.id),
+    inactiveUntil: user.inactiveUntil,
   }
   editDialog.value = true
+}
+
+function setAdminVacation(days: number) {
+  const until = new Date()
+  until.setDate(until.getDate() + days)
+  editForm.value.inactiveUntil = until.toISOString()
+}
+
+function setAdminCustomVacation() {
+  if (!adminCustomVacationDate.value) return
+  const until = new Date(adminCustomVacationDate.value + 'T23:59:59')
+  editForm.value.inactiveUntil = until.toISOString()
+  adminCustomDateMenu.value = false
+  adminCustomVacationDate.value = null
 }
 
 const saveUser = async () => {
@@ -3058,6 +3181,7 @@ const saveUser = async () => {
     await api.admin.updateUser(editingUser.value.id, {
       isLocked: editForm.value.isLocked,
       roles: editForm.value.roles,
+      inactiveUntil: editForm.value.inactiveUntil,
     })
     showSnackbar('User updated successfully')
     editDialog.value = false

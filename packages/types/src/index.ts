@@ -443,6 +443,7 @@ export type NotificationType =
   | 'sync_queued'
   | 'sync_completed'
   | 'sync_failed'
+  | 'fio_data_stale'
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'reservation_placed',
@@ -461,6 +462,7 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'sync_queued',
   'sync_completed',
   'sync_failed',
+  'fio_data_stale',
 ]
 
 export interface Notification {

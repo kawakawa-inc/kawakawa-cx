@@ -12,7 +12,7 @@ import { SlashCommandBuilder, MessageFlags, ComponentType } from 'discord.js'
 import type { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js'
 import type { Command } from '../../client.js'
 import { db, buyOrders, sellOrders, priceLists } from '@kawakawa/db'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import { searchLocations } from '../../autocomplete/index.js'
 import { resolveLocation } from '../../services/display.js'
 import { getMarketSettings, getDisplaySettings } from '../../services/userSettings.js'
@@ -794,6 +794,7 @@ async function createOrder(
     direction === 'buy'
       ? await db.query.buyOrders.findMany({
           where: and(
+            isNull(buyOrders.deletedAt),
             eq(buyOrders.userId, userId),
             eq(buyOrders.locationId, locationId),
             eq(buyOrders.orderType, orderType),
@@ -802,6 +803,7 @@ async function createOrder(
         })
       : await db.query.sellOrders.findMany({
           where: and(
+            isNull(sellOrders.deletedAt),
             eq(sellOrders.userId, userId),
             eq(sellOrders.locationId, locationId),
             eq(sellOrders.orderType, orderType),
@@ -1219,6 +1221,7 @@ async function createOrderFromModal(
     direction === 'buy'
       ? await db.query.buyOrders.findMany({
           where: and(
+            isNull(buyOrders.deletedAt),
             eq(buyOrders.userId, userId),
             eq(buyOrders.locationId, locationId),
             eq(buyOrders.orderType, orderType),
@@ -1227,6 +1230,7 @@ async function createOrderFromModal(
         })
       : await db.query.sellOrders.findMany({
           where: and(
+            isNull(sellOrders.deletedAt),
             eq(sellOrders.userId, userId),
             eq(sellOrders.locationId, locationId),
             eq(sellOrders.orderType, orderType),

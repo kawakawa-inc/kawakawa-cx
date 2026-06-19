@@ -125,6 +125,8 @@ vi.mock('drizzle-orm', () => ({
   and: vi.fn().mockImplementation((...args) => ({ and: args })),
   desc: vi.fn().mockImplementation(field => ({ desc: field })),
   inArray: vi.fn().mockImplementation((field, values) => ({ inArray: { field, values } })),
+  isNull: vi.fn().mockImplementation(field => ({ isNull: field })),
+  or: vi.fn().mockImplementation((...args) => ({ or: args })),
 }))
 
 // Import after mocks

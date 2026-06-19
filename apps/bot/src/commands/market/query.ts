@@ -359,6 +359,7 @@ export const query: Command = {
         ? []
         : await db.query.sellOrders.findMany({
             where: and(
+              isNull(sellOrders.deletedAt),
               resolvedCommodities.length > 0
                 ? inArray(
                     sellOrders.commodityTicker,
@@ -411,6 +412,7 @@ export const query: Command = {
         ? []
         : await db.query.buyOrders.findMany({
             where: and(
+              isNull(buyOrders.deletedAt),
               resolvedCommodities.length > 0
                 ? inArray(
                     buyOrders.commodityTicker,

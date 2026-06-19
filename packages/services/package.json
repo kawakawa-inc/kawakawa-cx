@@ -50,6 +50,10 @@
       "types": "./dist/sync-state/index.d.ts",
       "import": "./dist/sync-state/index.js"
     },
+    "./activity": {
+      "types": "./dist/activity/index.d.ts",
+      "import": "./dist/activity/index.js"
+    },
     "./utils": {
       "types": "./dist/utils/index.d.ts",
       "import": "./dist/utils/index.js"

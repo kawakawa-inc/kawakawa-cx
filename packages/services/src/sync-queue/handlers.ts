@@ -4,7 +4,7 @@
 //
 // Keep these thin — delegate real work to the existing sync-* modules.
 
-import { db, syncJobs, users } from '@kawakawa/db'
+import { db, syncJobs, users, notifications } from '@kawakawa/db'
 import { eq, and, inArray, ne } from 'drizzle-orm'
 import { FioClient } from '../fio/client.js'
 import { syncUserInventory } from '../fio/sync-user-inventory.js'
@@ -15,6 +15,7 @@ import { syncLocations } from '../fio/sync-locations.js'
 import { syncStations } from '../fio/sync-stations.js'
 import { computeBurnRepairCache } from '../burn-repair/burn-repair-cache.js'
 import * as userSettingsService from '../user-settings/user-settings-service.js'
+import { notificationService } from '../notifications/notification-service.js'
 import { enqueue } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
 
@@ -98,14 +99,47 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
   const excludedLocations =
     ((await userSettingsService.getSetting(job.userId, 'fio.excludedLocations')) as string[]) ?? []
   const result = await syncUserInventory(job.userId, apiKey, username, { excludedLocations })
-  if (result.errors.length > 0) {
-    throw new Error(result.errors.join('; '))
-  }
+  // Update activity timestamp before checking errors — partial syncs still have valid FIO data
   if (result.fioLastSync) {
     await db
       .update(users)
       .set({ lastActiveAt: new Date(result.fioLastSync) })
       .where(eq(users.id, job.userId))
+
+    // Check if FIO data is stale and send notification (no re-fire if unread)
+    const staleDays =
+      ((await userSettingsService.getAdminDefaults())[
+        'activity.staleNotificationDays'
+      ] as number) ?? 7
+    const dataAgeMs = Date.now() - new Date(result.fioLastSync).getTime()
+    const staleThresholdMs = staleDays * 24 * 60 * 60 * 1000
+    if (dataAgeMs > staleThresholdMs) {
+      // Only notify if no unread fio_data_stale notification exists
+      const [existing] = await db
+        .select({ id: notifications.id })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.userId, job.userId),
+            eq(notifications.type, 'fio_data_stale'),
+            eq(notifications.isRead, false)
+          )
+        )
+        .limit(1)
+      if (!existing) {
+        const dataAgeDays = Math.floor(dataAgeMs / 86400000)
+        await notificationService.create(
+          job.userId,
+          'fio_data_stale',
+          'FIO data is stale',
+          `Your inventory data is ${dataAgeDays} days old. Sync your FIO data to keep your market orders visible.`,
+          { dataAgeDays, fioLastSync: result.fioLastSync }
+        )
+      }
+    }
+  }
+  if (result.errors.length > 0) {
+    throw new Error(result.errors.join('; '))
   }
 }
 
@@ -179,11 +213,5 @@ async function handleUserShips(job: SyncJob): Promise<void> {
   const result = await syncUserShips(job.userId, apiKey, username)
   if (result.errors.length > 0) {
     throw new Error(result.errors.join('; '))
-  }
-  if (result.fioLastSync) {
-    await db
-      .update(users)
-      .set({ lastActiveAt: new Date(result.fioLastSync) })
-      .where(eq(users.id, job.userId))
   }
 }

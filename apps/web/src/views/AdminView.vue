@@ -1947,6 +1947,31 @@
                               )
                             "
                           />
+                          <!-- Number type -->
+                          <v-text-field
+                            v-else-if="setting.definition.type === 'number'"
+                            type="number"
+                            :model-value="
+                              (globalDefaultsForm[setting.key] ??
+                                setting.effectiveDefault) as number
+                            "
+                            density="compact"
+                            hide-details
+                            variant="outlined"
+                            :loading="savingGlobalDefault === setting.key"
+                            @blur="
+                              saveGlobalDefault(
+                                setting.key,
+                                Number(($event.target as HTMLInputElement).value)
+                              )
+                            "
+                            @keyup.enter="
+                              saveGlobalDefault(
+                                setting.key,
+                                Number(($event.target as HTMLInputElement).value)
+                              )
+                            "
+                          />
                         </v-col>
                         <v-col cols="12" md="3" class="text-md-right">
                           <div
@@ -2908,6 +2933,15 @@ function getCategoryInfo(category: string): { id: string; label: string; descrip
     market: { label: 'Market', description: 'Trading preferences' },
     notifications: { label: 'Notifications', description: 'Notification preferences' },
     fio: { label: 'FIO Integration', description: 'FIO data synchronization settings' },
+    discord: { label: 'Discord', description: 'Discord bot preferences' },
+    burnRepair: {
+      label: 'Burn & Repair',
+      description: 'Workforce burn, production inputs, and building repair settings',
+    },
+    activity: {
+      label: 'Activity',
+      description: 'User activity tracking and inactivity thresholds',
+    },
   }
   return { id: category, ...(categoryMap[category] || { label: category, description: '' }) }
 }

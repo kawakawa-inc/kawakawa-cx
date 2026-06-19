@@ -1,5 +1,7 @@
 import { getAdminDefaults } from '../user-settings/user-settings-service.js'
 import { getSettingDefault } from '@kawakawa/types/settings'
+import { users } from '@kawakawa/db'
+import { and, or, isNull, gt, sql } from 'drizzle-orm'
 
 export interface ActivityStatus {
   active: boolean
@@ -43,4 +45,32 @@ export async function isUserActive(user: {
   }
 
   return { active: true }
+}
+
+/**
+ * Returns a Drizzle SQL condition that filters out inactive users.
+ * Can be used directly in `.where()` clauses on queries that JOIN users.
+ *
+ * Filters out:
+ * - Users in vacation mode (inactive_until is set and in the future)
+ * - Users whose last_active_at exceeds the configured threshold
+ */
+export async function activeUserCondition(): Promise<ReturnType<typeof and>> {
+  const adminDefaults = await getAdminDefaults()
+  const inactiveDays =
+    (typeof adminDefaults['activity.inactiveDays'] === 'number'
+      ? adminDefaults['activity.inactiveDays']
+      : null) ?? (getSettingDefault('activity.inactiveDays') as number)
+
+  const cutoffDate = new Date(Date.now() - inactiveDays * 24 * 60 * 60 * 1000)
+
+  return and(
+    // Not in active vacation
+    or(isNull(users.inactiveUntil), sql`${users.inactiveUntil} < now()`),
+    // Has activity within threshold (or threshold is 0 = disabled)
+    // NULL lastActiveAt means no activity recorded — treat as inactive
+    inactiveDays > 0
+      ? and(sql`${users.lastActiveAt} IS NOT NULL`, gt(users.lastActiveAt, cutoffDate))
+      : undefined
+  )
 }

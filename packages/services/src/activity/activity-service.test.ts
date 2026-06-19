@@ -101,8 +101,8 @@ describe('isUserActive', () => {
   })
 
   it('handles exactly at threshold boundary as active', async () => {
-    // Exactly 30 days ago (code default)
-    const boundaryDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    // Exactly 10 days ago (code default)
+    const boundaryDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
     const result = await isUserActive({
       inactiveUntil: null,
       lastActiveAt: boundaryDate,

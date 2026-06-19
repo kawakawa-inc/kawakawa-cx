@@ -1,1 +1,1 @@
-export { isUserActive, type ActivityStatus } from './activity-service.js'
+export { isUserActive, activeUserCondition, type ActivityStatus } from './activity-service.js'

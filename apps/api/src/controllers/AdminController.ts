@@ -220,54 +220,54 @@ export class AdminController extends Controller {
     // Transform results to AdminUser format
     const usersWithDetails: AdminUser[] = await Promise.all(
       userList.map(async user => {
-      // Parse roles from JSON aggregation (may already be parsed by Drizzle)
-      const rolesData: Role[] = user.rolesJson
-        ? typeof user.rolesJson === 'string'
-          ? JSON.parse(user.rolesJson)
-          : user.rolesJson
-        : []
+        // Parse roles from JSON aggregation (may already be parsed by Drizzle)
+        const rolesData: Role[] = user.rolesJson
+          ? typeof user.rolesJson === 'string'
+            ? JSON.parse(user.rolesJson)
+            : user.rolesJson
+          : []
 
-      // Parse FIO username from JSON string (stored as JSON in userSettings)
-      let fioUsername: string | null = null
-      if (user.fioUsernameRaw) {
-        try {
-          fioUsername =
-            typeof user.fioUsernameRaw === 'string'
-              ? JSON.parse(user.fioUsernameRaw)
-              : user.fioUsernameRaw
-        } catch {
-          fioUsername = null
+        // Parse FIO username from JSON string (stored as JSON in userSettings)
+        let fioUsername: string | null = null
+        if (user.fioUsernameRaw) {
+          try {
+            fioUsername =
+              typeof user.fioUsernameRaw === 'string'
+                ? JSON.parse(user.fioUsernameRaw)
+                : user.fioUsernameRaw
+          } catch {
+            fioUsername = null
+          }
         }
-      }
 
-      const activity = await isUserActive({
-        inactiveUntil: user.inactiveUntil,
-        lastActiveAt: user.lastActiveAt,
+        const activity = await isUserActive({
+          inactiveUntil: user.inactiveUntil,
+          lastActiveAt: user.lastActiveAt,
+        })
+
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          displayName: user.displayName,
+          isLocked: user.isLocked,
+          createdAt: user.createdAt,
+          roles: rolesData,
+          fioSync: {
+            fioUsername,
+            lastSyncedAt: user.lastSyncedAt || null,
+          },
+          discord: {
+            connected: !!user.discordId,
+            discordUsername: user.discordUsername || null,
+            discordId: user.discordId || null,
+            connectedAt: user.discordConnectedAt || null,
+          },
+          lastActiveAt: user.lastActiveAt || null,
+          inactiveUntil: user.inactiveUntil || null,
+          activity,
+        }
       })
-
-      return {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        isLocked: user.isLocked,
-        createdAt: user.createdAt,
-        roles: rolesData,
-        fioSync: {
-          fioUsername,
-          lastSyncedAt: user.lastSyncedAt || null,
-        },
-        discord: {
-          connected: !!user.discordId,
-          discordUsername: user.discordUsername || null,
-          discordId: user.discordId || null,
-          connectedAt: user.discordConnectedAt || null,
-        },
-        lastActiveAt: user.lastActiveAt || null,
-        inactiveUntil: user.inactiveUntil || null,
-        activity,
-      }
-    })
     )
 
     return {

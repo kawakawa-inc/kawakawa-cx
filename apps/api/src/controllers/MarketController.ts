@@ -5,11 +5,12 @@ import {
   getReservationStatsForBuyOrders,
 } from '@kawakawa/services/market'
 import { db, sellOrders, buyOrders, users } from '../db/index.js'
-import { eq, isNull } from 'drizzle-orm'
+import { eq, isNull, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
 import { fioClient } from '@kawakawa/services/fio'
 import { calculateEffectivePriceBatch, type PriceRequest } from '../services/price-calculator.js'
+import { activeUserCondition } from '@kawakawa/services/activity'
 
 // Market listing with seller info and calculated availability
 interface MarketListing {
@@ -115,7 +116,8 @@ export class MarketController extends Controller {
     @Request() request: { user: JwtPayload },
     @Query() commodity?: string,
     @Query() location?: string,
-    @Query() destination?: string
+    @Query() destination?: string,
+    @Query() includeInactive?: boolean
   ): Promise<MarketListing[]> {
     const userId = request.user.userId
     const userRoles = request.user.roles
@@ -128,7 +130,8 @@ export class MarketController extends Controller {
       return []
     }
 
-    // Get all sell orders with user info
+    // Filter out inactive users unless explicitly requested
+    const activeFilter = includeInactive ? undefined : await activeUserCondition()
     const orders = await db
       .select({
         id: sellOrders.id,
@@ -145,7 +148,7 @@ export class MarketController extends Controller {
       })
       .from(sellOrders)
       .innerJoin(users, eq(sellOrders.userId, users.id))
-      .where(isNull(sellOrders.deletedAt))
+      .where(and(isNull(sellOrders.deletedAt), activeFilter))
 
     if (orders.length === 0) {
       return []
@@ -303,7 +306,8 @@ export class MarketController extends Controller {
     @Request() request: { user: JwtPayload },
     @Query() commodity?: string,
     @Query() location?: string,
-    @Query() destination?: string
+    @Query() destination?: string,
+    @Query() includeInactive?: boolean
   ): Promise<MarketBuyRequest[]> {
     const userId = request.user.userId
     const userRoles = request.user.roles
@@ -316,7 +320,8 @@ export class MarketController extends Controller {
       return []
     }
 
-    // Get all buy orders with user info
+    // Filter out inactive users unless explicitly requested
+    const activeFilter = includeInactive ? undefined : await activeUserCondition()
     const orders = await db
       .select({
         id: buyOrders.id,
@@ -332,7 +337,7 @@ export class MarketController extends Controller {
       })
       .from(buyOrders)
       .innerJoin(users, eq(buyOrders.userId, users.id))
-      .where(isNull(buyOrders.deletedAt))
+      .where(and(isNull(buyOrders.deletedAt), activeFilter))
 
     if (orders.length === 0) {
       return []

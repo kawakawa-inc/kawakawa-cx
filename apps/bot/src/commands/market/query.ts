@@ -6,6 +6,7 @@ import { parseXitJson } from '@kawakawa/parser/xit'
 import { parseTokens } from '@kawakawa/parser'
 import { db, sellOrders, buyOrders, shoppingLists, userDiscordProfiles } from '@kawakawa/db'
 import { eq, and, desc, inArray, or, isNull } from 'drizzle-orm'
+import { isUserActive } from '@kawakawa/services/activity'
 import { botResolvers } from '../../utils/resolvers.js'
 import {
   resolveCommodity,
@@ -146,6 +147,11 @@ export const query: Command = {
           { name: 'Private (only you)', value: 'ephemeral' },
           { name: 'Public (everyone)', value: 'public' }
         )
+    )
+    .addBooleanOption(option =>
+      option
+        .setName('include-inactive')
+        .setDescription('Include orders from inactive users (default: false)')
     ) as SlashCommandBuilder,
 
   helpInfo: {
@@ -166,6 +172,7 @@ export const query: Command = {
     const queryInput = interaction.options.getString('query')
     let orderType: 'all' | 'sell' | 'buy' =
       (interaction.options.getString('type') as 'all' | 'sell' | 'buy' | null) || 'sell'
+    const includeInactive = interaction.options.getBoolean('include-inactive') ?? false
 
     // Check for XIT JSON input
     // XitMaterials is Record<string, number> for compatibility
@@ -347,7 +354,7 @@ export const query: Command = {
       : undefined
 
     // Fetch sell orders (no limit - we paginate client-side)
-    const sellOrdersData =
+    const sellOrdersRaw =
       orderType === 'buy'
         ? []
         : await db.query.sellOrders.findMany({
@@ -376,6 +383,21 @@ export const query: Command = {
             orderBy: [desc(sellOrders.updatedAt)],
           })
 
+    // Filter out inactive users unless opted in
+    const sellOrdersData = includeInactive
+      ? sellOrdersRaw
+      : await (async () => {
+          const filtered: typeof sellOrdersRaw = []
+          for (const order of sellOrdersRaw) {
+            const status = await isUserActive({
+              inactiveUntil: order.user.inactiveUntil ?? null,
+              lastActiveAt: order.user.lastActiveAt ?? null,
+            })
+            if (status.active) filtered.push(order)
+          }
+          return filtered
+        })()
+
     // Build price list filter for buy orders
     const buyPriceListFilter = channelPriceList
       ? priceListEnforced
@@ -384,7 +406,7 @@ export const query: Command = {
       : undefined
 
     // Fetch buy orders
-    const buyOrdersData =
+    const buyOrdersRaw =
       orderType === 'sell'
         ? []
         : await db.query.buyOrders.findMany({
@@ -412,6 +434,21 @@ export const query: Command = {
             },
             orderBy: [desc(buyOrders.updatedAt)],
           })
+
+    // Filter out inactive users unless opted in
+    const buyOrdersData = includeInactive
+      ? buyOrdersRaw
+      : await (async () => {
+          const filtered: typeof buyOrdersRaw = []
+          for (const order of buyOrdersRaw) {
+            const status = await isUserActive({
+              inactiveUntil: order.user.inactiveUntil ?? null,
+              lastActiveAt: order.user.lastActiveAt ?? null,
+            })
+            if (status.active) filtered.push(order)
+          }
+          return filtered
+        })()
 
     // Check if any orders found
     const hasOrders = sellOrdersData.length > 0 || buyOrdersData.length > 0

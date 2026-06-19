@@ -17,6 +17,8 @@ export interface MockInteraction {
   client: { guilds: { cache: Map<string, unknown> } }
   options: {
     getString: Mock
+    getBoolean: Mock
+    getInteger: Mock
     getFocused: Mock
   }
   reply: Mock
@@ -447,6 +449,8 @@ export function createMockInteraction(
       getString: vi.fn().mockImplementation((name: string, _required?: boolean) => {
         return stringOptions[name] ?? null
       }),
+      getBoolean: vi.fn().mockReturnValue(null),
+      getInteger: vi.fn().mockReturnValue(null),
       getFocused: vi.fn().mockReturnValue(''),
     },
     reply: replyFn,

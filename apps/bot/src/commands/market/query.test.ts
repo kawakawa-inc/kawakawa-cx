@@ -133,6 +133,11 @@ vi.mock('../../utils/auth.js', () => ({
   UNLINKED_ACCOUNT_MESSAGE: 'You need to link your account.',
 }))
 
+// Mock activity service (post-query filter, returns all users as active)
+vi.mock('@kawakawa/services/activity', () => ({
+  isUserActive: vi.fn().mockResolvedValue({ active: true }),
+}))
+
 // Mock modals
 vi.mock('../../utils/modals.js', () => ({
   createSingleInputModal: vi.fn(),

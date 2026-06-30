@@ -111,6 +111,10 @@ vi.mock('@kawakawa/services/user-settings', () => ({
   getFioCredentials: vi.fn(),
 }))
 
+vi.mock('@kawakawa/services/activity', () => ({
+  isUserActive: vi.fn().mockResolvedValue({ isActive: true, reason: null }),
+}))
+
 // Note: Authorization (admin role check) is handled by TSOA's @Security decorator
 // via expressAuthentication middleware, not by the controller methods themselves.
 

@@ -325,14 +325,6 @@
           <template v-else>
             <v-spacer />
             <v-btn variant="text" @click="close">Close</v-btn>
-            <v-btn
-              v-if="canReserve"
-              :color="orderType === 'sell' ? 'warning' : 'success'"
-              :prepend-icon="orderType === 'sell' ? 'mdi-cart-plus' : 'mdi-package-variant'"
-              @click="openReserveDialog"
-            >
-              {{ orderType === 'sell' ? 'Reserve' : 'Fill' }}
-            </v-btn>
           </template>
         </v-card-actions>
       </template>
@@ -357,19 +349,11 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-
-    <!-- Reserve Dialog -->
-    <ReservationDialog
-      v-model="reserveDialog"
-      :order="reserveMarketItem"
-      @reserved="onReservationCreated"
-    />
   </v-dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { PERMISSIONS } from '@kawakawa/types'
 import {
   api,
   type SellOrderResponse,
@@ -384,8 +368,6 @@ import { useUserStore } from '../stores/user'
 import { useFormatters, useDialogBehavior } from '../composables'
 import { formatRelativeDate, formatDateTime } from '../utils/dateFormat'
 import ReservationStatusChip from './ReservationStatusChip.vue'
-import ReservationDialog from './ReservationDialog.vue'
-import type { MarketItem } from '../composables'
 
 // Pricing mode type
 type PricingMode = 'fixed' | 'dynamic'
@@ -470,7 +452,6 @@ const toggleReservationExpanded = (id: number) => {
 const deleteDialog = ref(false)
 const deleteDialogBehavior = useDialogBehavior({ modelValue: deleteDialog })
 const deleting = ref(false)
-const reserveDialog = ref(false)
 
 // Snackbar
 const snackbar = ref({
@@ -499,22 +480,6 @@ const getCommodityCategory = (ticker: string): string | null => {
 const formatPrice = (price: number): string => {
   return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-
-// Permission checks
-const canReserveInternal = computed(() =>
-  userStore.hasPermission(PERMISSIONS.RESERVATIONS_PLACE_INTERNAL)
-)
-const canReservePartner = computed(() =>
-  userStore.hasPermission(PERMISSIONS.RESERVATIONS_PLACE_PARTNER)
-)
-
-const canReserve = computed(() => {
-  if (!order.value || isOwnOrder.value) return false
-  if (order.value.remainingQuantity <= 0) return false
-  if (order.value.orderType === 'internal') return canReserveInternal.value
-  if (order.value.orderType === 'partner') return canReservePartner.value
-  return false
-})
 
 // Fetch order data
 async function loadOrder() {
@@ -650,45 +615,6 @@ async function deleteOrder() {
     deleting.value = false
     deleteDialog.value = false
   }
-}
-
-// Reserve dialog - convert order data to MarketItem format for ReservationDialog
-const reserveMarketItem = computed((): MarketItem | null => {
-  if (!order.value) return null
-
-  const o = order.value
-  const isSellOrder = props.orderType === 'sell'
-
-  return {
-    id: o.id,
-    itemType: props.orderType,
-    userId: 0, // Placeholder - not available in single order detail view
-    commodityTicker: o.commodityTicker,
-    locationId: o.locationId,
-    userName: ownerName.value ?? '',
-    price: o.price,
-    currency: o.currency,
-    orderType: o.orderType,
-    quantity: isSellOrder ? (o as SellOrderData).availableQuantity : (o as BuyOrderData).quantity,
-    remainingQuantity: o.remainingQuantity,
-    reservedQuantity: o.reservedQuantity,
-    activeReservationCount: o.activeReservationCount,
-    isOwn: isOwnOrder.value,
-    fioUploadedAt: isSellOrder ? ((o as SellOrderData).fioUploadedAt ?? null) : null,
-    pricingMode: o.pricingMode ?? 'fixed',
-    effectivePrice: o.effectivePrice ?? null,
-    priceListCode: o.priceListCode ?? null,
-  }
-})
-
-function openReserveDialog() {
-  reserveDialog.value = true
-}
-
-function onReservationCreated() {
-  showSnackbar('Reservation created successfully')
-  emit('updated')
-  close()
 }
 
 // Reservation actions

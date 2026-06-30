@@ -44,7 +44,7 @@ jobs:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: db-migrate
     run_command: node apps/api/dist/scripts/db-migrate.js
   - envs:

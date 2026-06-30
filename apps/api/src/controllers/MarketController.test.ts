@@ -4,6 +4,7 @@ import { db } from '../db/index.js'
 import * as permissionService from '../utils/permissionService.js'
 import * as marketService from '@kawakawa/services/market'
 import * as priceCalculator from '../services/price-calculator.js'
+import * as activityService from '@kawakawa/services/activity'
 
 vi.mock('../db/index.js', () => ({
   db: {
@@ -51,6 +52,10 @@ vi.mock('../services/price-calculator.js', () => ({
   calculateEffectivePriceBatch: vi.fn(),
 }))
 
+vi.mock('@kawakawa/services/activity', () => ({
+  activeUserCondition: vi.fn(),
+}))
+
 vi.mock('@kawakawa/services/fio', () => ({
   fioClient: {
     getJumpCount: vi.fn(),
@@ -73,6 +78,7 @@ describe('MarketController', () => {
     }
     vi.mocked(db.select).mockReturnValue(mockSelect)
     vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
+    vi.mocked(activityService.activeUserCondition).mockResolvedValue(undefined as any)
   })
 
   describe('getMarketListings', () => {

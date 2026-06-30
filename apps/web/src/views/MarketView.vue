@@ -393,7 +393,7 @@
           />
         </template>
 
-        <template #item.reserve="{ item }">
+        <template #item.invoice="{ item }">
           <!-- Own order that matches shopping list -->
           <v-chip
             v-if="item.isOwn && isOnShoppingList(item)"
@@ -407,7 +407,7 @@
           </v-chip>
           <!-- Other user's order - show invoice button -->
           <v-btn
-            v-else-if="!item.isOwn && canReserveOrder(item)"
+            v-else-if="!item.isOwn && canInvoiceOrder(item)"
             size="small"
             variant="elevated"
             :color="isItemInInvoice(item) ? 'primary' : isListSatisfied(item) ? 'grey' : 'primary'"
@@ -443,7 +443,7 @@
             <v-list density="compact">
               <!-- Add to Invoice option for small screens -->
               <v-list-item
-                v-if="!item.isOwn && canReserveOrder(item)"
+                v-if="!item.isOwn && canInvoiceOrder(item)"
                 class="d-lg-none"
                 :disabled="isListSatisfied(item) && !isItemInInvoice(item)"
                 @click="openAddToInvoiceDialog(item)"
@@ -960,7 +960,7 @@ const headers = [
   },
   {
     title: '',
-    key: 'reserve',
+    key: 'invoice',
     sortable: false,
     width: 90,
     cellProps: { class: 'd-none d-lg-table-cell' },
@@ -1048,19 +1048,19 @@ const canCreatePartnerOrders = computed(() =>
   userStore.hasPermission(PERMISSIONS.ORDERS_POST_PARTNER)
 )
 
-// Check permissions for reservations
-const canReserveInternal = computed(() =>
+// Check permissions for invoicing
+const canInvoiceInternal = computed(() =>
   userStore.hasPermission(PERMISSIONS.RESERVATIONS_PLACE_INTERNAL)
 )
-const canReservePartner = computed(() =>
+const canInvoicePartner = computed(() =>
   userStore.hasPermission(PERMISSIONS.RESERVATIONS_PLACE_PARTNER)
 )
 
-const canReserveOrder = (item: MarketItem): boolean => {
+const canInvoiceOrder = (item: MarketItem): boolean => {
   if (item.isOwn) return false
   // Note: we allow invoicing even when remainingQuantity is 0 for made-to-order items
-  if (item.orderType === 'internal') return canReserveInternal.value
-  if (item.orderType === 'partner') return canReservePartner.value
+  if (item.orderType === 'internal') return canInvoiceInternal.value
+  if (item.orderType === 'partner') return canInvoicePartner.value
   return false
 }
 
@@ -1107,7 +1107,7 @@ const deleteDialog = ref(false)
 const deletingItem = ref<MarketItem | null>(null)
 const deleting = ref(false)
 
-// Add to Invoice dialog (replaces Reserve dialog)
+// Add to Invoice dialog
 const addToInvoiceDialog = ref(false)
 const addingToInvoiceItem = ref<MarketItem | null>(null)
 const addToInvoiceQuantity = ref<number | null>(null)
@@ -1133,7 +1133,7 @@ const isUpdatingExisting = computed(() => existingLineItem.value !== null)
 const newInvoiceDialog = ref(false)
 const selectedCounterpartyId = ref<string | null>(null)
 
-// Available counterparties (all users with orders we can reserve - both buyers and sellers)
+// Available counterparties (all users with orders we can invoice - both buyers and sellers)
 const counterpartyOptions = computed((): KeyValueItem[] => {
   const counterpartyMap = new Map<
     number,
@@ -1141,8 +1141,8 @@ const counterpartyOptions = computed((): KeyValueItem[] => {
   >()
 
   for (const item of marketItems.value) {
-    // Include all orders we can reserve (not our own, with permission)
-    if (!item.isOwn && canReserveOrder(item)) {
+    // Include all orders we can invoice (not our own, with permission)
+    if (!item.isOwn && canInvoiceOrder(item)) {
       const existing = counterpartyMap.get(item.userId)
       if (existing) {
         existing.orderCount++
@@ -1658,8 +1658,8 @@ const listAvailabilityStatus = computed((): ListItemStatus[] => {
       if (item.itemType === 'sell' && item.commodityTicker === ticker) {
         if (item.isOwn) {
           ownOrderQuantity += item.remainingQuantity
-        } else if (canReserveOrder(item)) {
-          // Only count orders the user has permission to reserve
+        } else if (canInvoiceOrder(item)) {
+          // Only count orders the user has permission to invoice
           availableInMarket += item.remainingQuantity
           orderQuantities.push(item.remainingQuantity)
           orderCount++

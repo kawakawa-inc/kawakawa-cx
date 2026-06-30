@@ -65,7 +65,7 @@ jobs:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: db-init
     run_command: node apps/api/dist/scripts/db-init-idempotent.js
   - envs:
@@ -86,7 +86,7 @@ jobs:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: run-batch
     run_command: node apps/api/dist/scripts/run-batch.js
 name: prod-kawakawa-cx
@@ -117,7 +117,7 @@ services:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: kawa-api
   - http_port: 80
     image:
@@ -133,7 +133,7 @@ services:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: kawa-web
 workers:
   - envs:
@@ -153,7 +153,7 @@ workers:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: kawa-bot
   - envs:
       - key: DATABASE_URL
@@ -175,5 +175,5 @@ workers:
           basic_auth:
             user: doadmin
           cluster_name: db-opensearch-kawakawa-cx
-          index_name: logs-prod-kawakawa-cx
+          index_name: logs-kawakawa-cx
     name: kawa-sync-worker

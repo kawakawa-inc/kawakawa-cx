@@ -1,12 +1,13 @@
 // Sync service - handles polling for sync state and cache invalidation
 
+import { ref } from 'vue'
 import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
 import { locationService } from './locationService'
 import { commodityService } from './commodityService'
 import { handleAuthFailure } from './authBus'
 
-// Polling interval (30 seconds)
-const POLL_INTERVAL = 30 * 1000
+// Polling interval (60 seconds)
+export const POLL_INTERVAL = 60 * 1000
 
 // App version baked in at build time (commit SHA)
 // This allows reliable version comparison without storage
@@ -17,6 +18,26 @@ let currentSyncState: SyncState | null = null
 let pollIntervalId: ReturnType<typeof setInterval> | null = null
 let isPolling = false
 let versionMismatchNotified = false
+let lastPollAt: string | null = null
+let lastPollSuccess: boolean | null = null
+let lastPollError: string | null = null
+
+/**
+ * Reactive poll health — components can watch this to surface connection
+ * issues. `lastSuccessAt` is epoch ms of the last successful poll;
+ * `lastFailed` is true when the most recent poll attempt failed.
+ */
+export const pollHealth = ref<{ lastSuccessAt: number | null; lastFailed: boolean }>({
+  lastSuccessAt: null,
+  lastFailed: false,
+})
+
+// Whether a manually-triggered retry is currently in flight
+export const retrying = ref(false)
+
+// Debounce window for manual retries — ignore clicks within this window
+const RETRY_DEBOUNCE_MS = 5 * 1000
+let lastManualRetryAt = 0
 
 // Event names
 export const SYNC_EVENTS = {
@@ -137,12 +158,41 @@ async function poll(): Promise<void> {
 
   try {
     const newState = await fetchSyncState()
+    lastPollAt = new Date().toISOString()
     if (newState) {
+      lastPollSuccess = true
+      lastPollError = null
+      pollHealth.value = { lastSuccessAt: Date.now(), lastFailed: false }
       await processSyncState(newState)
+    } else {
+      lastPollSuccess = false
+      pollHealth.value = { ...pollHealth.value, lastFailed: true }
     }
+  } catch (error) {
+    lastPollAt = new Date().toISOString()
+    lastPollSuccess = false
+    lastPollError = error instanceof Error ? error.message : String(error)
+    pollHealth.value = { ...pollHealth.value, lastFailed: true }
   } finally {
     isPolling = false
   }
+}
+
+/**
+ * Manually retry the sync poll (e.g. from a "Connection issue" chip).
+ * Debounced — clicks within RETRY_DEBOUNCE_MS of the last manual retry are
+ * ignored, and concurrent calls are naturally guarded by poll()'s own
+ * isPolling check, so spamming this can't pile up requests.
+ */
+export function retryPoll(): void {
+  const now = Date.now()
+  if (now - lastManualRetryAt < RETRY_DEBOUNCE_MS) return
+  lastManualRetryAt = now
+
+  retrying.value = true
+  poll().finally(() => {
+    retrying.value = false
+  })
 }
 
 // Start polling
@@ -198,6 +248,25 @@ export async function refreshSyncState(): Promise<SyncState | null> {
   return state
 }
 
+// Debug info for the debug modal
+export function getSyncDebugInfo() {
+  return {
+    isPolling,
+    pollIntervalMs: POLL_INTERVAL,
+    lastPollAt,
+    lastPollSuccess,
+    lastPollError,
+    buildVersion: BUILD_VERSION,
+    currentSyncState: currentSyncState
+      ? {
+          unreadCount: currentSyncState.unreadCount,
+          appVersion: currentSyncState.appVersion,
+          dataVersions: { ...currentSyncState.dataVersions },
+        }
+      : null,
+  }
+}
+
 export const syncService = {
   startPolling,
   stopPolling,
@@ -207,5 +276,7 @@ export const syncService = {
   hasAppUpdate,
   getBuildVersion,
   refreshSyncState,
+  getSyncDebugInfo,
+  retryPoll,
   EVENTS: SYNC_EVENTS,
 }

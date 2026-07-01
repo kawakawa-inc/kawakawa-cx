@@ -12,8 +12,12 @@ const APP_VERSION = process.env.APP_VERSION || process.env.COMMIT_SHA || 'dev'
 
 /**
  * Get the current sync state for a user
+ * Invalidates the settings cache first to ensure fresh data across processes
+ * (the sync worker may have bumped versions in a separate process).
  */
 export async function getSyncState(userId: number): Promise<SyncState> {
+  settingsService.invalidateCache()
+
   const [unreadCount, dataVersions] = await Promise.all([
     notificationService.getUnreadCount(userId),
     getDataVersions(),

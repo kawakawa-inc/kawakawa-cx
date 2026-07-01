@@ -565,7 +565,7 @@ interface SyncPricesResponse {
   errors: string[]
 }
 
-interface FioStatsResponse {
+export interface FioStatsResponse {
   totalItems: number
   totalQuantity: number
   uniqueCommodities: number
@@ -726,10 +726,15 @@ type NotificationType =
   | 'reservation_expired'
   | 'invoice_submitted'
   | 'invoice_cancelled'
+  | 'invoice_fulfilled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
   | 'user_rejected'
+  | 'sync_queued'
+  | 'sync_completed'
+  | 'sync_failed'
+  | 'fio_data_stale'
 
 interface Notification {
   id: number

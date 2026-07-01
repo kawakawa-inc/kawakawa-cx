@@ -139,10 +139,13 @@
       <router-view />
     </v-main>
 
-    <!-- Data Update Snackbar -->
-    <v-snackbar v-model="showDataUpdateSnackbar" timeout="4000" color="success" location="bottom">
-      {{ dataUpdateMessage }}
-    </v-snackbar>
+    <div class="text-center py-2">
+      <a class="text-caption text-medium-emphasis" href="#" @click.prevent="showDebug = true">
+        Debug Info
+      </a>
+    </div>
+
+    <DebugModal v-model="showDebug" />
   </v-app>
 </template>
 
@@ -159,7 +162,7 @@ import { api } from './services/api'
 import { syncService, SYNC_EVENTS } from './services/syncService'
 import { onAuthFailure, handleAuthFailure } from './services/authBus'
 import NotificationDropdown from './components/NotificationDropdown.vue'
-import type { SyncDataKey } from '@kawakawa/types'
+import DebugModal from './components/DebugModal.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -171,10 +174,9 @@ const pendingApprovalsCount = ref(0)
 // App update banner state
 const showAppUpdateBanner = ref(false)
 const appUpdateDismissed = ref(false)
+const showDebug = ref(false)
 
 // Data update snackbar state
-const showDataUpdateSnackbar = ref(false)
-const dataUpdateMessage = ref('')
 
 // Logout dialog state
 const logoutDialog = ref(false)
@@ -274,22 +276,6 @@ const handleAppVersionChanged = () => {
   }
 }
 
-const handleDataUpdated = (event: Event) => {
-  const customEvent = event as CustomEvent<{ updatedKeys: SyncDataKey[] }>
-  const keys = customEvent.detail.updatedKeys
-
-  // Build human-readable message
-  const keyLabels: Record<SyncDataKey, string> = {
-    locations: 'Locations',
-    commodities: 'Commodities',
-    priceLists: 'Price lists',
-    globalDefaults: 'Settings',
-  }
-  const labels = keys.map(k => keyLabels[k] || k)
-  dataUpdateMessage.value = `${labels.join(', ')} updated`
-  showDataUpdateSnackbar.value = true
-}
-
 const dismissAppUpdateBanner = () => {
   showAppUpdateBanner.value = false
   appUpdateDismissed.value = true
@@ -308,7 +294,6 @@ onMounted(async () => {
 
   // Listen for sync events
   window.addEventListener(SYNC_EVENTS.APP_VERSION_CHANGED, handleAppVersionChanged)
-  window.addEventListener(SYNC_EVENTS.DATA_UPDATED, handleDataUpdated)
 
   // Listen for centralized auth failures (401 from any API call)
   unsubAuthFailure = onAuthFailure(() => {
@@ -346,7 +331,6 @@ onUnmounted(() => {
   window.removeEventListener('token-refreshed', handleTokenRefreshed)
   window.removeEventListener('approval-queue-updated', handleApprovalQueueUpdated)
   window.removeEventListener(SYNC_EVENTS.APP_VERSION_CHANGED, handleAppVersionChanged)
-  window.removeEventListener(SYNC_EVENTS.DATA_UPDATED, handleDataUpdated)
   syncService.stopPolling()
 })
 </script>

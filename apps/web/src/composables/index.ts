@@ -40,3 +40,4 @@ export {
 export { useCalculatorImport } from './useCalculatorImport'
 export { usePageState } from './usePageState'
 export { useSearchHistory, type SearchHistory } from './useSearchHistory'
+export { useDebug, debugState, type DebugSection } from './useDebug'

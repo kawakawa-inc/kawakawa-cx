@@ -1192,6 +1192,7 @@ const existingSellOrder = computed(() => {
   const commodity = props.inventoryItem?.commodityTicker ?? sellForm.value.commodityTicker
   const location = props.inventoryItem?.locationId ?? sellForm.value.locationId
   const currency = sellForm.value.currency
+  const orderType = sellForm.value.orderType
 
   if (!commodity || !location || !currency) return null
 
@@ -1199,7 +1200,8 @@ const existingSellOrder = computed(() => {
     order =>
       order.commodityTicker === commodity &&
       order.locationId === location &&
-      order.currency === currency
+      order.currency === currency &&
+      order.orderType === orderType
   )
 })
 

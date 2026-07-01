@@ -482,7 +482,12 @@ export interface NotificationUnreadCount {
 // ==================== SYNC STATE ====================
 
 /** Data version keys that can be tracked for cache invalidation */
-export type SyncDataKey = 'locations' | 'commodities' | 'priceLists' | 'globalDefaults'
+export type SyncDataKey =
+  | 'locations'
+  | 'commodities'
+  | 'priceLists'
+  | 'globalDefaults'
+  | 'inventory'
 
 /** Data versions - timestamps (ms) of last modification */
 export type DataVersions = Partial<Record<SyncDataKey, number>>

@@ -18,6 +18,7 @@ import * as userSettingsService from '../user-settings/user-settings-service.js'
 import { notificationService } from '../notifications/notification-service.js'
 import { enqueue } from './enqueue.js'
 import { createLogger } from '../utils/logger.js'
+import { syncService } from '../sync-state/sync-service.js'
 
 const log = createLogger({ service: 'sync-queue', entity: 'handlers' })
 
@@ -141,6 +142,9 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
   if (result.errors.length > 0) {
     throw new Error(result.errors.join('; '))
   }
+
+  // Notify frontend that inventory data has changed
+  await syncService.bumpDataVersion('inventory', job.userId)
 }
 
 async function handleUserPlanetsList(job: SyncJob): Promise<void> {

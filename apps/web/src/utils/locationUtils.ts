@@ -32,3 +32,14 @@ export const getLocationPrimaryEmoji = (
 export const getLocationWarehouseEmoji = (storageTypes?: string[]): string => {
   return storageTypes?.includes('WAREHOUSE_STORE') ? '🏭' : ''
 }
+
+/** Human-friendly label for a storage type value */
+const STORAGE_TYPE_LABELS: Record<string, string> = {
+  STORE: 'Base',
+  WAREHOUSE_STORE: 'Warehouse',
+}
+
+export const formatStorageType = (storageType: string | null | undefined): string => {
+  if (!storageType) return ''
+  return STORAGE_TYPE_LABELS[storageType] ?? storageType
+}

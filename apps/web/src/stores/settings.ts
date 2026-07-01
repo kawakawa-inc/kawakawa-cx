@@ -228,7 +228,7 @@ export const useSettingsStore = () => {
   // We track if credentials are configured by checking if fioUsername is set
   const hasFioCredentials = computed(() => {
     const username = settingsValues.value['fio.username'] as string
-    return username && username.length > 0
+    return !!(username && username.length > 0)
   })
 
   const fioAutoSync = computed({

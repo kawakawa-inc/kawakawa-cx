@@ -31,23 +31,25 @@
             rounded="lg"
             @click="activeType = type.key"
           />
-          <v-divider class="my-1" />
-          <v-list-item
-            :active="activeType === 'saved'"
-            :color="activeType === 'saved' ? 'primary' : undefined"
-            prepend-icon="mdi-bookmark-multiple-outline"
-            title="Saved Filters"
-            rounded="lg"
-            @click="onHoverSaved"
-          />
-          <v-list-item
-            :active="activeType === 'browse'"
-            :color="activeType === 'browse' ? 'primary' : undefined"
-            prepend-icon="mdi-earth"
-            title="Browse"
-            rounded="lg"
-            @click="onHoverBrowse"
-          />
+          <template v-if="showSaved">
+            <v-divider class="my-1" />
+            <v-list-item
+              :active="activeType === 'saved'"
+              :color="activeType === 'saved' ? 'primary' : undefined"
+              prepend-icon="mdi-bookmark-multiple-outline"
+              title="Saved Filters"
+              rounded="lg"
+              @click="onHoverSaved"
+            />
+            <v-list-item
+              :active="activeType === 'browse'"
+              :color="activeType === 'browse' ? 'primary' : undefined"
+              prepend-icon="mdi-earth"
+              title="Browse"
+              rounded="lg"
+              @click="onHoverBrowse"
+            />
+          </template>
         </v-list>
 
         <v-divider vertical />
@@ -188,6 +190,38 @@
                 @click="onSelect('orderType', opt.value, opt.title)"
               >
                 <template v-if="isActive('orderType', opt.value)" #prepend>
+                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
+            <!-- Location Type -->
+            <template v-else-if="activeType === 'locationType'">
+              <v-list-item
+                v-for="opt in locationTypeOptions"
+                :key="opt"
+                :title="opt"
+                :color="isActive('locationType', opt) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('locationType', opt, opt)"
+              >
+                <template v-if="isActive('locationType', opt)" #prepend>
+                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
+            <!-- Storage Type -->
+            <template v-else-if="activeType === 'storageType'">
+              <v-list-item
+                v-for="opt in storageTypeOptions"
+                :key="opt"
+                :title="formatStorageType(opt)"
+                :color="isActive('storageType', opt) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('storageType', opt, formatStorageType(opt))"
+              >
+                <template v-if="isActive('storageType', opt)" #prepend>
                   <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
                 </template>
               </v-list-item>
@@ -349,6 +383,7 @@
 
   <!-- Edit dialog -->
   <SaveFilterDialog
+    v-if="showSaved && currentFilterData"
     v-model="showEditDialog"
     :filter-data="currentFilterData"
     :existing-filter="editingFilter"
@@ -357,6 +392,7 @@
 
   <!-- Delete confirmation -->
   <ConfirmationDialog
+    v-if="showSaved"
     v-model="showDeleteDialog"
     title="Delete Saved Filter"
     :loading="deleting"
@@ -378,7 +414,11 @@ import { useUserStore } from '../stores/user'
 import SaveFilterDialog from './SaveFilterDialog.vue'
 import ConfirmationDialog from './ConfirmationDialog.vue'
 import CommodityDisplay from './CommodityDisplay.vue'
-import { getLocationPrimaryEmoji, getLocationWarehouseEmoji } from '../utils/locationUtils'
+import {
+  getLocationPrimaryEmoji,
+  getLocationWarehouseEmoji,
+  formatStorageType,
+} from '../utils/locationUtils'
 
 interface FilterOption {
   value: string
@@ -390,20 +430,64 @@ interface LocationFilterOption extends FilterOption {
   storageTypes?: string[]
 }
 
-const props = defineProps<{
-  commodityOptions: FilterOption[]
-  locationOptions: LocationFilterOption[]
-  userOptions: string[]
-  categoryOptions: { title: string; value: string }[]
-  pricingOptions: { title: string; value: string }[]
-  orderTypeOptions: { title: string; value: string }[]
-  activeChips: SearchChip[]
-  activeCategory?: string | null
-  activePricing?: string | null
-  activeOrderType?: string | null
-  currentFilterData: SavedFilterData
-  canPin?: boolean
-}>()
+export interface FilterTypeConfig {
+  key: string
+  label: string
+  color?: string
+  icon: string
+}
+
+const props = withDefaults(
+  defineProps<{
+    commodityOptions: FilterOption[]
+    locationOptions: LocationFilterOption[]
+    categoryOptions?: { title: string; value: string }[]
+    activeChips: SearchChip[]
+    activeCategory?: string | null
+    currentFilterData?: SavedFilterData | null
+    canPin?: boolean
+    /** Override which filter types appear in the left panel. Defaults to Market types. */
+    filterTypes?: FilterTypeConfig[]
+    /** Show Saved Filters and Browse sections in the left panel. */
+    showSaved?: boolean
+    // Market-only optional props
+    userOptions?: string[]
+    pricingOptions?: { title: string; value: string }[]
+    orderTypeOptions?: { title: string; value: string }[]
+    activePricing?: string | null
+    activeOrderType?: string | null
+    // Inventory-only optional props
+    locationTypeOptions?: string[]
+    storageTypeOptions?: string[]
+    activeLocationType?: string | null
+    activeStorageType?: string | null
+  }>(),
+  {
+    categoryOptions: () => [],
+    currentFilterData: null,
+    canPin: false,
+    filterTypes: () => [
+      { key: 'commodity', label: 'Commodities', color: 'primary', icon: 'mdi-cube-outline' },
+      { key: 'location', label: 'Locations', color: 'secondary', icon: 'mdi-map-marker-outline' },
+      { key: 'user', label: 'Users', color: 'info', icon: 'mdi-account-outline' },
+      { key: 'itemType', label: 'Buy / Sell', icon: 'mdi-swap-horizontal' },
+      { key: 'category', label: 'Category', icon: 'mdi-tag-outline' },
+      { key: 'pricing', label: 'Pricing', icon: 'mdi-currency-usd' },
+      { key: 'orderType', label: 'Visibility', icon: 'mdi-eye-outline' },
+    ],
+    showSaved: true,
+    activeCategory: null,
+    userOptions: () => [],
+    pricingOptions: () => [],
+    orderTypeOptions: () => [],
+    activePricing: null,
+    activeOrderType: null,
+    locationTypeOptions: () => [],
+    storageTypeOptions: () => [],
+    activeLocationType: null,
+    activeStorageType: null,
+  }
+)
 
 const emit = defineEmits<{
   select: [payload: { filterType: string; key: string; display: string }]
@@ -417,7 +501,7 @@ const userStore = useUserStore()
 const currentUsername = computed(() => userStore.getUser()?.username ?? '')
 
 const isOpen = ref(false)
-const activeType = ref<string>('commodity')
+const activeType = ref<string>(props.filterTypes[0]?.key ?? 'commodity')
 
 // Saved filters state
 const savedFilters = ref<SavedMarketFilter[]>([])
@@ -428,15 +512,7 @@ const showDeleteDialog = ref(false)
 const deletingFilter = ref<SavedMarketFilter | null>(null)
 const deleting = ref(false)
 
-const filterTypes = [
-  { key: 'commodity', label: 'Commodities', color: 'primary', icon: 'mdi-cube-outline' },
-  { key: 'location', label: 'Locations', color: 'secondary', icon: 'mdi-map-marker-outline' },
-  { key: 'user', label: 'Users', color: 'info', icon: 'mdi-account-outline' },
-  { key: 'itemType', label: 'Buy / Sell', color: undefined, icon: 'mdi-swap-horizontal' },
-  { key: 'category', label: 'Category', color: undefined, icon: 'mdi-tag-outline' },
-  { key: 'pricing', label: 'Pricing', color: undefined, icon: 'mdi-currency-usd' },
-  { key: 'orderType', label: 'Visibility', color: undefined, icon: 'mdi-eye-outline' },
-]
+const filterTypes = computed(() => props.filterTypes)
 
 const isActive = (filterType: string, value: string): boolean => {
   if (filterType === 'commodity')
@@ -450,6 +526,8 @@ const isActive = (filterType: string, value: string): boolean => {
   if (filterType === 'category') return props.activeCategory === value
   if (filterType === 'pricing') return props.activePricing === value
   if (filterType === 'orderType') return props.activeOrderType === value
+  if (filterType === 'locationType') return props.activeLocationType === value
+  if (filterType === 'storageType') return props.activeStorageType === value
   return false
 }
 

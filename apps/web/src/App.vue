@@ -47,6 +47,14 @@
           </template>
           Calculator
         </v-tooltip>
+        <v-tooltip v-if="canViewRecipes" location="bottom">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" to="/recipes" icon size="small" class="mx-1">
+              <v-icon>mdi-rocket-launch</v-icon>
+            </v-btn>
+          </template>
+          Ship Pricing
+        </v-tooltip>
         <!-- Logistics — hidden until feature is ready to ship
         <v-tooltip location="bottom">
           <template #activator="{ props }">
@@ -152,6 +160,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { PERMISSIONS } from '@kawakawa/types'
 import { useUserStore } from './stores/user'
 import { useInvoicesStore } from './stores/invoices'
 import { useShoppingListStore } from './stores/shoppingList'
@@ -191,6 +200,8 @@ const isAdmin = computed(() => {
   const user = userStore.getUser()
   return user?.roles?.some(r => r.id === 'administrator') ?? false
 })
+
+const canViewRecipes = computed(() => userStore.hasPermission(PERMISSIONS.RECIPES_VIEW))
 
 // Fetch pending approvals count for admins
 const fetchPendingApprovalsCount = async () => {

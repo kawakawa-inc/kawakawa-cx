@@ -16,6 +16,7 @@ import NotificationsView from '../views/NotificationsView.vue'
 import PriceListView from '../views/PriceListView.vue'
 import PriceAdjustmentsView from '../views/PriceAdjustmentsView.vue'
 import PricingCalculatorView from '../views/PricingCalculatorView.vue'
+import RecipesView from '../views/RecipesView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 import BurnRepairView from '../views/BurnRepairView.vue'
 
@@ -119,6 +120,12 @@ const router = createRouter({
       path: '/calculator',
       name: 'calculator',
       component: PricingCalculatorView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/recipes',
+      name: 'recipes',
+      component: RecipesView,
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {

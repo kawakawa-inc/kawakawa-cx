@@ -118,6 +118,9 @@ export const PERMISSIONS = {
   ADJUSTMENTS_VIEW: 'adjustments.view',
   ADJUSTMENTS_MANAGE: 'adjustments.manage',
   IMPORT_CONFIGS_MANAGE: 'import_configs.manage',
+  // Recipes (bill-of-materials bundles, e.g. ships sold as a set of materials)
+  RECIPES_VIEW: 'recipes.view',
+  RECIPES_MANAGE: 'recipes.manage',
   // Filter management
   FILTERS_PIN: 'filters.pin',
 } as const

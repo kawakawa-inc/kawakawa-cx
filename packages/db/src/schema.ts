@@ -104,6 +104,11 @@ export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google
 
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
 
+// A recipe is a bill-of-materials: a fixed list of ticker+quantity inputs sold
+// as a single bundle at a set price (e.g. a ship). 'building' is reserved for
+// a future FIO-synced building-recipe use case (see .dev/design-docs/price-list-admin).
+export const recipeTypeEnum = pgEnum('recipe_type', ['ship', 'building'])
+
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'unlisted', 'public'])
 
 export const buyOrderSourceModeEnum = pgEnum('buy_order_source_mode', ['manual', 'demand'])
@@ -227,18 +232,32 @@ export const permissions = pgTable('permissions', {
 })
 
 // ==================== ROLE PERMISSIONS (Many-to-Many) ====================
-export const rolePermissions = pgTable('role_permissions', {
-  id: serial('id').primaryKey(),
-  roleId: varchar('role_id', { length: 50 })
-    .notNull()
-    .references(() => roles.id, { onDelete: 'cascade' }),
-  permissionId: varchar('permission_id', { length: 100 })
-    .notNull()
-    .references(() => permissions.id, { onDelete: 'cascade' }),
-  allowed: boolean('allowed').notNull().default(true), // true = granted, false = explicitly denied
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-})
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    id: serial('id').primaryKey(),
+    roleId: varchar('role_id', { length: 50 })
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    permissionId: varchar('permission_id', { length: 100 })
+      .notNull()
+      .references(() => permissions.id, { onDelete: 'cascade' }),
+    allowed: boolean('allowed').notNull().default(true), // true = granted, false = explicitly denied
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    // One row per (role, permission): lets seeding use a single upsert
+    // (onConflictDoNothing/onConflictDoUpdate against this index) instead of
+    // hand-rolled existence checks, and prevents duplicate grants from ever
+    // accumulating (as happened previously — seeding used onConflictDoNothing
+    // with no matching unique constraint to conflict against).
+    uniqueRolePermission: uniqueIndex('role_permissions_role_permission_idx').on(
+      table.roleId,
+      table.permissionId
+    ),
+  })
+)
 
 // ==================== USERS ====================
 export const users = pgTable('users', {
@@ -1520,6 +1539,57 @@ export const importConfigs = pgTable(
   })
 )
 
+// ==================== RECIPES (Bills of materials sold as a bundle, e.g. ships) ====================
+// A recipe bundles a set of materials (recipeInputs) and lists them for sale at
+// a fixed price. This lets a "ships for sale" catalog be priced against a real
+// price list/version/location and compared line-by-line against the bundle price.
+export const recipes = pgTable(
+  'recipes',
+  {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    type: recipeTypeEnum('type').notNull().default('ship'),
+    salePrice: decimal('sale_price', { precision: 12, scale: 2 }), // NULL = not currently listed for sale
+    currency: currencyEnum('currency'), // Currency salePrice is denominated in
+    description: text('description'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    nameIdx: index('recipes_name_idx').on(table.name),
+    typeIdx: index('recipes_type_idx').on(table.type),
+    activeIdx: index('recipes_active_idx').on(table.isActive),
+  })
+)
+
+// One material line in a recipe's bill of materials.
+export const recipeInputs = pgTable(
+  'recipe_inputs',
+  {
+    id: serial('id').primaryKey(),
+    recipeId: integer('recipe_id')
+      .notNull()
+      .references(() => recipes.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 })
+      .notNull()
+      .references(() => fioCommodities.ticker),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    recipeIdx: index('recipe_inputs_recipe_idx').on(table.recipeId),
+    uniqueRecipeCommodity: uniqueIndex('recipe_inputs_recipe_commodity_idx').on(
+      table.recipeId,
+      table.commodityTicker
+    ),
+  })
+)
+
 // ==================== RELATIONS ====================
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -1542,6 +1612,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [userDiscordProfiles.userId],
   }),
   createdPriceAdjustments: many(priceAdjustments), // Adjustments created by this user
+  createdRecipes: many(recipes), // Recipes (e.g. ship BOMs) created by this user
   burnRepairCache: many(burnRepairCache), // Pre-computed burn/repair needs
 }))
 
@@ -1937,5 +2008,26 @@ export const priceListVersionsRelations = relations(priceListVersions, ({ one })
   createdByUser: one(users, {
     fields: [priceListVersions.createdByUserId],
     references: [users.id],
+  }),
+}))
+
+// ==================== RECIPE RELATIONS ====================
+
+export const recipesRelations = relations(recipes, ({ one, many }) => ({
+  inputs: many(recipeInputs),
+  createdByUser: one(users, {
+    fields: [recipes.createdByUserId],
+    references: [users.id],
+  }),
+}))
+
+export const recipeInputsRelations = relations(recipeInputs, ({ one }) => ({
+  recipe: one(recipes, {
+    fields: [recipeInputs.recipeId],
+    references: [recipes.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [recipeInputs.commodityTicker],
+    references: [fioCommodities.ticker],
   }),
 }))

@@ -504,6 +504,82 @@ interface UpdatePriceListRequest {
   isActive?: boolean
 }
 
+// Recipe types (bills of materials sold as a bundle, e.g. ships)
+type RecipeType = 'ship' | 'building'
+
+interface RecipeInputDto {
+  commodityTicker: string
+  commodityName: string | null
+  quantity: number
+}
+
+interface RecipeResponse {
+  id: number
+  name: string
+  type: RecipeType
+  salePrice: number | null
+  currency: Currency | null
+  description: string | null
+  isActive: boolean
+  createdByUserId: number | null
+  createdByUsername: string | null
+  createdAt: string
+  updatedAt: string
+  inputs: RecipeInputDto[]
+}
+
+interface RecipeInputRequest {
+  commodityTicker: string
+  quantity: number
+}
+
+interface CreateRecipeRequest {
+  name: string
+  type?: RecipeType
+  salePrice?: number | null
+  currency?: Currency | null
+  description?: string | null
+  isActive?: boolean
+  inputs: RecipeInputRequest[]
+}
+
+interface UpdateRecipeRequest {
+  name?: string
+  type?: RecipeType
+  salePrice?: number | null
+  currency?: Currency | null
+  description?: string | null
+  isActive?: boolean
+  inputs?: RecipeInputRequest[]
+}
+
+interface RecipeLinePrice {
+  commodityTicker: string
+  commodityName: string | null
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+  isFallback: boolean
+}
+
+interface RecipePriceBreakdown {
+  recipeId: number
+  recipeName: string
+  type: RecipeType
+  priceListCode: string
+  version: number
+  locationId: string
+  currency: Currency
+  lines: RecipeLinePrice[]
+  materialCost: number
+  missingPriceTickers: string[]
+  salePrice: number | null
+  saleCurrency: Currency | null
+  currencyMismatch: boolean
+  margin: number | null
+  marginPercent: number | null
+}
+
 // Import Config types
 type ImportSourceType = 'csv' | 'google_sheets'
 type ImportFormat = 'flat' | 'pivot'
@@ -2686,6 +2762,98 @@ const realApi = {
       `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`
     ),
 
+  // Recipes methods (bills of materials sold as a bundle, e.g. ships)
+  getRecipes: (type?: RecipeType, activeOnly?: boolean): Promise<RecipeResponse[]> => {
+    const params = new URLSearchParams()
+    if (type) params.set('type', type)
+    if (activeOnly !== undefined) params.set('activeOnly', String(activeOnly))
+    const qs = params.toString()
+    return apiGet<RecipeResponse[]>(`/api/recipes${qs ? '?' + qs : ''}`)
+  },
+
+  getRecipe: (id: number): Promise<RecipeResponse> => apiGet<RecipeResponse>(`/api/recipes/${id}`),
+
+  getRecipePrice: (
+    id: number,
+    priceListCode: string,
+    options?: { locationId?: string; version?: number }
+  ): Promise<RecipePriceBreakdown> => {
+    const params = new URLSearchParams({ priceListCode })
+    if (options?.locationId) params.set('locationId', options.locationId)
+    if (options?.version !== undefined) params.set('version', String(options.version))
+    return apiGet<RecipePriceBreakdown>(`/api/recipes/${id}/price?${params}`)
+  },
+
+  getAllRecipePrices: (
+    priceListCode: string,
+    options?: { locationId?: string; version?: number; type?: RecipeType }
+  ): Promise<RecipePriceBreakdown[]> => {
+    const params = new URLSearchParams({ priceListCode })
+    if (options?.locationId) params.set('locationId', options.locationId)
+    if (options?.version !== undefined) params.set('version', String(options.version))
+    if (options?.type) params.set('type', options.type)
+    return apiGet<RecipePriceBreakdown[]>(`/api/recipes/price?${params}`)
+  },
+
+  createRecipe: async (request: CreateRecipeRequest): Promise<RecipeResponse> => {
+    const response = await authenticatedFetch('/api/recipes', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to create recipe: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updateRecipe: async (id: number, request: UpdateRecipeRequest): Promise<RecipeResponse> => {
+    const response = await authenticatedFetch(`/api/recipes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Recipe not found')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to update recipe: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deleteRecipe: async (id: number): Promise<void> => {
+    const response = await authenticatedFetch(`/api/recipes/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Recipe not found')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to delete recipe: ${response.statusText}`)
+    }
+  },
+
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
     const response = await authenticatedFetch('/api/import-configs', {
@@ -4170,6 +4338,22 @@ export const api = {
     syncUpload: (id: number, file: File, version?: number) =>
       realApi.syncImportConfigUpload(id, file, version),
   },
+  recipes: {
+    list: (type?: RecipeType, activeOnly?: boolean) => realApi.getRecipes(type, activeOnly),
+    get: (id: number) => realApi.getRecipe(id),
+    getPrice: (
+      id: number,
+      priceListCode: string,
+      options?: { locationId?: string; version?: number }
+    ) => realApi.getRecipePrice(id, priceListCode, options),
+    getAllPrices: (
+      priceListCode: string,
+      options?: { locationId?: string; version?: number; type?: RecipeType }
+    ) => realApi.getAllRecipePrices(priceListCode, options),
+    create: (request: CreateRecipeRequest) => realApi.createRecipe(request),
+    update: (id: number, request: UpdateRecipeRequest) => realApi.updateRecipe(id, request),
+    delete: (id: number) => realApi.deleteRecipe(id),
+  },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
   updateUserSettings: (settings: Record<string, unknown>) => realApi.updateUserSettings(settings),
@@ -4329,6 +4513,15 @@ export type {
   CreateImportConfigRequest,
   UpdateImportConfigRequest,
   PivotImportResult,
+  // Recipe types
+  RecipeType,
+  RecipeInputDto,
+  RecipeResponse,
+  RecipeInputRequest,
+  CreateRecipeRequest,
+  UpdateRecipeRequest,
+  RecipeLinePrice,
+  RecipePriceBreakdown,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

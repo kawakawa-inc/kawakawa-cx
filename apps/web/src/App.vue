@@ -47,13 +47,13 @@
           </template>
           Calculator
         </v-tooltip>
-        <v-tooltip v-if="canViewRecipes" location="bottom">
+        <v-tooltip v-if="canViewPackages" location="bottom">
           <template #activator="{ props }">
-            <v-btn v-bind="props" to="/recipes" icon size="small" class="mx-1">
+            <v-btn v-bind="props" to="/packages" icon size="small" class="mx-1">
               <v-icon>mdi-rocket-launch</v-icon>
             </v-btn>
           </template>
-          Ship Pricing
+          Packages
         </v-tooltip>
         <!-- Logistics — hidden until feature is ready to ship
         <v-tooltip location="bottom">
@@ -201,7 +201,7 @@ const isAdmin = computed(() => {
   return user?.roles?.some(r => r.id === 'administrator') ?? false
 })
 
-const canViewRecipes = computed(() => userStore.hasPermission(PERMISSIONS.RECIPES_VIEW))
+const canViewPackages = computed(() => userStore.hasPermission(PERMISSIONS.PACKAGES_VIEW))
 
 // Fetch pending approvals count for admins
 const fetchPendingApprovalsCount = async () => {

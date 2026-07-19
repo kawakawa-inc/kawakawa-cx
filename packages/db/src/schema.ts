@@ -104,10 +104,15 @@ export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google
 
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
 
-// A recipe is a bill-of-materials: a fixed list of ticker+quantity inputs sold
+// A package is a bill-of-materials: a fixed list of ticker+quantity inputs sold
 // as a single bundle at a set price (e.g. a ship). 'building' is reserved for
 // a future FIO-synced building-recipe use case (see .dev/design-docs/price-list-admin).
-export const recipeTypeEnum = pgEnum('recipe_type', ['ship', 'building'])
+export const packageTypeEnum = pgEnum('package_type', ['ship', 'building'])
+
+// 'fixed' = salePrice is a manually-entered flat price.
+// 'margin' = salePrice is (last) computed as materialCost * marginMultiplier
+// at authoring time in the package editor (a snapshot, not a live recompute).
+export const packagePricingModeEnum = pgEnum('package_pricing_mode', ['fixed', 'margin'])
 
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'unlisted', 'public'])
 
@@ -1539,18 +1544,27 @@ export const importConfigs = pgTable(
   })
 )
 
-// ==================== RECIPES (Bills of materials sold as a bundle, e.g. ships) ====================
-// A recipe bundles a set of materials (recipeInputs) and lists them for sale at
+// ==================== PACKAGES (Bills of materials sold as a bundle, e.g. ships) ====================
+// A package bundles a set of materials (packageInputs) and lists them for sale at
 // a fixed price. This lets a "ships for sale" catalog be priced against a real
 // price list/version/location and compared line-by-line against the bundle price.
-export const recipes = pgTable(
-  'recipes',
+// Multiple packages can be combined (see the Invoice Builder in the frontend) to
+// price out a customer order spanning more than one package; that combination is
+// an ad hoc, unpersisted expansion of packages/quantities, not its own table.
+export const packages = pgTable(
+  'packages',
   {
     id: serial('id').primaryKey(),
     name: varchar('name', { length: 100 }).notNull(),
-    type: recipeTypeEnum('type').notNull().default('ship'),
+    type: packageTypeEnum('type').notNull().default('ship'),
     salePrice: decimal('sale_price', { precision: 12, scale: 2 }), // NULL = not currently listed for sale
     currency: currencyEnum('currency'), // Currency salePrice is denominated in
+    pricingMode: packagePricingModeEnum('pricing_mode').notNull().default('fixed'),
+    // Only meaningful when pricingMode = 'margin'. e.g. 1.2000 = +20% markup
+    // over material cost, 0.9000 = -10% markdown. Preserved so the editor can
+    // restore "you set this as a 20% margin" on re-edit instead of only
+    // showing the flat salePrice snapshot.
+    marginMultiplier: decimal('margin_multiplier', { precision: 6, scale: 4 }),
     description: text('description'),
     isActive: boolean('is_active').notNull().default(true),
     createdByUserId: integer('created_by_user_id').references(() => users.id, {
@@ -1560,20 +1574,20 @@ export const recipes = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    nameIdx: index('recipes_name_idx').on(table.name),
-    typeIdx: index('recipes_type_idx').on(table.type),
-    activeIdx: index('recipes_active_idx').on(table.isActive),
+    nameIdx: index('packages_name_idx').on(table.name),
+    typeIdx: index('packages_type_idx').on(table.type),
+    activeIdx: index('packages_active_idx').on(table.isActive),
   })
 )
 
-// One material line in a recipe's bill of materials.
-export const recipeInputs = pgTable(
-  'recipe_inputs',
+// One material line in a package's bill of materials.
+export const packageInputs = pgTable(
+  'package_inputs',
   {
     id: serial('id').primaryKey(),
-    recipeId: integer('recipe_id')
+    packageId: integer('package_id')
       .notNull()
-      .references(() => recipes.id, { onDelete: 'cascade' }),
+      .references(() => packages.id, { onDelete: 'cascade' }),
     commodityTicker: varchar('commodity_ticker', { length: 10 })
       .notNull()
       .references(() => fioCommodities.ticker),
@@ -1582,9 +1596,9 @@ export const recipeInputs = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   table => ({
-    recipeIdx: index('recipe_inputs_recipe_idx').on(table.recipeId),
-    uniqueRecipeCommodity: uniqueIndex('recipe_inputs_recipe_commodity_idx').on(
-      table.recipeId,
+    packageIdx: index('package_inputs_package_idx').on(table.packageId),
+    uniquePackageCommodity: uniqueIndex('package_inputs_package_commodity_idx').on(
+      table.packageId,
       table.commodityTicker
     ),
   })
@@ -1612,7 +1626,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [userDiscordProfiles.userId],
   }),
   createdPriceAdjustments: many(priceAdjustments), // Adjustments created by this user
-  createdRecipes: many(recipes), // Recipes (e.g. ship BOMs) created by this user
+  createdPackages: many(packages), // Packages (e.g. ship BOMs) created by this user
   burnRepairCache: many(burnRepairCache), // Pre-computed burn/repair needs
 }))
 
@@ -2011,23 +2025,23 @@ export const priceListVersionsRelations = relations(priceListVersions, ({ one })
   }),
 }))
 
-// ==================== RECIPE RELATIONS ====================
+// ==================== PACKAGE RELATIONS ====================
 
-export const recipesRelations = relations(recipes, ({ one, many }) => ({
-  inputs: many(recipeInputs),
+export const packagesRelations = relations(packages, ({ one, many }) => ({
+  inputs: many(packageInputs),
   createdByUser: one(users, {
-    fields: [recipes.createdByUserId],
+    fields: [packages.createdByUserId],
     references: [users.id],
   }),
 }))
 
-export const recipeInputsRelations = relations(recipeInputs, ({ one }) => ({
-  recipe: one(recipes, {
-    fields: [recipeInputs.recipeId],
-    references: [recipes.id],
+export const packageInputsRelations = relations(packageInputs, ({ one }) => ({
+  package: one(packages, {
+    fields: [packageInputs.packageId],
+    references: [packages.id],
   }),
   commodity: one(fioCommodities, {
-    fields: [recipeInputs.commodityTicker],
+    fields: [packageInputs.commodityTicker],
     references: [fioCommodities.ticker],
   }),
 }))

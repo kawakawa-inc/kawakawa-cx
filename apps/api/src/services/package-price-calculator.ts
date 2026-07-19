@@ -1,13 +1,14 @@
 import type { Currency } from '@kawakawa/types'
-import { db, recipes, recipeInputs, fioCommodities } from '../db/index.js'
+import { db, packages, packageInputs, fioCommodities } from '../db/index.js'
 import { eq, and, inArray } from 'drizzle-orm'
 import { calculateEffectivePrices, type EffectivePrice } from './price-calculator.js'
 import { resolveVersionContext } from './price-version.js'
 import { NotFound, BadRequest } from '../utils/errors.js'
 
-export type RecipeType = 'ship' | 'building'
+export type PackageType = 'ship' | 'building'
+export type PackagePricingMode = 'fixed' | 'margin'
 
-export interface RecipeLinePrice {
+export interface PackageLinePrice {
   commodityTicker: string
   commodityName: string | null
   quantity: number
@@ -16,48 +17,52 @@ export interface RecipeLinePrice {
   isFallback: boolean // true if unitPrice came from the version's default location
 }
 
-export interface RecipePriceBreakdown {
-  recipeId: number
-  recipeName: string
-  type: RecipeType
+export interface PackagePriceBreakdown {
+  packageId: number
+  packageName: string
+  type: PackageType
   priceListCode: string
   version: number
   locationId: string
   currency: Currency
-  lines: RecipeLinePrice[]
+  lines: PackageLinePrice[]
   materialCost: number // sum of lineTotal across lines that have a price
   missingPriceTickers: string[] // tickers with no effective price at this list/version/location
-  salePrice: number | null // the recipe's own listed bundle price, if set
+  salePrice: number | null // the package's own listed bundle price, if set
   saleCurrency: Currency | null
   currencyMismatch: boolean // true if salePrice's currency differs from the price list's currency
   margin: number | null // salePrice - materialCost; null if incomplete pricing or currency mismatch
   marginPercent: number | null // margin as a % of salePrice
+  pricingMode: PackagePricingMode
+  marginMultiplier: number | null // set when pricingMode = 'margin'; the multiplier salePrice was last computed from
 }
 
-interface RecipeRow {
+interface PackageRow {
   id: number
   name: string
-  type: RecipeType
+  type: PackageType
   salePrice: string | null
   currency: Currency | null
+  pricingMode: PackagePricingMode
+  marginMultiplier: string | null
 }
 
-interface RecipeInputRow {
+interface PackageInputRow {
   commodityTicker: string
   commodityName: string | null
   quantity: number
 }
 
 function buildBreakdown(
-  recipe: RecipeRow,
-  inputs: RecipeInputRow[],
+  pkg: PackageRow,
+  inputs: PackageInputRow[],
   priceMap: Map<string, EffectivePrice>,
   priceListCode: string,
   version: number,
   locationId: string,
   currency: Currency
-): RecipePriceBreakdown {
-  const lines: RecipeLinePrice[] = []
+): PackagePriceBreakdown {
+  const lines: PackageLinePrice[] = []
   const missingPriceTickers: string[] = []
   let materialCost = 0
 
@@ -84,8 +89,8 @@ function buildBreakdown(
 
   materialCost = Math.round(materialCost * 100) / 100
 
-  const salePrice = recipe.salePrice !== null ? parseFloat(recipe.salePrice) : null
-  const saleCurrency = recipe.currency
+  const salePrice = pkg.salePrice !== null ? parseFloat(pkg.salePrice) : null
+  const saleCurrency = pkg.currency
   const currencyMismatch = salePrice !== null && saleCurrency !== null && saleCurrency !== currency
   const hasCompletePricing = missingPriceTickers.length === 0
 
@@ -99,9 +104,9 @@ function buildBreakdown(
       : null
 
   return {
-    recipeId: recipe.id,
-    recipeName: recipe.name,
-    type: recipe.type,
+    packageId: pkg.id,
+    packageName: pkg.name,
+    type: pkg.type,
     priceListCode,
     version,
     locationId,
@@ -114,6 +119,8 @@ function buildBreakdown(
     currencyMismatch,
     margin,
     marginPercent,
+    pricingMode: pkg.pricingMode,
+    marginMultiplier: pkg.marginMultiplier !== null ? parseFloat(pkg.marginMultiplier) : null,
   }
 }
 
@@ -130,30 +137,30 @@ async function resolveContextOrThrow(priceListCode: string, version?: number) {
 }
 
 /**
- * Compute the material-cost breakdown for a single recipe against a price
- * list/version/location, plus its margin vs. the recipe's own listed sale price.
+ * Compute the material-cost breakdown for a single package against a price
+ * list/version/location, plus its margin vs. the package's own listed sale price.
  */
-export async function calculateRecipePrice(
-  recipeId: number,
+export async function calculatePackagePrice(
+  packageId: number,
   priceListCode: string,
   locationId?: string,
   version?: number
-): Promise<RecipePriceBreakdown> {
-  const [recipe] = await db.select().from(recipes).where(eq(recipes.id, recipeId)).limit(1)
-  if (!recipe) {
-    throw NotFound(`Recipe with ID ${recipeId} not found`)
+): Promise<PackagePriceBreakdown> {
+  const [pkg] = await db.select().from(packages).where(eq(packages.id, packageId)).limit(1)
+  if (!pkg) {
+    throw NotFound(`Package with ID ${packageId} not found`)
   }
 
   const inputs = await db
     .select({
-      commodityTicker: recipeInputs.commodityTicker,
+      commodityTicker: packageInputs.commodityTicker,
       commodityName: fioCommodities.name,
-      quantity: recipeInputs.quantity,
+      quantity: packageInputs.quantity,
     })
-    .from(recipeInputs)
-    .leftJoin(fioCommodities, eq(recipeInputs.commodityTicker, fioCommodities.ticker))
-    .where(eq(recipeInputs.recipeId, recipeId))
-    .orderBy(recipeInputs.commodityTicker)
+    .from(packageInputs)
+    .leftJoin(fioCommodities, eq(packageInputs.commodityTicker, fioCommodities.ticker))
+    .where(eq(packageInputs.packageId, packageId))
+    .orderBy(packageInputs.commodityTicker)
 
   const context = await resolveContextOrThrow(priceListCode, version)
   const resolvedLocationId = locationId ?? context.defaultLocationId
@@ -167,7 +174,7 @@ export async function calculateRecipePrice(
   const priceMap = new Map(effectivePrices.map(p => [p.commodityTicker, p]))
 
   return buildBreakdown(
-    recipe,
+    pkg,
     inputs,
     priceMap,
     priceListCode.toUpperCase(),
@@ -178,44 +185,44 @@ export async function calculateRecipePrice(
 }
 
 /**
- * Compute breakdowns for every active recipe (optionally filtered by type)
+ * Compute breakdowns for every active package (optionally filtered by type)
  * against a single price list/version/location. Fetches effective prices once
- * and reuses them across every recipe, regardless of how many there are.
+ * and reuses them across every package, regardless of how many there are.
  */
-export async function calculateAllRecipePrices(
+export async function calculateAllPackagePrices(
   priceListCode: string,
   locationId?: string,
   version?: number,
-  type?: RecipeType
-): Promise<RecipePriceBreakdown[]> {
-  const conditions = [eq(recipes.isActive, true)]
-  if (type) conditions.push(eq(recipes.type, type))
+  type?: PackageType
+): Promise<PackagePriceBreakdown[]> {
+  const conditions = [eq(packages.isActive, true)]
+  if (type) conditions.push(eq(packages.type, type))
 
-  const recipeRows = await db
+  const packageRows = await db
     .select()
-    .from(recipes)
+    .from(packages)
     .where(and(...conditions))
-    .orderBy(recipes.name)
+    .orderBy(packages.name)
 
   const context = await resolveContextOrThrow(priceListCode, version)
   const resolvedLocationId = locationId ?? context.defaultLocationId
 
-  if (recipeRows.length === 0) {
+  if (packageRows.length === 0) {
     return []
   }
 
-  const recipeIds = recipeRows.map(r => r.id)
+  const packageIds = packageRows.map(r => r.id)
   const allInputs = await db
     .select({
-      recipeId: recipeInputs.recipeId,
-      commodityTicker: recipeInputs.commodityTicker,
+      packageId: packageInputs.packageId,
+      commodityTicker: packageInputs.commodityTicker,
       commodityName: fioCommodities.name,
-      quantity: recipeInputs.quantity,
+      quantity: packageInputs.quantity,
     })
-    .from(recipeInputs)
-    .leftJoin(fioCommodities, eq(recipeInputs.commodityTicker, fioCommodities.ticker))
-    .where(inArray(recipeInputs.recipeId, recipeIds))
-    .orderBy(recipeInputs.commodityTicker)
+    .from(packageInputs)
+    .leftJoin(fioCommodities, eq(packageInputs.commodityTicker, fioCommodities.ticker))
+    .where(inArray(packageInputs.packageId, packageIds))
+    .orderBy(packageInputs.commodityTicker)
 
   const effectivePrices = await calculateEffectivePrices(
     priceListCode,
@@ -225,17 +232,17 @@ export async function calculateAllRecipePrices(
   )
   const priceMap = new Map(effectivePrices.map(p => [p.commodityTicker, p]))
 
-  const inputsByRecipe = new Map<number, RecipeInputRow[]>()
+  const inputsByPackage = new Map<number, PackageInputRow[]>()
   for (const input of allInputs) {
-    const list = inputsByRecipe.get(input.recipeId) ?? []
+    const list = inputsByPackage.get(input.packageId) ?? []
     list.push(input)
-    inputsByRecipe.set(input.recipeId, list)
+    inputsByPackage.set(input.packageId, list)
   }
 
-  return recipeRows.map(recipe =>
+  return packageRows.map(pkg =>
     buildBreakdown(
-      recipe,
-      inputsByRecipe.get(recipe.id) ?? [],
+      pkg,
+      inputsByPackage.get(pkg.id) ?? [],
       priceMap,
       priceListCode.toUpperCase(),
       context.version,

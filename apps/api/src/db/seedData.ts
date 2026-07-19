@@ -122,16 +122,16 @@ export const PERMISSIONS_DATA: PermissionData[] = [
     name: 'Manage Import Configurations',
     description: 'Can manage saved import configurations for Google Sheets',
   },
-  // Recipe (bill-of-materials bundle, e.g. ships) permissions
+  // Package (bill-of-materials bundle, e.g. ships) permissions
   {
-    id: 'recipes.view',
-    name: 'View Recipes',
-    description: 'Can view recipes (e.g. ship bills of materials) and their computed pricing',
+    id: 'packages.view',
+    name: 'View Packages',
+    description: 'Can view packages (e.g. ship bills of materials) and their computed pricing',
   },
   {
-    id: 'recipes.manage',
-    name: 'Manage Recipes',
-    description: 'Can create, update, and delete recipes and their material lines',
+    id: 'packages.manage',
+    name: 'Manage Packages',
+    description: 'Can create, update, and delete packages and their material lines',
   },
   // Filter management permissions
   {
@@ -160,7 +160,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'reservations.place_internal',
     'prices.view',
     'adjustments.view',
-    'recipes.view',
+    'packages.view',
   ],
   lead: [
     'orders.view_internal',
@@ -176,8 +176,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'adjustments.view',
     'adjustments.manage',
     'import_configs.manage',
-    'recipes.view',
-    'recipes.manage',
+    'packages.view',
+    'packages.manage',
   ],
   'trade-partner': [
     'orders.view_partner', // Can only see partner orders
@@ -200,8 +200,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'adjustments.view',
     'adjustments.manage',
     'import_configs.manage',
-    'recipes.view',
-    'recipes.manage',
+    'packages.view',
+    'packages.manage',
     'filters.pin',
   ],
 }

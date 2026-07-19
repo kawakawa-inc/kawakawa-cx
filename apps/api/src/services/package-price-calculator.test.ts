@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { calculateRecipePrice, calculateAllRecipePrices } from './recipe-price-calculator.js'
+import { calculatePackagePrice, calculateAllPackagePrices } from './package-price-calculator.js'
 import { db } from '../db/index.js'
 import { calculateEffectivePrices } from './price-calculator.js'
 import { resolveVersionContext } from './price-version.js'
@@ -9,7 +9,7 @@ vi.mock('../db/index.js', () => ({
   db: {
     select: vi.fn(),
   },
-  recipes: {
+  packages: {
     id: 'id',
     name: 'name',
     type: 'type',
@@ -17,8 +17,8 @@ vi.mock('../db/index.js', () => ({
     currency: 'currency',
     isActive: 'isActive',
   },
-  recipeInputs: {
-    recipeId: 'recipeId',
+  packageInputs: {
+    packageId: 'packageId',
     commodityTicker: 'commodityTicker',
     quantity: 'quantity',
   },
@@ -72,7 +72,7 @@ function fakeEffectivePrice(
   }
 }
 
-describe('recipe-price-calculator', () => {
+describe('package-price-calculator', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(resolveVersionContext).mockResolvedValue({
@@ -82,7 +82,7 @@ describe('recipe-price-calculator', () => {
     })
   })
 
-  describe('calculateRecipePrice', () => {
+  describe('calculatePackagePrice', () => {
     it('computes materialCost, margin, and marginPercent when all prices are present', async () => {
       vi.mocked(db.select)
         .mockReturnValueOnce(
@@ -105,7 +105,7 @@ describe('recipe-price-calculator', () => {
         fakeEffectivePrice('DW', 5),
       ])
 
-      const result = await calculateRecipePrice(1, 'KAWA')
+      const result = await calculatePackagePrice(1, 'KAWA')
 
       // 10*50 + 20*5 = 500 + 100 = 600
       expect(result.materialCost).toBe(600)
@@ -139,7 +139,7 @@ describe('recipe-price-calculator', () => {
         )
       vi.mocked(calculateEffectivePrices).mockResolvedValue([]) // no price found for RAT
 
-      const result = await calculateRecipePrice(1, 'KAWA')
+      const result = await calculatePackagePrice(1, 'KAWA')
 
       expect(result.missingPriceTickers).toEqual(['RAT'])
       expect(result.lines[0].unitPrice).toBeNull()
@@ -165,7 +165,7 @@ describe('recipe-price-calculator', () => {
         )
       vi.mocked(calculateEffectivePrices).mockResolvedValue([fakeEffectivePrice('RAT', 50)])
 
-      const result = await calculateRecipePrice(1, 'KAWA')
+      const result = await calculatePackagePrice(1, 'KAWA')
 
       expect(result.currencyMismatch).toBe(true)
       expect(result.margin).toBeNull()
@@ -174,7 +174,7 @@ describe('recipe-price-calculator', () => {
       expect(result.materialCost).toBe(500)
     })
 
-    it('returns null margin when the recipe has no sale price set', async () => {
+    it('returns null margin when the package has no sale price set', async () => {
       vi.mocked(db.select)
         .mockReturnValueOnce(
           createChain(
@@ -190,7 +190,7 @@ describe('recipe-price-calculator', () => {
         )
       vi.mocked(calculateEffectivePrices).mockResolvedValue([fakeEffectivePrice('RAT', 50)])
 
-      const result = await calculateRecipePrice(1, 'KAWA')
+      const result = await calculatePackagePrice(1, 'KAWA')
 
       expect(result.salePrice).toBeNull()
       expect(result.margin).toBeNull()
@@ -214,16 +214,16 @@ describe('recipe-price-calculator', () => {
         )
       vi.mocked(calculateEffectivePrices).mockResolvedValue([fakeEffectivePrice('RAT', 50, true)])
 
-      const result = await calculateRecipePrice(1, 'KAWA')
+      const result = await calculatePackagePrice(1, 'KAWA')
 
       expect(result.lines[0].isFallback).toBe(true)
     })
 
-    it('throws NotFound when the recipe does not exist', async () => {
+    it('throws NotFound when the package does not exist', async () => {
       vi.mocked(db.select).mockReturnValueOnce(createChain([], 'limit') as any)
 
-      await expect(calculateRecipePrice(999, 'KAWA')).rejects.toThrow(
-        'Recipe with ID 999 not found'
+      await expect(calculatePackagePrice(999, 'KAWA')).rejects.toThrow(
+        'Package with ID 999 not found'
       )
     })
 
@@ -240,9 +240,68 @@ describe('recipe-price-calculator', () => {
         new Error("Price list 'NOPE' version 1 not found")
       )
 
-      await expect(calculateRecipePrice(1, 'NOPE')).rejects.toThrow(
+      await expect(calculatePackagePrice(1, 'NOPE')).rejects.toThrow(
         "Price list 'NOPE' version 1 not found"
       )
+    })
+
+    it('passes through pricingMode and marginMultiplier from the package row', async () => {
+      vi.mocked(db.select)
+        .mockReturnValueOnce(
+          createChain(
+            [
+              {
+                id: 1,
+                name: 'Test Ship',
+                type: 'ship',
+                salePrice: '600.00',
+                currency: 'CIS',
+                pricingMode: 'margin',
+                marginMultiplier: '1.2000',
+              },
+            ],
+            'limit'
+          ) as any
+        )
+        .mockReturnValueOnce(
+          createChain(
+            [{ commodityTicker: 'RAT', commodityName: 'Rations', quantity: 10 }],
+            'orderBy'
+          ) as any
+        )
+      vi.mocked(calculateEffectivePrices).mockResolvedValue([fakeEffectivePrice('RAT', 50)])
+
+      const result = await calculatePackagePrice(1, 'KAWA')
+
+      expect(result.pricingMode).toBe('margin')
+      expect(result.marginMultiplier).toBe(1.2)
+    })
+
+    it('reports pricingMode "fixed" and null marginMultiplier when not set', async () => {
+      vi.mocked(db.select)
+        .mockReturnValueOnce(
+          createChain(
+            [
+              {
+                id: 1,
+                name: 'Test Ship',
+                type: 'ship',
+                salePrice: '600.00',
+                currency: 'CIS',
+                pricingMode: 'fixed',
+                marginMultiplier: null,
+              },
+            ],
+            'limit'
+          ) as any
+        )
+        .mockReturnValueOnce(createChain([], 'orderBy') as any)
+      vi.mocked(calculateEffectivePrices).mockResolvedValue([])
+
+      const result = await calculatePackagePrice(1, 'KAWA')
+
+      expect(result.pricingMode).toBe('fixed')
+      expect(result.marginMultiplier).toBeNull()
     })
 
     it('uses the explicit locationId over the version default when provided', async () => {
@@ -256,14 +315,14 @@ describe('recipe-price-calculator', () => {
         .mockReturnValueOnce(createChain([], 'orderBy') as any)
       vi.mocked(calculateEffectivePrices).mockResolvedValue([])
 
-      await calculateRecipePrice(1, 'KAWA', 'ANT')
+      await calculatePackagePrice(1, 'KAWA', 'ANT')
 
       expect(calculateEffectivePrices).toHaveBeenCalledWith('KAWA', 'ANT', 'CIS', 1)
     })
   })
 
-  describe('calculateAllRecipePrices', () => {
-    it('shares one effective-price fetch across every recipe', async () => {
+  describe('calculateAllPackagePrices', () => {
+    it('shares one effective-price fetch across every package', async () => {
       vi.mocked(db.select)
         .mockReturnValueOnce(
           createChain(
@@ -277,15 +336,15 @@ describe('recipe-price-calculator', () => {
         .mockReturnValueOnce(
           createChain(
             [
-              { recipeId: 1, commodityTicker: 'RAT', commodityName: 'Rations', quantity: 1 },
-              { recipeId: 2, commodityTicker: 'RAT', commodityName: 'Rations', quantity: 2 },
+              { packageId: 1, commodityTicker: 'RAT', commodityName: 'Rations', quantity: 1 },
+              { packageId: 2, commodityTicker: 'RAT', commodityName: 'Rations', quantity: 2 },
             ],
             'orderBy'
           ) as any
         )
       vi.mocked(calculateEffectivePrices).mockResolvedValue([fakeEffectivePrice('RAT', 50)])
 
-      const results = await calculateAllRecipePrices('KAWA')
+      const results = await calculateAllPackagePrices('KAWA')
 
       expect(calculateEffectivePrices).toHaveBeenCalledTimes(1)
       expect(results).toHaveLength(2)
@@ -295,13 +354,13 @@ describe('recipe-price-calculator', () => {
       expect(results[1].margin).toBe(100)
     })
 
-    it('returns an empty array without fetching inputs when there are no recipes', async () => {
+    it('returns an empty array without fetching inputs when there are no packages', async () => {
       vi.mocked(db.select).mockReturnValueOnce(createChain([], 'orderBy') as any)
 
-      const results = await calculateAllRecipePrices('KAWA')
+      const results = await calculateAllPackagePrices('KAWA')
 
       expect(results).toEqual([])
-      // Only the recipes query should have run — no inputs query
+      // Only the packages query should have run — no inputs query
       expect(db.select).toHaveBeenCalledTimes(1)
     })
   })

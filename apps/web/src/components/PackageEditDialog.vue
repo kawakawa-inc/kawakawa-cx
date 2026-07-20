@@ -107,6 +107,7 @@
                 :get-commodity-category="commodityService.getCommodityCategory"
                 :extra-suggestion-types="categorySuggestionTypes"
                 :allowed-suggestion-types="['commodity', 'category']"
+                :singular-types="[]"
                 :chip-icon-by-type="bomChipIconByType"
                 @update:chips="onMaterialSearchChips"
               />

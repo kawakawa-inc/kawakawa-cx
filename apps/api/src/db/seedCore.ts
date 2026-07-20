@@ -2,7 +2,7 @@
 // `scripts/db-init-idempotent.ts` (db:init). All upserts, so safe to call
 // repeatedly against a non-empty database.
 import { db, roles, permissions, rolePermissions, priceLists, priceListVersions } from './index.js'
-import { sql } from 'drizzle-orm'
+import { sql, inArray } from 'drizzle-orm'
 import {
   ROLES_DATA,
   PERMISSIONS_DATA,
@@ -24,6 +24,13 @@ export interface SeedRolesAndPermissionsResult {
  * duplicate grant rows.
  */
 export async function seedRolesAndPermissions(): Promise<SeedRolesAndPermissionsResult> {
+  // One-time cleanup: this branch renamed the 'recipes.*' permission ids to
+  // 'packages.*' before ever shipping to production, so any dev database
+  // seeded from an earlier revision can just have the old ids dropped
+  // outright (cascades to role_permissions) instead of carrying grants
+  // forward. Remove this once merged.
+  await db.delete(permissions).where(inArray(permissions.id, ['recipes.view', 'recipes.manage']))
+
   await db
     .insert(roles)
     .values(ROLES_DATA)

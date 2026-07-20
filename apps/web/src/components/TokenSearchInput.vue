@@ -426,6 +426,9 @@ function buildRows(
   const out: HistoryRow[] = []
   const seen = new Set<string>()
   const pushRow = (type: SearchChipType): void => {
+    // Respect the field's allowlist: don't surface history/favorites for chip
+    // types this surface doesn't accept (mirrors how suggestions are gated).
+    if (props.allowedSuggestionTypes && !props.allowedSuggestionTypes.includes(type)) return
     const all = map[type]
     if (!all) return
     const chips = excludeIf ? all.filter(c => !excludeIf(c)) : all

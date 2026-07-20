@@ -20,8 +20,7 @@
               <v-switch v-model="isActive" label="Active" color="primary" hide-details inset />
             </v-col>
 
-            <!-- Price list drives the currency + the live BOM cost tally below,
-                 always priced at the price list's default location. -->
+            <!-- Price list drives the currency + the live BOM cost tally below. -->
             <v-col cols="12" sm="6">
               <v-select
                 v-model="priceListCode"
@@ -31,8 +30,6 @@
                 label="Price List"
                 :rules="[rules.required]"
                 :loading="loadingPriceLists"
-                hint="Materials below are priced against this list's default location"
-                persistent-hint
               />
             </v-col>
             <v-col cols="12">
@@ -46,7 +43,15 @@
             <v-card-text>
               <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
                 <span class="text-subtitle-2">Bill of Materials</span>
-                <div class="d-flex align-center ga-2">
+                <div class="d-flex align-center flex-wrap ga-2">
+                  <KeyValueAutocomplete
+                    v-model="previewLocationId"
+                    :items="locationOptions"
+                    label="Location Preview"
+                    density="compact"
+                    hide-details
+                    class="location-preview"
+                  />
                   <v-select
                     v-model="categoryFilter"
                     :items="categoryOptions"
@@ -58,6 +63,14 @@
                     clearable
                     class="category-filter"
                   />
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    prepend-icon="mdi-clipboard-text-outline"
+                    @click="showBomPaste = !showBomPaste"
+                  >
+                    Paste BOM
+                  </v-btn>
                   <v-btn size="small" variant="text" prepend-icon="mdi-plus" @click="addLine">
                     Add Material
                   </v-btn>
@@ -68,6 +81,27 @@
                   categoryFilterLabel
                 }}". A line's already-selected material stays available even if it's in a different
                 category.
+              </div>
+
+              <div v-if="showBomPaste" class="bom-paste mb-3">
+                <v-textarea
+                  v-model="bomPasteText"
+                  label="Paste BOM"
+                  placeholder="e.g. 1 FFC, 1 FSE, 1 QCR, 3 MFE, 2 SFE, 1 SCB, 48 LHP, 47 SSC"
+                  rows="2"
+                  auto-grow
+                  density="compact"
+                  hide-details
+                />
+                <div class="d-flex align-center ga-2 mt-1">
+                  <v-btn size="small" color="primary" variant="tonal" @click="parseBomPaste">
+                    Replace Lines
+                  </v-btn>
+                  <v-btn size="small" variant="text" @click="cancelBomPaste">Cancel</v-btn>
+                </div>
+                <div v-if="bomPasteMessage" class="text-caption text-warning mt-1">
+                  {{ bomPasteMessage }}
+                </div>
               </div>
 
               <div v-if="lineError" class="text-error text-caption mb-2">{{ lineError }}</div>
@@ -249,6 +283,7 @@ import {
   type PriceListDefinition,
 } from '../services/api'
 import { commodityService } from '../services/commodityService'
+import { locationService } from '../services/locationService'
 import { useDisplayHelpers, useSnackbar } from '../composables'
 import { useSettingsStore } from '../stores/settings'
 import { localizeMaterialCategory } from '../utils/materials'
@@ -273,7 +308,7 @@ const emit = defineEmits<{
   (e: 'save', payload: CreatePackageRequest | UpdatePackageRequest): void
 }>()
 
-const { getCommodityDisplay } = useDisplayHelpers()
+const { getCommodityDisplay, getLocationDisplay } = useDisplayHelpers()
 const { showSnackbar } = useSnackbar()
 const settingsStore = useSettingsStore()
 const hasIcons = computed(() => settingsStore.commodityIconStyle.value !== 'none')
@@ -290,11 +325,16 @@ const lines = ref<{ commodityTicker: string | null; quantity: number }[]>([
   { commodityTicker: null, quantity: 1 },
 ])
 
-// Price list — drives currency and the live cost tally, always priced at the
-// selected list's default location (no separate location picker here).
+// Price list — drives currency and the live cost tally. Materials price at
+// `previewLocationId`, which defaults to the list's default location but can
+// be changed to preview cost at another location without affecting anything
+// that gets saved (the package itself has no notion of a pricing location).
 const priceLists = ref<PriceListDefinition[]>([])
 const loadingPriceLists = ref(false)
 const priceListCode = ref<string | null>(null)
+const previewLocationId = ref<string | null>(null)
+const locations = ref<KeyValueItem[]>([])
+const locationOptions = computed((): KeyValueItem[] => locations.value)
 const priceMap = ref<Map<string, number>>(new Map())
 const loadingPrices = ref(false)
 
@@ -302,6 +342,13 @@ const loadingPrices = ref(false)
 const pricingMode = ref<PackagePricingMode>('fixed')
 const fixedPrice = ref<number | null>(null)
 const marginMultiplier = ref<number>(1)
+
+// BOM paste: accepts the same "1 FFC, 1 FSE, 3 MFE, ..." format the price
+// list admin's BOM CSV column uses, so a ship's parts list can be pasted in
+// directly instead of hand-picking every material line.
+const showBomPaste = ref(false)
+const bomPasteText = ref('')
+const bomPasteMessage = ref('')
 
 const isUpdate = computed(() => !!props.package)
 const saving = computed(() => props.saving)
@@ -430,17 +477,14 @@ const loadPriceLists = async () => {
 
 const loadEffectivePrices = async () => {
   const pl = selectedPriceListData.value
-  if (!pl || !pl.defaultLocationId) {
+  const locationId = previewLocationId.value || pl?.defaultLocationId
+  if (!pl || !locationId) {
     priceMap.value = new Map()
     return
   }
   try {
     loadingPrices.value = true
-    const effectivePrices = await api.prices.getEffective(
-      pl.code,
-      pl.defaultLocationId,
-      pl.currency
-    )
+    const effectivePrices = await api.prices.getEffective(pl.code, locationId, pl.currency)
     priceMap.value = new Map(effectivePrices.map(p => [p.commodityTicker, p.finalPrice]))
   } catch (error) {
     console.error('Failed to load effective prices', error)
@@ -451,12 +495,31 @@ const loadEffectivePrices = async () => {
   }
 }
 
-watch(priceListCode, loadEffectivePrices)
+const loadLocations = async () => {
+  try {
+    const data = await locationService.getAllLocations()
+    locations.value = data.map(l => ({ key: l.id, display: getLocationDisplay(l.id) }))
+  } catch (error) {
+    console.error('Failed to load locations', error)
+  }
+}
+
+// Switching price lists resets the location preview to that list's own
+// default location (previewing a stale location from a different list's
+// currency/location context wouldn't mean anything).
+watch(priceListCode, () => {
+  previewLocationId.value = selectedPriceListData.value?.defaultLocationId || null
+  loadEffectivePrices()
+})
+watch(previewLocationId, loadEffectivePrices)
 
 watch(dialogOpen, async open => {
   if (!open) return
   lineError.value = ''
   categoryFilter.value = null
+  showBomPaste.value = false
+  bomPasteText.value = ''
+  bomPasteMessage.value = ''
   const p = props.package
 
   name.value = p?.name ?? ''
@@ -475,11 +538,16 @@ watch(dialogOpen, async open => {
   if (priceLists.value.length === 0) {
     await loadPriceLists()
   }
-  const preferred = props.defaultPriceListCode
+  if (locations.value.length === 0) {
+    await loadLocations()
+  }
+
+  const preferred = props.defaultPriceListCode ?? settingsStore.defaultPriceList.value
   priceListCode.value =
     (preferred && priceLists.value.some(pl => pl.code === preferred) ? preferred : null) ??
     priceLists.value[0]?.code ??
     null
+  previewLocationId.value = selectedPriceListData.value?.defaultLocationId || null
 
   await loadEffectivePrices()
 })
@@ -487,6 +555,7 @@ watch(dialogOpen, async open => {
 onMounted(() => {
   if (dialogOpen.value) {
     loadPriceLists()
+    loadLocations()
   }
 })
 
@@ -497,6 +566,72 @@ const addLine = () => {
 const removeLine = (index: number) => {
   if (lines.value.length <= 1) return
   lines.value.splice(index, 1)
+}
+
+const cancelBomPaste = () => {
+  showBomPaste.value = false
+  bomPasteText.value = ''
+  bomPasteMessage.value = ''
+}
+
+/**
+ * Parse the "1 FFC, 1 FSE, 3 MFE, ..." format used by the price list admin's
+ * BOM CSV column (see `.dev/design-docs/price-list-admin`) into material
+ * lines, replacing whatever's currently in the form. Unknown tickers and
+ * unparseable tokens are skipped and reported rather than blocking the paste.
+ */
+const parseBomPaste = () => {
+  bomPasteMessage.value = ''
+  const raw = bomPasteText.value.trim()
+  if (!raw) return
+
+  const tokens = raw
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean)
+  const knownTickers = new Set(commodityService.getAllCommoditiesSync().map(c => c.ticker))
+  const merged = new Map<string, number>()
+  const unknown = new Set<string>()
+  const unparsed: string[] = []
+
+  for (const token of tokens) {
+    const match = token.match(/^(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z0-9]*)$/)
+    if (!match) {
+      unparsed.push(token)
+      continue
+    }
+    const quantity = Math.floor(parseFloat(match[1]))
+    const ticker = match[2].toUpperCase()
+    if (quantity <= 0) {
+      unparsed.push(token)
+      continue
+    }
+    if (!knownTickers.has(ticker)) {
+      unknown.add(ticker)
+      continue
+    }
+    merged.set(ticker, (merged.get(ticker) ?? 0) + quantity)
+  }
+
+  if (merged.size === 0) {
+    bomPasteMessage.value = 'No valid "qty TICKER" pairs found (e.g. "1 FFC, 3 MFE").'
+    return
+  }
+
+  lines.value = [...merged.entries()].map(([commodityTicker, quantity]) => ({
+    commodityTicker,
+    quantity,
+  }))
+
+  const problems: string[] = []
+  if (unknown.size > 0) problems.push(`unknown ticker(s): ${[...unknown].join(', ')}`)
+  if (unparsed.length > 0) problems.push(`unparsed token(s): ${unparsed.join(', ')}`)
+
+  if (problems.length > 0) {
+    bomPasteMessage.value = `Imported ${merged.size} material(s); skipped ${problems.join('; ')}.`
+  } else {
+    cancelBomPaste()
+  }
 }
 
 const handleSave = () => {
@@ -557,6 +692,16 @@ const close = () => {
 
 .category-filter {
   min-width: 220px;
+}
+
+.location-preview {
+  min-width: 200px;
+}
+
+.bom-paste {
+  padding: 8px;
+  border: 1px dashed rgba(var(--v-theme-on-surface), 0.2);
+  border-radius: 4px;
 }
 
 .bom-col-material {

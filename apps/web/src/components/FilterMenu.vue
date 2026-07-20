@@ -227,6 +227,60 @@
               </v-list-item>
             </template>
 
+            <!-- Price List -->
+            <template v-else-if="activeType === 'priceList'">
+              <v-list-item
+                v-for="opt in priceListOptions"
+                :key="opt.value"
+                :title="opt.display"
+                :color="isActive('priceList', opt.value) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('priceList', opt.value, opt.display)"
+              >
+                <template v-if="isActive('priceList', opt.value)" #prepend>
+                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
+            <!-- Price List Version -->
+            <template v-else-if="activeType === 'priceListVersion'">
+              <div
+                v-if="priceListVersionOptions.length === 0"
+                class="text-center pa-4 text-medium-emphasis text-body-2"
+              >
+                Pick a price list first.
+              </div>
+              <v-list-item
+                v-for="opt in priceListVersionOptions"
+                :key="opt.value"
+                :title="opt.display"
+                :color="isActive('priceListVersion', opt.value) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('priceListVersion', opt.value, opt.display)"
+              >
+                <template v-if="isActive('priceListVersion', opt.value)" #prepend>
+                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
+            <!-- Package Type -->
+            <template v-else-if="activeType === 'packageType'">
+              <v-list-item
+                v-for="opt in packageTypeOptions"
+                :key="opt.value"
+                :title="opt.title"
+                :color="isActive('packageType', opt.value) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('packageType', opt.value, opt.title)"
+              >
+                <template v-if="isActive('packageType', opt.value)" #prepend>
+                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
             <!-- Saved Filters -->
             <template v-else-if="activeType === 'saved'">
               <div v-if="loadingSavedFilters" class="d-flex justify-center pa-4">
@@ -461,6 +515,13 @@ const props = withDefaults(
     storageTypeOptions?: string[]
     activeLocationType?: string | null
     activeStorageType?: string | null
+    // Packages-only optional props
+    priceListOptions?: FilterOption[]
+    priceListVersionOptions?: FilterOption[]
+    packageTypeOptions?: { title: string; value: string }[]
+    activePriceList?: string | null
+    activePriceListVersion?: string | null
+    activePackageType?: string | null
   }>(),
   {
     categoryOptions: () => [],
@@ -486,6 +547,12 @@ const props = withDefaults(
     storageTypeOptions: () => [],
     activeLocationType: null,
     activeStorageType: null,
+    priceListOptions: () => [],
+    priceListVersionOptions: () => [],
+    packageTypeOptions: () => [],
+    activePriceList: null,
+    activePriceListVersion: null,
+    activePackageType: null,
   }
 )
 
@@ -528,6 +595,9 @@ const isActive = (filterType: string, value: string): boolean => {
   if (filterType === 'orderType') return props.activeOrderType === value
   if (filterType === 'locationType') return props.activeLocationType === value
   if (filterType === 'storageType') return props.activeStorageType === value
+  if (filterType === 'priceList') return props.activePriceList === value
+  if (filterType === 'priceListVersion') return props.activePriceListVersion === value
+  if (filterType === 'packageType') return props.activePackageType === value
   return false
 }
 

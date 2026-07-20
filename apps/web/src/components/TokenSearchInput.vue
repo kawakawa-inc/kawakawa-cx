@@ -185,6 +185,9 @@ export type SearchChipType =
   | 'shoppingList'
   | 'category'
   | 'storage'
+  | 'priceList'
+  | 'priceListVersion'
+  | 'packageType'
 
 export interface SearchChip {
   type: SearchChipType
@@ -311,6 +314,15 @@ interface Props {
    * locations, users, and buy/sell keywords from the catch-all branches.
    */
   allowedSuggestionTypes?: SearchChipType[]
+  /**
+   * Chip types that replace any existing chip of the same type when a new
+   * one is picked, instead of accumulating alongside it (e.g. a package can
+   * only be priced against one Price List at a time). Defaults to the
+   * original hardcoded set (`itemType`, `category`) so existing surfaces are
+   * unaffected; pass a longer list to make additional types (including your
+   * own via `extraSuggestionTypes`) single-select too.
+   */
+  singularTypes?: SearchChipType[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -328,7 +340,12 @@ const props = withDefaults(defineProps<Props>(), {
   enterCreatesType: undefined,
   historyKey: undefined,
   allowedSuggestionTypes: undefined,
+  singularTypes: () => ['itemType', 'category'],
 })
+
+// Whether chips of this type should replace (not accumulate alongside) any
+// existing chip of the same type — see `singularTypes` prop.
+const isSingularType = (type: SearchChipType): boolean => props.singularTypes.includes(type)
 
 // Per-surface search history (no-op when historyKey is undefined). Records on
 // every chip add and surfaces "Recent" rows in the empty-state dropdown.
@@ -363,6 +380,9 @@ const HISTORY_TYPE_LABELS: Partial<Record<SearchChipType, string>> = {
   storage: 'Storage',
   source: 'Source',
   destination: 'Destination',
+  priceList: 'Price Lists',
+  priceListVersion: 'Versions',
+  packageType: 'Type',
 }
 
 // Canonical type order for history/favorites rendering — keeps surfaces
@@ -377,6 +397,9 @@ const HISTORY_TYPE_ORDER: SearchChipType[] = [
   'storage',
   'user',
   'itemType',
+  'priceList',
+  'priceListVersion',
+  'packageType',
 ]
 
 // Build per-type rows from a chip map, optionally hiding entries that pass
@@ -420,7 +443,7 @@ const favoriteRows = computed<HistoryRow[]>(() => buildRows(searchHistory.favori
 // through the same singular-type-replacement logic as suggestion picks.
 function applyHistoryChip(chip: SearchChip): void {
   if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-  if (chip.type === 'itemType' || chip.type === 'category') {
+  if (isSingularType(chip.type)) {
     chips.value = chips.value.filter(c => c.type !== chip.type)
   }
   chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
@@ -745,10 +768,13 @@ const suggestions = computed((): Suggestion[] => {
     storage: 3,
     user: 4,
     itemType: 5,
+    priceList: 6,
+    priceListVersion: 7,
+    packageType: 8,
   }
   results.sort((a, b) => {
     // First sort by type
-    const typeCompare = typeOrder[a.type] - typeOrder[b.type]
+    const typeCompare = (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99)
     if (typeCompare !== 0) return typeCompare
 
     // Then by match quality: exact > starts-with > contains
@@ -800,8 +826,8 @@ const getCurrentWord = (): string => {
 const selectSuggestion = (suggestion: Suggestion) => {
   const chip = createChipFromSuggestion(suggestion)
   if (chip) {
-    // Remove existing chip of same type for singular types (itemType, category)
-    if (chip.type === 'itemType' || chip.type === 'category') {
+    // Remove existing chip of same type for singular types
+    if (isSingularType(chip.type)) {
       chips.value = chips.value.filter(c => c.type !== chip.type)
     }
 
@@ -1143,7 +1169,7 @@ const addChipFromRawToken = (raw: string, type: SearchChipType) => {
   const value = normalizeTokenValue(type, raw)
   if (!value) return
   if (chips.value.some(c => c.type === type && c.value === value)) return
-  if (type === 'itemType' || type === 'category') {
+  if (isSingularType(type)) {
     chips.value = chips.value.filter(c => c.type !== type)
   }
   const chip: SearchChip = {
@@ -1210,8 +1236,8 @@ defineExpose({
   addChip: (chip: SearchChip) => {
     // Deduplicate: skip if same type+value already exists
     if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-    // Replace existing chip for singular types (itemType, category)
-    if (chip.type === 'itemType' || chip.type === 'category') {
+    // Replace existing chip for singular types
+    if (isSingularType(chip.type)) {
       chips.value = chips.value.filter(c => c.type !== chip.type)
     }
     const decorated = { ...chip, color: chipColor(chip.type, chip.value) }

@@ -243,28 +243,6 @@
               </v-list-item>
             </template>
 
-            <!-- Price List Version -->
-            <template v-else-if="activeType === 'priceListVersion'">
-              <div
-                v-if="priceListVersionOptions.length === 0"
-                class="text-center pa-4 text-medium-emphasis text-body-2"
-              >
-                Pick a price list first.
-              </div>
-              <v-list-item
-                v-for="opt in priceListVersionOptions"
-                :key="opt.value"
-                :title="opt.display"
-                :color="isActive('priceListVersion', opt.value) ? 'primary' : undefined"
-                rounded="lg"
-                @click="onSelect('priceListVersion', opt.value, opt.display)"
-              >
-                <template v-if="isActive('priceListVersion', opt.value)" #prepend>
-                  <v-icon color="primary" size="small" class="mr-1">mdi-check</v-icon>
-                </template>
-              </v-list-item>
-            </template>
-
             <!-- Package Type -->
             <template v-else-if="activeType === 'packageType'">
               <v-list-item
@@ -517,10 +495,8 @@ const props = withDefaults(
     activeStorageType?: string | null
     // Packages-only optional props
     priceListOptions?: FilterOption[]
-    priceListVersionOptions?: FilterOption[]
     packageTypeOptions?: { title: string; value: string }[]
     activePriceList?: string | null
-    activePriceListVersion?: string | null
     activePackageType?: string | null
   }>(),
   {
@@ -548,10 +524,8 @@ const props = withDefaults(
     activeLocationType: null,
     activeStorageType: null,
     priceListOptions: () => [],
-    priceListVersionOptions: () => [],
     packageTypeOptions: () => [],
     activePriceList: null,
-    activePriceListVersion: null,
     activePackageType: null,
   }
 )
@@ -596,7 +570,6 @@ const isActive = (filterType: string, value: string): boolean => {
   if (filterType === 'locationType') return props.activeLocationType === value
   if (filterType === 'storageType') return props.activeStorageType === value
   if (filterType === 'priceList') return props.activePriceList === value
-  if (filterType === 'priceListVersion') return props.activePriceListVersion === value
   if (filterType === 'packageType') return props.activePackageType === value
   return false
 }

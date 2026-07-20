@@ -6,19 +6,28 @@
       }}</v-icon>
       <kbd v-else class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
 
-      <!-- Chips for parsed tokens -->
-      <v-chip
-        v-for="(chip, index) in chips"
-        :key="`${chip.type}-${chip.value}-${index}`"
-        :color="chip.color"
-        :prepend-icon="chipIconByType[chip.type]"
-        size="small"
-        closable
-        class="token-chip"
-        @click:close="removeChip(index)"
-      >
-        {{ chip.display }}
-      </v-chip>
+      <!-- Chips for parsed tokens. A per-type scoped slot (`chip-<type>`) lets a
+           consumer fully customize a chip's rendering; when none is provided
+           the default closable chip below is used. -->
+      <template v-for="(chip, index) in chips" :key="`${chip.type}-${chip.value}-${index}`">
+        <slot
+          :name="`chip-${chip.type}`"
+          :chip="chip"
+          :index="index"
+          :remove="() => removeChip(index)"
+        >
+          <v-chip
+            :color="chip.color"
+            :prepend-icon="chipIconByType[chip.type]"
+            size="small"
+            closable
+            class="token-chip"
+            @click:close="removeChip(index)"
+          >
+            {{ chip.display }}
+          </v-chip>
+        </slot>
+      </template>
 
       <!-- Text input for current/unparsed text -->
       <input
@@ -186,7 +195,6 @@ export type SearchChipType =
   | 'category'
   | 'storage'
   | 'priceList'
-  | 'priceListVersion'
   | 'packageType'
 
 export interface SearchChip {
@@ -269,6 +277,13 @@ interface Props {
   getLocationDisplay?: (locationId: string) => string
   /** Function to get localized commodity name (for search matching) */
   getCommodityName?: (ticker: string) => string
+  /**
+   * Optional: a commodity's category, used to narrow commodity suggestions to
+   * whatever `category` chips are currently active. When omitted (the default),
+   * category chips don't affect commodity suggestions. Lets a single search box
+   * act as "filter materials by category, then pick one".
+   */
+  getCommodityCategory?: (ticker: string) => string | null
   /** Additional suggestion types (e.g., category, storage) */
   extraSuggestionTypes?: ExtraSuggestionType[]
   /**
@@ -331,6 +346,7 @@ const props = withDefaults(defineProps<Props>(), {
   getCommodityDisplay: (ticker: string) => ticker,
   getLocationDisplay: (locationId: string) => locationId,
   getCommodityName: (ticker: string) => ticker,
+  getCommodityCategory: undefined,
   extraSuggestionTypes: () => [],
   helpTokens: () => [],
   chips: undefined,
@@ -381,7 +397,6 @@ const HISTORY_TYPE_LABELS: Partial<Record<SearchChipType, string>> = {
   source: 'Source',
   destination: 'Destination',
   priceList: 'Price Lists',
-  priceListVersion: 'Versions',
   packageType: 'Type',
 }
 
@@ -398,7 +413,6 @@ const HISTORY_TYPE_ORDER: SearchChipType[] = [
   'user',
   'itemType',
   'priceList',
-  'priceListVersion',
   'packageType',
 ]
 
@@ -561,6 +575,21 @@ const parseXitOrigin = (origin: string): string | null => {
 }
 
 // Get suggestions based on current input
+// Active category chips narrow which commodities can be suggested (only when
+// the consumer supplies getCommodityCategory). Empty set = no restriction.
+const activeCategoryFilter = computed(() => {
+  if (!props.getCommodityCategory) return null
+  const cats = chips.value.filter(c => c.type === 'category').map(c => c.value)
+  return cats.length > 0 ? new Set(cats) : null
+})
+
+const commodityMatchesCategory = (ticker: string): boolean => {
+  const filter = activeCategoryFilter.value
+  if (!filter) return true
+  const cat = props.getCommodityCategory?.(ticker) ?? null
+  return cat !== null && filter.has(cat)
+}
+
 const suggestions = computed((): Suggestion[] => {
   const currentWord = getCurrentWord()
   if (!currentWord || currentWord.length < 1) return []
@@ -577,9 +606,10 @@ const suggestions = computed((): Suggestion[] => {
       for (const c of commodities) {
         const localizedName = props.getCommodityName(c.ticker).toLowerCase()
         if (
-          c.ticker.toLowerCase().includes(query) ||
-          c.name.toLowerCase().includes(query) ||
-          localizedName.includes(query)
+          (c.ticker.toLowerCase().includes(query) ||
+            c.name.toLowerCase().includes(query) ||
+            localizedName.includes(query)) &&
+          commodityMatchesCategory(c.ticker)
         ) {
           results.push({
             type: 'commodity',
@@ -662,7 +692,9 @@ const suggestions = computed((): Suggestion[] => {
   const commodities = commodityService.getAllCommoditiesSync()
 
   // Always include exact ticker match first (so early break doesn't skip it)
-  const exactTickerMatch = commodities.find(c => c.ticker.toUpperCase() === upperWord)
+  const exactTickerMatch = commodities.find(
+    c => c.ticker.toUpperCase() === upperWord && commodityMatchesCategory(c.ticker)
+  )
   if (exactTickerMatch) {
     results.push({
       type: 'commodity',
@@ -677,12 +709,13 @@ const suggestions = computed((): Suggestion[] => {
   for (const c of commodities) {
     const localizedName = props.getCommodityName(c.ticker).toLowerCase()
     if (
-      c.ticker.toUpperCase() === upperWord ||
-      c.ticker.toLowerCase().startsWith(lowerWord) ||
-      c.name.toLowerCase().startsWith(lowerWord) ||
-      c.name.toLowerCase().includes(lowerWord) ||
-      localizedName.startsWith(lowerWord) ||
-      localizedName.includes(lowerWord)
+      (c.ticker.toUpperCase() === upperWord ||
+        c.ticker.toLowerCase().startsWith(lowerWord) ||
+        c.name.toLowerCase().startsWith(lowerWord) ||
+        c.name.toLowerCase().includes(lowerWord) ||
+        localizedName.startsWith(lowerWord) ||
+        localizedName.includes(lowerWord)) &&
+      commodityMatchesCategory(c.ticker)
     ) {
       // Avoid duplicates (including exact match added above)
       if (!results.find(r => r.type === 'commodity' && r.value === c.ticker)) {
@@ -769,8 +802,7 @@ const suggestions = computed((): Suggestion[] => {
     user: 4,
     itemType: 5,
     priceList: 6,
-    priceListVersion: 7,
-    packageType: 8,
+    packageType: 7,
   }
   results.sort((a, b) => {
     // First sort by type

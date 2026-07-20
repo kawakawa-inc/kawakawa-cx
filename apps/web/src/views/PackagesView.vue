@@ -11,13 +11,11 @@
           :commodity-options="commodityFilterOptions"
           :location-options="locationFilterOptions"
           :price-list-options="priceListFilterOptions"
-          :price-list-version-options="priceListVersionFilterOptions"
           :package-type-options="packageTypeOptions"
           :filter-types="packageFilterTypes"
           :show-saved="false"
           :active-chips="chips"
           :active-price-list="selectedPriceList"
-          :active-price-list-version="selectedVersion !== null ? String(selectedVersion) : null"
           :active-package-type="typeFilter"
           @select="onFilterMenuSelect"
         />
@@ -28,12 +26,61 @@
           :get-location-display="getLocationDisplay"
           :extra-suggestion-types="extraSuggestionTypes"
           :chip-icon-by-type="chipIconByType"
-          :singular-types="['location', 'priceList', 'priceListVersion', 'packageType']"
+          :singular-types="['location', 'priceList', 'packageType']"
           :help-tokens="packagesHelpTokens"
           history-key="packages"
-          placeholder="Search: KAWA, v3, ship, RAT (materials search inside BOMs)..."
+          placeholder="Search: KAWA, ship, RAT (materials search inside BOMs)..."
           @update:chips="onChipsUpdate"
-        />
+        >
+          <!-- Price list chip carries its pinned version as an embedded
+               dropdown button (branch icon + version), so the two read as one
+               tightly-coupled control rather than two separate chips. -->
+          <template #chip-priceList="{ chip, remove }">
+            <v-chip
+              color="indigo"
+              size="small"
+              class="token-chip pl-chip"
+              closable
+              @click:close="remove"
+            >
+              <span>{{ chipListLabel(chip.value) }}</span>
+              <v-menu>
+                <template #activator="{ props: menuProps }">
+                  <button
+                    type="button"
+                    class="pl-chip-version"
+                    v-bind="menuProps"
+                    @click.stop
+                    @mousedown.stop
+                  >
+                    <span class="pl-chip-version-inner">
+                      <v-icon size="x-small" start>mdi-source-branch</v-icon>
+                      {{ chipVersionLabel(chip.value) }}
+                    </span>
+                  </button>
+                </template>
+                <v-list density="compact" min-width="200">
+                  <v-list-subheader>Price List Version</v-list-subheader>
+                  <v-list-item
+                    :active="chipVersion(chip.value) === null"
+                    @click="setVersionForChip(chip, null)"
+                  >
+                    <v-list-item-title>Current (latest promoted)</v-list-item-title>
+                  </v-list-item>
+                  <v-divider />
+                  <v-list-item
+                    v-for="opt in versionsForSelectedList"
+                    :key="opt.value"
+                    :active="chipVersion(chip.value) === Number(opt.value)"
+                    @click="setVersionForChip(chip, Number(opt.value))"
+                  >
+                    <v-list-item-title>{{ opt.display }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </v-chip>
+          </template>
+        </TokenSearchInput>
         <span class="text-body-2 text-medium-emphasis text-no-wrap">
           {{ breakdowns.length }} package(s)
         </span>
@@ -287,7 +334,6 @@ const expandedRows = ref<string[]>([])
 const priceListFilterOptions = computed(() =>
   priceLists.value.map(pl => ({ value: pl.value, display: `${pl.title} (${pl.currency})` }))
 )
-const priceListVersionFilterOptions = computed(() => versionsForSelectedList.value)
 const packageTypeOptions = [
   { title: 'Ship', value: 'ship' },
   { title: 'Building', value: 'building' },
@@ -307,7 +353,6 @@ const packageFilterTypes: FilterTypeConfig[] = [
   { key: 'commodity', label: 'Material', color: 'primary', icon: 'mdi-cube-outline' },
   { key: 'location', label: 'Location', color: 'secondary', icon: 'mdi-map-marker-outline' },
   { key: 'priceList', label: 'Price List', icon: 'mdi-tag-multiple-outline' },
-  { key: 'priceListVersion', label: 'Version', icon: 'mdi-numeric' },
   { key: 'packageType', label: 'Type', icon: 'mdi-shape-outline' },
 ]
 
@@ -319,12 +364,6 @@ const extraSuggestionTypes = computed((): ExtraSuggestionType[] => [
     options: priceListFilterOptions.value,
   },
   {
-    type: 'priceListVersion',
-    typeLabel: 'Version',
-    color: 'deep-purple',
-    options: priceListVersionFilterOptions.value,
-  },
-  {
     type: 'packageType',
     typeLabel: 'Type',
     color: 'brown',
@@ -333,11 +372,7 @@ const extraSuggestionTypes = computed((): ExtraSuggestionType[] => [
 ])
 
 const chipIconByType = {
-  // A price list + pinned version render as one chip (see onChipsUpdate) —
-  // the branching icon reads naturally either way ("main" vs. a specific
-  // version, much like a git branch/tag).
-  priceList: 'mdi-source-branch',
-  priceListVersion: 'mdi-source-branch',
+  priceList: 'mdi-tag-multiple-outline',
   packageType: 'mdi-shape-outline',
 }
 
@@ -358,13 +393,7 @@ const packagesHelpTokens: HelpToken[] = [
     label: 'Price List',
     color: 'indigo',
     example: 'KAWA',
-    description: 'Which price list to price against',
-  },
-  {
-    label: 'Version',
-    color: 'deep-purple',
-    example: 'v3',
-    description: 'A specific price list version (defaults to current)',
+    description: 'Which price list to price against — pick a version from the chip',
   },
   { label: 'Type', color: 'brown', example: 'ship', description: 'Ship or building packages' },
 ]
@@ -399,59 +428,68 @@ const chips = ref<SearchChip[]>([])
 
 const hasActiveFilters = computed(() => chips.value.length > 0)
 
-// Price List and Version are rendered as a single chip (they're meaningless
-// apart from each other — a version only exists within its price list). The
-// chip's `value` encodes both: "KAWA" (no pinned version) or "KAWA:3"
-// (pinned to v3); the display renders the version as a "[v3]" suffix.
-const buildPriceListChip = (code: string, version: number | null): SearchChip => {
+// Price List and its pinned version are a single chip — a version only exists
+// within its price list, so they're always coupled. The chip's `value`
+// encodes both: "KAWA" (no pinned version = current) or "KAWA:3" (pinned to
+// v3). The version is presented/changed via an embedded dropdown button
+// inside the chip (see the #chip-priceList slot), not as a separate token.
+const buildPriceListChip = (code: string, version: number | null): SearchChip => ({
+  type: 'priceList',
+  value: version !== null ? `${code}:${version}` : code,
+  // `display` is a plain-text fallback; the slot renders the rich version.
+  display: version !== null ? `${chipListLabel(code)} [v${version}]` : chipListLabel(code),
+  color: 'indigo',
+})
+
+// Helpers for the custom price-list chip rendering. `chipValue` is the encoded
+// "code" or "code:version" string.
+const chipCode = (chipValue: string): string => chipValue.split(':')[0]
+const chipVersion = (chipValue: string): number | null => {
+  const v = chipValue.split(':')[1]
+  return v !== undefined ? Number(v) : null
+}
+const chipListLabel = (chipValue: string): string => {
+  const code = chipCode(chipValue)
   const pl = priceLists.value.find(p => p.value === code)
-  const base = pl ? `${pl.title} (${pl.currency})` : code
-  return {
-    type: 'priceList',
-    value: version !== null ? `${code}:${version}` : code,
-    display: version !== null ? `${base} [v${version}]` : base,
-    color: 'indigo',
-  }
+  return pl ? `${pl.title} (${pl.currency})` : code
+}
+const chipVersionLabel = (chipValue: string): string => {
+  const version = chipVersion(chipValue)
+  return version !== null ? `v${version}` : 'Current'
+}
+
+// Change the version on the existing price-list chip in place, re-pinning to a
+// specific version or back to "current" (null).
+const setVersionForChip = (chip: SearchChip, version: number | null) => {
+  const rebuilt = buildPriceListChip(chipCode(chip.value), version)
+  tokenSearchRef.value?.setChips(chips.value.map(c => (c === chip ? rebuilt : c)))
 }
 
 const onChipsUpdate = (newChips: SearchChip[]) => {
-  const rawPriceList = newChips.find(c => c.type === 'priceList')
-  const rawVersion = newChips.find(c => c.type === 'priceListVersion')
-
-  // Picking a version alongside an already-selected price list produces two
-  // separate chips from TokenSearchInput's generic chip mechanics — collapse
-  // them into one merged chip and let the resulting re-emit finish the job.
-  if (rawPriceList && rawVersion) {
-    const code = rawPriceList.value.split(':')[0]
-    const merged = buildPriceListChip(code, Number(rawVersion.value))
-    tokenSearchRef.value?.setChips([
-      ...newChips.filter(c => c !== rawPriceList && c !== rawVersion),
-      merged,
-    ])
-    return
-  }
-
   chips.value = newChips
 
+  const rawPriceList = newChips.find(c => c.type === 'priceList')
   const locationValue = newChips.find(c => c.type === 'location')?.value ?? null
   const typeValue = (newChips.find(c => c.type === 'packageType')?.value as PackageType) ?? null
   materialTickers.value = newChips.filter(c => c.type === 'commodity').map(c => c.value)
 
   if (rawPriceList) {
-    const [code, versionStr] = rawPriceList.value.split(':')
+    const code = chipCode(rawPriceList.value)
     if (code !== selectedPriceList.value) {
       selectedPriceList.value = code
     }
-    selectedVersion.value = versionStr !== undefined ? Number(versionStr) : null
+    selectedVersion.value = chipVersion(rawPriceList.value)
+  } else {
+    selectedVersion.value = null
   }
   selectedLocation.value = locationValue
   typeFilter.value = typeValue
 }
 
 // Filter Menu clicks route through the same chip system as typed/pasted
-// tokens — priceList/priceListVersion/location/packageType are singular (see
-// `singular-types` on TokenSearchInput), so addChip replaces any existing
-// chip of that type; commodity (material) toggles on/off.
+// tokens — priceList/location/packageType are singular (see `singular-types`
+// on TokenSearchInput), so addChip replaces any existing chip of that type;
+// commodity (material) toggles on/off.
 const onFilterMenuSelect = ({
   filterType,
   key,
@@ -469,12 +507,9 @@ const onFilterMenuSelect = ({
     }
     return
   }
-  if (
-    filterType === 'location' ||
-    filterType === 'priceList' ||
-    filterType === 'priceListVersion' ||
-    filterType === 'packageType'
-  ) {
+  if (filterType === 'location' || filterType === 'priceList' || filterType === 'packageType') {
+    // Selecting a price list from the menu resets to its current version;
+    // the version is then re-pinned via the chip's embedded dropdown.
     tokenSearchRef.value?.addChip({ type: filterType, value: key, display })
   }
 }
@@ -690,5 +725,38 @@ onMounted(async () => {
 <style scoped>
 .alt-row {
   background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
+}
+
+/* Embedded version dropdown button inside the price-list chip. Reads as a
+   distinct, clickable "branch" segment tucked against the chip's trailing
+   edge, visually coupled to the list name but obviously interactive. */
+.pl-chip-version {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 6px;
+  height: 20px;
+  border: none;
+  border-radius: 10px;
+  /* Inverted against the chip: the button's fill is the chip's own font color
+     (inherited currentColor — do NOT override `color` here or currentColor
+     collapses to the surface color set on the inner span). */
+  background: currentColor;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+/* The text/icon sit on the inverted fill, so they take the chip's background
+   (surface) color to stay legible. */
+.pl-chip-version-inner {
+  display: inline-flex;
+  align-items: center;
+  color: rgb(var(--v-theme-surface));
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.pl-chip-version:hover {
+  opacity: 0.85;
 }
 </style>

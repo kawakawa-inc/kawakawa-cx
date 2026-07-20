@@ -58,7 +58,7 @@
         <v-tooltip v-if="canViewPackages" location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" to="/invoice-builder" icon size="small" class="mx-1">
-              <v-icon>mdi-receipt-text-plus</v-icon>
+              <v-icon>mdi-rocket-launch-outline</v-icon>
             </v-btn>
           </template>
           Invoice Builder

@@ -20,22 +20,62 @@
               <v-switch v-model="isActive" label="Active" color="primary" hide-details inset />
             </v-col>
 
-            <!-- Price list drives the currency + the live BOM cost tally below. -->
-            <v-col cols="12" sm="6">
-              <v-select
-                v-model="priceListCode"
-                :items="priceListOptions"
-                item-title="title"
-                item-value="value"
-                label="Price List"
-                :rules="[rules.required]"
-                :loading="loadingPriceLists"
-              />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="description" label="Description (optional)" rows="2" auto-grow />
+            <!-- Price list drives the currency + the live BOM cost tally below.
+                 Shown as a compact chip with a pencil that reveals the full
+                 dropdown, since it rarely changes after the first pick. -->
+            <v-col cols="12" sm="6" class="d-flex align-center">
+              <template v-if="editingPriceList">
+                <v-select
+                  v-model="priceListCode"
+                  :items="priceListOptions"
+                  item-title="title"
+                  item-value="value"
+                  label="Price List"
+                  :rules="[rules.required]"
+                  :loading="loadingPriceLists"
+                  autofocus
+                  density="compact"
+                  hide-details
+                  @update:model-value="editingPriceList = false"
+                  @blur="editingPriceList = false"
+                />
+              </template>
+              <template v-else>
+                <span class="text-caption text-medium-emphasis mr-2">Price List</span>
+                <v-chip color="indigo" size="small" label>
+                  {{ selectedPriceListChipLabel }}
+                </v-chip>
+                <v-btn
+                  icon="mdi-pencil"
+                  size="x-small"
+                  variant="text"
+                  class="ml-1"
+                  @click="editingPriceList = true"
+                />
+              </template>
             </v-col>
           </v-row>
+
+          <!-- Description is optional: hidden behind a link until the user wants it. -->
+          <div class="mt-2">
+            <a
+              v-if="!showDescription"
+              href="#"
+              class="text-caption text-medium-emphasis"
+              @click.prevent="openDescription"
+            >
+              <v-icon size="x-small" start>mdi-plus</v-icon>Click to add a description
+            </a>
+            <v-textarea
+              v-else
+              ref="descriptionRef"
+              v-model="description"
+              label="Description (optional)"
+              rows="2"
+              auto-grow
+              density="compact"
+            />
+          </div>
 
           <!-- Bill of materials, with a live running tally per line and a cost
                total footer that the Pricing section below reacts to. -->
@@ -43,45 +83,33 @@
             <v-card-text>
               <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
                 <span class="text-subtitle-2">Bill of Materials</span>
-                <div class="d-flex align-center flex-wrap ga-2">
-                  <KeyValueAutocomplete
-                    v-model="previewLocationId"
-                    :items="locationOptions"
-                    label="Location Preview"
-                    density="compact"
-                    hide-details
-                    class="location-preview"
-                  />
-                  <v-select
-                    v-model="categoryFilter"
-                    :items="categoryOptions"
-                    item-title="title"
-                    item-value="value"
-                    label="Filter by category"
-                    density="compact"
-                    hide-details
-                    clearable
-                    class="category-filter"
-                  />
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    prepend-icon="mdi-clipboard-text-outline"
-                    @click="showBomPaste = !showBomPaste"
-                  >
-                    Paste BOM
-                  </v-btn>
-                  <v-btn size="small" variant="text" prepend-icon="mdi-plus" @click="addLine">
-                    Add Material
-                  </v-btn>
-                </div>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  prepend-icon="mdi-clipboard-text-outline"
+                  @click="showBomPaste = !showBomPaste"
+                >
+                  Paste BOM
+                </v-btn>
               </div>
-              <div v-if="categoryFilter" class="text-caption text-medium-emphasis mb-2">
-                Showing {{ filteredCommodityOptions.length }} material(s) in "{{
-                  categoryFilterLabel
-                }}". A line's already-selected material stays available even if it's in a different
-                category.
-              </div>
+
+              <!-- One search box adds materials (and filters by category) — pick
+                   a material to add a row; add a category chip to narrow the
+                   material suggestions to a part family. -->
+              <TokenSearchInput
+                ref="materialSearchRef"
+                class="mb-3"
+                leading-icon="mdi-cube-outline"
+                history-key="package-bom"
+                placeholder="Add material… (type a ticker, or a category to narrow suggestions)"
+                :get-commodity-display="getCommodityDisplay"
+                :get-commodity-name="getCommodityName"
+                :get-commodity-category="commodityService.getCommodityCategory"
+                :extra-suggestion-types="categorySuggestionTypes"
+                :allowed-suggestion-types="['commodity', 'category']"
+                :chip-icon-by-type="bomChipIconByType"
+                @update:chips="onMaterialSearchChips"
+              />
 
               <div v-if="showBomPaste" class="bom-paste mb-3">
                 <v-textarea
@@ -106,66 +134,57 @@
 
               <div v-if="lineError" class="text-error text-caption mb-2">{{ lineError }}</div>
 
-              <div class="bom-header d-flex align-center text-caption text-medium-emphasis mb-1">
-                <span class="bom-col-material">Material</span>
-                <span class="bom-col-qty text-right">Qty</span>
-                <span class="bom-col-price text-right">Unit Price</span>
-                <span class="bom-col-total text-right">Line Total</span>
-                <span class="bom-col-actions"></span>
+              <div v-if="lineRows.length === 0" class="text-caption text-medium-emphasis py-2">
+                No materials yet — use the search above to add some, or paste a BOM.
               </div>
 
-              <div
-                v-for="(line, index) in lineRows"
-                :key="index"
-                class="bom-row d-flex align-center"
-              >
-                <KeyValueAutocomplete
-                  v-model="lines[index].commodityTicker"
-                  :items="optionsForLine(line.commodityTicker)"
-                  :favorites="settingsStore.favoritedCommodities.value"
-                  :show-icons="hasIcons"
-                  label="Material"
-                  density="compact"
-                  hide-details
-                  variant="outlined"
-                  class="bom-col-material"
-                  @update:favorites="
-                    settingsStore.updateSetting('market.favoritedCommodities', $event)
-                  "
-                />
-                <v-text-field
-                  v-model.number="lines[index].quantity"
-                  label="Qty"
-                  type="number"
-                  min="1"
-                  density="compact"
-                  hide-details
-                  variant="outlined"
-                  class="bom-col-qty"
-                />
-                <span class="bom-col-price text-right">
-                  <span v-if="line.unitPrice !== null">{{ formatMoney(line.unitPrice) }}</span>
-                  <span v-else-if="line.commodityTicker" class="text-warning text-caption"
-                    >no price</span
-                  >
-                  <span v-else class="text-medium-emphasis">—</span>
-                </span>
-                <span class="bom-col-total text-right font-weight-medium">
-                  <span v-if="line.lineTotal !== null">{{ formatMoney(line.lineTotal) }}</span>
-                  <span v-else class="text-medium-emphasis">—</span>
-                </span>
-                <v-btn
-                  icon
-                  size="small"
-                  variant="text"
-                  color="error"
-                  class="bom-col-actions"
-                  :disabled="lines.length <= 1"
-                  @click="removeLine(index)"
+              <template v-else>
+                <div class="bom-header d-flex align-center text-caption text-medium-emphasis mb-1">
+                  <span class="bom-col-material">Material</span>
+                  <span class="bom-col-qty text-right">Qty</span>
+                  <span class="bom-col-price text-right">Unit Price</span>
+                  <span class="bom-col-total text-right">Line Total</span>
+                  <span class="bom-col-actions"></span>
+                </div>
+
+                <div
+                  v-for="(line, index) in lineRows"
+                  :key="line.commodityTicker ?? index"
+                  class="bom-row d-flex align-center"
                 >
-                  <v-icon>mdi-delete</v-icon>
-                </v-btn>
-              </div>
+                  <span class="bom-col-material text-truncate">
+                    {{ getCommodityDisplay(line.commodityTicker as string) }}
+                  </span>
+                  <v-text-field
+                    v-model.number="lines[index].quantity"
+                    label="Qty"
+                    type="number"
+                    min="1"
+                    density="compact"
+                    hide-details
+                    variant="outlined"
+                    class="bom-col-qty"
+                  />
+                  <span class="bom-col-price text-right">
+                    <span v-if="line.unitPrice !== null">{{ formatMoney(line.unitPrice) }}</span>
+                    <span v-else class="text-warning text-caption">no price</span>
+                  </span>
+                  <span class="bom-col-total text-right font-weight-medium">
+                    <span v-if="line.lineTotal !== null">{{ formatMoney(line.lineTotal) }}</span>
+                    <span v-else class="text-medium-emphasis">—</span>
+                  </span>
+                  <v-btn
+                    icon
+                    size="small"
+                    variant="text"
+                    color="error"
+                    class="bom-col-actions"
+                    @click="removeLine(index)"
+                  >
+                    <v-icon>mdi-delete</v-icon>
+                  </v-btn>
+                </div>
+              </template>
 
               <v-alert
                 v-if="missingTickers.length > 0"
@@ -271,7 +290,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, nextTick } from 'vue'
 import type { CommodityCategory } from '@kawakawa/types'
 import {
   api,
@@ -283,11 +302,10 @@ import {
   type PriceListDefinition,
 } from '../services/api'
 import { commodityService } from '../services/commodityService'
-import { locationService } from '../services/locationService'
 import { useDisplayHelpers, useSnackbar } from '../composables'
 import { useSettingsStore } from '../stores/settings'
 import { localizeMaterialCategory } from '../utils/materials'
-import KeyValueAutocomplete, { type KeyValueItem } from './KeyValueAutocomplete.vue'
+import TokenSearchInput, { type SearchChip, type ExtraSuggestionType } from './TokenSearchInput.vue'
 
 interface Props {
   package?: PackageResponse | null
@@ -308,10 +326,9 @@ const emit = defineEmits<{
   (e: 'save', payload: CreatePackageRequest | UpdatePackageRequest): void
 }>()
 
-const { getCommodityDisplay, getLocationDisplay } = useDisplayHelpers()
+const { getCommodityDisplay, getCommodityName } = useDisplayHelpers()
 const { showSnackbar } = useSnackbar()
 const settingsStore = useSettingsStore()
-const hasIcons = computed(() => settingsStore.commodityIconStyle.value !== 'none')
 
 const formRef = ref()
 const isValid = ref(false)
@@ -321,22 +338,25 @@ const name = ref('')
 const type = ref<PackageType>('ship')
 const isActive = ref(true)
 const description = ref('')
-const lines = ref<{ commodityTicker: string | null; quantity: number }[]>([
-  { commodityTicker: null, quantity: 1 },
-])
+const descriptionRef = ref<{ focus: () => void } | null>(null)
+// Description is optional — hidden behind a link until wanted (or when the
+// package being edited already has one).
+const showDescription = ref(false)
+const lines = ref<{ commodityTicker: string | null; quantity: number }[]>([])
 
-// Price list — drives currency and the live cost tally. Materials price at
-// `previewLocationId`, which defaults to the list's default location but can
-// be changed to preview cost at another location without affecting anything
-// that gets saved (the package itself has no notion of a pricing location).
+// Price list — drives currency and the live cost tally. Materials are priced
+// at the list's default location (the package itself has no notion of a
+// pricing location). Shown as a chip; the full dropdown is revealed on edit.
 const priceLists = ref<PriceListDefinition[]>([])
 const loadingPriceLists = ref(false)
 const priceListCode = ref<string | null>(null)
-const previewLocationId = ref<string | null>(null)
-const locations = ref<KeyValueItem[]>([])
-const locationOptions = computed((): KeyValueItem[] => locations.value)
+const editingPriceList = ref(false)
 const priceMap = ref<Map<string, number>>(new Map())
 const loadingPrices = ref(false)
+
+// Material search: a token box that adds BOM rows (commodity chips) and
+// narrows suggestions by category chips.
+const materialSearchRef = ref<InstanceType<typeof TokenSearchInput> | null>(null)
 
 // Pricing mode
 const pricingMode = ref<PackagePricingMode>('fixed')
@@ -365,57 +385,62 @@ const selectedPriceListData = computed(
   () => priceLists.value.find(pl => pl.code === priceListCode.value) ?? null
 )
 const selectedPriceListLabel = computed(() => selectedPriceListData.value?.name ?? 'this list')
+const selectedPriceListChipLabel = computed(() => {
+  const pl = selectedPriceListData.value
+  return pl ? `${pl.name} (${pl.currency})` : 'None'
+})
+
+const openDescription = () => {
+  showDescription.value = true
+  nextTick(() => descriptionRef.value?.focus())
+}
 const currency = computed(() => selectedPriceListData.value?.currency ?? null)
 
-// "Show me Ship Kits" — a category filter to narrow the material picker's
-// suggestions, so a large BOM is easier to build from a known part family.
-const categoryFilter = ref<string | null>(null)
+// Category chips in the material search narrow suggestions to a part family
+// (e.g. "Ship Kits"), so a large BOM is easier to build. They're filters
+// only — picking a material adds it, picking a category just scopes search.
+const bomChipIconByType = { category: 'mdi-folder-outline' }
 
-const allCommodityOptions = computed((): KeyValueItem[] => {
-  const commodities = commodityService.getAllCommoditiesSync()
-  return commodities.map(c => ({
-    key: c.ticker,
-    display: getCommodityDisplay(c.ticker),
-    name: c.name,
-    category: c.category,
-  }))
-})
-
-const categoryOptions = computed(() => {
+const categorySuggestionTypes = computed((): ExtraSuggestionType[] => {
   const counts = new Map<string, number>()
-  for (const opt of allCommodityOptions.value) {
-    if (!opt.category) continue
-    counts.set(opt.category, (counts.get(opt.category) ?? 0) + 1)
+  for (const c of commodityService.getAllCommoditiesSync()) {
+    if (!c.category) continue
+    counts.set(c.category, (counts.get(c.category) ?? 0) + 1)
   }
-  return [...counts.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([category, count]) => ({
-      title: `${localizeMaterialCategory(category as CommodityCategory)} (${count})`,
-      value: category,
-    }))
+  return [
+    {
+      type: 'category',
+      typeLabel: 'Category',
+      color: 'teal',
+      options: [...counts.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([category, count]) => ({
+          value: category,
+          display: `${localizeMaterialCategory(category as CommodityCategory)} (${count})`,
+        })),
+    },
+  ]
 })
 
-const categoryFilterLabel = computed(() =>
-  categoryFilter.value ? localizeMaterialCategory(categoryFilter.value as CommodityCategory) : ''
-)
+// Picking a commodity in the search adds a BOM row (deduped); category chips
+// are left in place as active filters and don't become materials.
+const onMaterialSearchChips = (chips: SearchChip[]) => {
+  const picked = chips.filter(c => c.type === 'commodity')
+  if (picked.length === 0) return
 
-const filteredCommodityOptions = computed((): KeyValueItem[] => {
-  if (!categoryFilter.value) return allCommodityOptions.value
-  return allCommodityOptions.value.filter(o => o.category === categoryFilter.value)
-})
-
-/**
- * Options for one BOM line's picker: the category-filtered list, plus that
- * line's own currently-selected material even if it falls outside the active
- * category filter (so switching categories never silently hides an existing
- * selection).
- */
-function optionsForLine(ticker: string | null): KeyValueItem[] {
-  if (!ticker || filteredCommodityOptions.value.some(o => o.key === ticker)) {
-    return filteredCommodityOptions.value
+  let added = false
+  for (const chip of picked) {
+    if (!lines.value.some(l => l.commodityTicker === chip.value)) {
+      lines.value.push({ commodityTicker: chip.value, quantity: 1 })
+      added = true
+    }
   }
-  const existing = allCommodityOptions.value.find(o => o.key === ticker)
-  return existing ? [...filteredCommodityOptions.value, existing] : filteredCommodityOptions.value
+  // Remove the commodity chips so the box stays a pure "add another" control,
+  // keeping only category filter chips.
+  for (const chip of picked) {
+    materialSearchRef.value?.removeChipByTypeValue('commodity', chip.value)
+  }
+  if (added) lineError.value = ''
 }
 
 interface LineRow {
@@ -477,14 +502,17 @@ const loadPriceLists = async () => {
 
 const loadEffectivePrices = async () => {
   const pl = selectedPriceListData.value
-  const locationId = previewLocationId.value || pl?.defaultLocationId
-  if (!pl || !locationId) {
+  if (!pl || !pl.defaultLocationId) {
     priceMap.value = new Map()
     return
   }
   try {
     loadingPrices.value = true
-    const effectivePrices = await api.prices.getEffective(pl.code, locationId, pl.currency)
+    const effectivePrices = await api.prices.getEffective(
+      pl.code,
+      pl.defaultLocationId,
+      pl.currency
+    )
     priceMap.value = new Map(effectivePrices.map(p => [p.commodityTicker, p.finalPrice]))
   } catch (error) {
     console.error('Failed to load effective prices', error)
@@ -495,41 +523,28 @@ const loadEffectivePrices = async () => {
   }
 }
 
-const loadLocations = async () => {
-  try {
-    const data = await locationService.getAllLocations()
-    locations.value = data.map(l => ({ key: l.id, display: getLocationDisplay(l.id) }))
-  } catch (error) {
-    console.error('Failed to load locations', error)
-  }
-}
-
-// Switching price lists resets the location preview to that list's own
-// default location (previewing a stale location from a different list's
-// currency/location context wouldn't mean anything).
-watch(priceListCode, () => {
-  previewLocationId.value = selectedPriceListData.value?.defaultLocationId || null
-  loadEffectivePrices()
-})
-watch(previewLocationId, loadEffectivePrices)
+watch(priceListCode, loadEffectivePrices)
 
 watch(dialogOpen, async open => {
   if (!open) return
   lineError.value = ''
-  categoryFilter.value = null
   showBomPaste.value = false
   bomPasteText.value = ''
   bomPasteMessage.value = ''
+  editingPriceList.value = false
+  materialSearchRef.value?.clear()
   const p = props.package
 
   name.value = p?.name ?? ''
   type.value = p?.type ?? 'ship'
   isActive.value = p?.isActive ?? true
   description.value = p?.description ?? ''
+  // Reveal the description field only when there's already one to show.
+  showDescription.value = !!p?.description?.trim()
   lines.value =
     p && p.inputs.length > 0
       ? p.inputs.map(i => ({ commodityTicker: i.commodityTicker, quantity: i.quantity }))
-      : [{ commodityTicker: null, quantity: 1 }]
+      : []
 
   pricingMode.value = p?.pricingMode ?? 'fixed'
   marginMultiplier.value = p?.marginMultiplier ?? 1
@@ -538,16 +553,12 @@ watch(dialogOpen, async open => {
   if (priceLists.value.length === 0) {
     await loadPriceLists()
   }
-  if (locations.value.length === 0) {
-    await loadLocations()
-  }
 
   const preferred = props.defaultPriceListCode ?? settingsStore.defaultPriceList.value
   priceListCode.value =
     (preferred && priceLists.value.some(pl => pl.code === preferred) ? preferred : null) ??
     priceLists.value[0]?.code ??
     null
-  previewLocationId.value = selectedPriceListData.value?.defaultLocationId || null
 
   await loadEffectivePrices()
 })
@@ -555,16 +566,10 @@ watch(dialogOpen, async open => {
 onMounted(() => {
   if (dialogOpen.value) {
     loadPriceLists()
-    loadLocations()
   }
 })
 
-const addLine = () => {
-  lines.value.push({ commodityTicker: null, quantity: 1 })
-}
-
 const removeLine = (index: number) => {
-  if (lines.value.length <= 1) return
   lines.value.splice(index, 1)
 }
 
@@ -688,14 +693,6 @@ const close = () => {
 .bom-row {
   gap: 8px;
   padding: 4px 0;
-}
-
-.category-filter {
-  min-width: 220px;
-}
-
-.location-preview {
-  min-width: 200px;
 }
 
 .bom-paste {

@@ -1604,6 +1604,22 @@ export const packageInputs = pgTable(
   })
 )
 
+// A flat, location-scoped shipping surcharge for customers picking an order
+// up at that location (e.g. Proxion = +5,000, BEN = free/no row at all). This
+// is a property of the *location*, applied per customer invoice/order (see
+// the Invoice Builder) — not something authored per-package, since a single
+// package can be picked up from wherever the customer's order specifies.
+export const pickupLocations = pgTable('pickup_locations', {
+  locationId: varchar('location_id', { length: 20 })
+    .primaryKey()
+    .references(() => fioLocations.naturalId, { onDelete: 'cascade' }),
+  extraFee: decimal('extra_fee', { precision: 12, scale: 2 }).notNull().default('0'),
+  currency: currencyEnum('currency').notNull(),
+  description: text('description'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
 // ==================== RELATIONS ====================
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -1683,12 +1699,16 @@ export const fioCommoditiesRelations = relations(fioCommodities, ({ many }) => (
   priceAdjustments: many(priceAdjustments),
 }))
 
-export const fioLocationsRelations = relations(fioLocations, ({ many }) => ({
+export const fioLocationsRelations = relations(fioLocations, ({ many, one }) => ({
   fioUserStorage: many(fioUserStorage),
   sellOrders: many(sellOrders),
   priceLists: many(priceLists), // Price lists with this as default location
   prices: many(prices),
   priceAdjustments: many(priceAdjustments),
+  pickupFee: one(pickupLocations, {
+    fields: [fioLocations.naturalId],
+    references: [pickupLocations.locationId],
+  }),
 }))
 
 export const fioUserStorageRelations = relations(fioUserStorage, ({ one, many }) => ({
@@ -2043,5 +2063,12 @@ export const packageInputsRelations = relations(packageInputs, ({ one }) => ({
   commodity: one(fioCommodities, {
     fields: [packageInputs.commodityTicker],
     references: [fioCommodities.ticker],
+  }),
+}))
+
+export const pickupLocationsRelations = relations(pickupLocations, ({ one }) => ({
+  location: one(fioLocations, {
+    fields: [pickupLocations.locationId],
+    references: [fioLocations.naturalId],
   }),
 }))

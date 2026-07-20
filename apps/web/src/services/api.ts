@@ -589,6 +589,32 @@ interface PackagePriceBreakdown {
   marginMultiplier: number | null
 }
 
+// Pickup location fees (a flat shipping surcharge for customers picking a
+// package up at a given location — a property of the location, shared across
+// every package that lists it as a pickup point)
+interface PickupLocationResponse {
+  locationId: string
+  locationName: string
+  extraFee: number
+  currency: Currency
+  description: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface CreatePickupLocationRequest {
+  locationId: string
+  extraFee: number
+  currency: Currency
+  description?: string | null
+}
+
+interface UpdatePickupLocationRequest {
+  extraFee?: number
+  currency?: Currency
+  description?: string | null
+}
+
 // Import Config types
 type ImportSourceType = 'csv' | 'google_sheets'
 type ImportFormat = 'flat' | 'pivot'
@@ -2864,6 +2890,78 @@ const realApi = {
     }
   },
 
+  // Pickup location fees (shared per-location shipping surcharge, not per-package)
+  getPickupLocations: (): Promise<PickupLocationResponse[]> =>
+    apiGet<PickupLocationResponse[]>('/api/pickup-locations'),
+
+  createPickupLocation: async (
+    request: CreatePickupLocationRequest
+  ): Promise<PickupLocationResponse> => {
+    const response = await authenticatedFetch('/api/pickup-locations', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to create pickup location: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updatePickupLocation: async (
+    locationId: string,
+    request: UpdatePickupLocationRequest
+  ): Promise<PickupLocationResponse> => {
+    const response = await authenticatedFetch(
+      `/api/pickup-locations/${encodeURIComponent(locationId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(request),
+      }
+    )
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Pickup location not found')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to update pickup location: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deletePickupLocation: async (locationId: string): Promise<void> => {
+    const response = await authenticatedFetch(
+      `/api/pickup-locations/${encodeURIComponent(locationId)}`,
+      { method: 'DELETE' }
+    )
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Pickup location not found')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to delete pickup location: ${response.statusText}`)
+    }
+  },
+
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
     const response = await authenticatedFetch('/api/import-configs', {
@@ -4364,6 +4462,13 @@ export const api = {
     update: (id: number, request: UpdatePackageRequest) => realApi.updatePackage(id, request),
     delete: (id: number) => realApi.deletePackage(id),
   },
+  pickupLocations: {
+    list: () => realApi.getPickupLocations(),
+    create: (request: CreatePickupLocationRequest) => realApi.createPickupLocation(request),
+    update: (locationId: string, request: UpdatePickupLocationRequest) =>
+      realApi.updatePickupLocation(locationId, request),
+    delete: (locationId: string) => realApi.deletePickupLocation(locationId),
+  },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
   updateUserSettings: (settings: Record<string, unknown>) => realApi.updateUserSettings(settings),
@@ -4533,6 +4638,10 @@ export type {
   UpdatePackageRequest,
   PackageLinePrice,
   PackagePriceBreakdown,
+  // Pickup location types
+  PickupLocationResponse,
+  CreatePickupLocationRequest,
+  UpdatePickupLocationRequest,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

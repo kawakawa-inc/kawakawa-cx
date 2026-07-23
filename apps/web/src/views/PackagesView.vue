@@ -6,81 +6,56 @@
 
     <!-- Controls -->
     <v-card class="mb-4">
-      <v-card-title class="d-flex align-center ga-2">
-        <FilterMenu
-          :commodity-options="commodityFilterOptions"
-          :location-options="locationFilterOptions"
-          :price-list-options="priceListFilterOptions"
-          :package-type-options="packageTypeOptions"
-          :filter-types="packageFilterTypes"
-          :show-saved="false"
-          :active-chips="chips"
-          :active-price-list="selectedPriceList"
-          :active-package-type="typeFilter"
-          @select="onFilterMenuSelect"
+      <v-card-title class="d-flex align-center ga-2 flex-wrap toolbar-title">
+        <v-select
+          v-model="selectedPriceList"
+          :items="priceListSelectOptions"
+          item-title="title"
+          item-value="value"
+          label="Price List"
+          density="compact"
+          variant="outlined"
+          hide-details
+          :loading="loadingPriceLists"
+          class="toolbar-select"
+          style="width: 220px"
+        />
+        <v-select
+          v-model="selectedVersionOption"
+          :items="versionSelectOptions"
+          item-title="display"
+          item-value="value"
+          label="Version"
+          density="compact"
+          variant="outlined"
+          hide-details
+          :disabled="!selectedPriceList"
+          class="toolbar-select"
+          style="width: 220px"
+        />
+        <v-select
+          v-model="typeFilter"
+          :items="packageTypeOptions"
+          item-title="title"
+          item-value="value"
+          label="Type"
+          density="compact"
+          variant="outlined"
+          hide-details
+          clearable
+          class="toolbar-select"
+          style="width: 140px"
         />
         <TokenSearchInput
           ref="tokenSearchRef"
-          class="flex-grow-1"
+          class="toolbar-material-search"
           :get-commodity-display="getCommodityDisplay"
-          :get-location-display="getLocationDisplay"
-          :extra-suggestion-types="extraSuggestionTypes"
-          :chip-icon-by-type="chipIconByType"
-          :singular-types="['location', 'priceList', 'packageType']"
-          :help-tokens="packagesHelpTokens"
-          history-key="packages"
-          placeholder="Search: KAWA, ship, RAT (materials search inside BOMs)..."
+          :allowed-suggestion-types="['commodity']"
+          :help-tokens="materialHelpTokens"
+          history-key="packages-material"
+          placeholder="Material in BOM..."
           @update:chips="onChipsUpdate"
-        >
-          <!-- Price list chip carries its pinned version as an embedded
-               dropdown button (branch icon + version), so the two read as one
-               tightly-coupled control rather than two separate chips. -->
-          <template #chip-priceList="{ chip, remove }">
-            <v-chip
-              color="indigo"
-              size="small"
-              class="token-chip pl-chip"
-              closable
-              @click:close="remove"
-            >
-              <span>{{ chipListLabel(chip.value) }}</span>
-              <v-menu>
-                <template #activator="{ props: menuProps }">
-                  <button
-                    type="button"
-                    class="pl-chip-version"
-                    v-bind="menuProps"
-                    @click.stop
-                    @mousedown.stop
-                  >
-                    <span class="pl-chip-version-inner">
-                      <v-icon size="x-small" start>mdi-source-branch</v-icon>
-                      {{ chipVersionLabel(chip.value) }}
-                    </span>
-                  </button>
-                </template>
-                <v-list density="compact" min-width="200">
-                  <v-list-subheader>Price List Version</v-list-subheader>
-                  <v-list-item
-                    :active="chipVersion(chip.value) === null"
-                    @click="setVersionForChip(chip, null)"
-                  >
-                    <v-list-item-title>Current (latest promoted)</v-list-item-title>
-                  </v-list-item>
-                  <v-divider />
-                  <v-list-item
-                    v-for="opt in versionsForSelectedList"
-                    :key="opt.value"
-                    :active="chipVersion(chip.value) === Number(opt.value)"
-                    @click="setVersionForChip(chip, Number(opt.value))"
-                  >
-                    <v-list-item-title>{{ opt.display }}</v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-            </v-chip>
-          </template>
-        </TokenSearchInput>
+        />
         <span class="text-body-2 text-medium-emphasis text-no-wrap">
           {{ breakdowns.length }} package(s)
         </span>
@@ -282,18 +257,13 @@ import {
   type CreatePackageRequest,
   type UpdatePackageRequest,
 } from '../services/api'
-import { locationService } from '../services/locationService'
-import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
 import { useSnackbar, useDisplayHelpers, useUrlState } from '../composables'
-import type { KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 import TokenSearchInput, {
   type SearchChip,
-  type ExtraSuggestionType,
   type HelpToken,
 } from '../components/TokenSearchInput.vue'
-import FilterMenu, { type FilterTypeConfig } from '../components/FilterMenu.vue'
 import PackageEditDialog from '../components/PackageEditDialog.vue'
 import PackageLabel from '../components/PackageLabel.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
@@ -301,15 +271,15 @@ import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 const { snackbar, showSnackbar } = useSnackbar()
-const { getCommodityDisplay, getLocationDisplay } = useDisplayHelpers()
+const { getCommodityDisplay } = useDisplayHelpers()
 
 const canManagePackages = computed(() => userStore.hasPermission(PERMISSIONS.PACKAGES_MANAGE))
 
-// Controls — URL-synced so a specific price list/location/version/type
-// combination can be linked/bookmarked. These are the source of truth;
-// `chips` (below) is just how they're rendered/edited in the search bar.
+// Controls — URL-synced so a specific price list/version/type combination can
+// be linked/bookmarked. Pricing location is not user-selectable here: it
+// always comes from the selected price list version's own defaultLocationId
+// (packages have no location of their own).
 const selectedPriceList = useUrlState<string | null>({ param: 'priceList', defaultValue: null })
-const selectedLocation = useUrlState<string | null>({ param: 'location', defaultValue: null })
 const selectedVersion = useUrlState<number | null>({
   param: 'version',
   defaultValue: null,
@@ -321,10 +291,7 @@ const selectedVersion = useUrlState<number | null>({
 const typeFilter = useUrlState<PackageType | null>({ param: 'type', defaultValue: 'ship' })
 const materialTickers = ref<string[]>([])
 
-const priceLists = ref<
-  { title: string; value: string; currency: string; defaultLocationId: string }[]
->([])
-const locations = ref<KeyValueItem[]>([])
+const priceLists = ref<{ title: string; value: string; currency: string }[]>([])
 const versionsForSelectedList = ref<{ value: string; display: string }[]>([])
 
 const loadingPriceLists = ref(false)
@@ -336,71 +303,37 @@ const breakdowns = ref<PackagePriceBreakdown[]>([])
 const allBreakdowns = ref<PackagePriceBreakdown[]>([])
 const expandedRows = ref<string[]>([])
 
-const priceListFilterOptions = computed(() =>
-  priceLists.value.map(pl => ({ value: pl.value, display: `${pl.title} (${pl.currency})` }))
+const priceListSelectOptions = computed(() =>
+  priceLists.value.map(pl => ({ title: `${pl.title} (${pl.currency})`, value: pl.value }))
 )
 const packageTypeOptions = [
   { title: 'Ship', value: 'ship' },
   { title: 'Building', value: 'building' },
 ]
 
-const commodityFilterOptions = computed(() =>
-  commodityService.getAllCommoditiesSync().map(c => ({
-    value: c.ticker,
-    display: getCommodityDisplay(c.ticker),
-  }))
-)
-const locationFilterOptions = computed(() =>
-  locations.value.map(l => ({ value: l.key, display: l.display }))
-)
-
-const packageFilterTypes: FilterTypeConfig[] = [
-  { key: 'commodity', label: 'Material', color: 'primary', icon: 'mdi-cube-outline' },
-  { key: 'location', label: 'Location', color: 'secondary', icon: 'mdi-map-marker-outline' },
-  { key: 'priceList', label: 'Price List', icon: 'mdi-tag-multiple-outline' },
-  { key: 'packageType', label: 'Type', icon: 'mdi-shape-outline' },
-]
-
-const extraSuggestionTypes = computed((): ExtraSuggestionType[] => [
-  {
-    type: 'priceList',
-    typeLabel: 'Price List',
-    color: 'indigo',
-    options: priceListFilterOptions.value,
-  },
-  {
-    type: 'packageType',
-    typeLabel: 'Type',
-    color: 'brown',
-    options: packageTypeOptions.map(o => ({ value: o.value, display: o.title })),
-  },
+// "Version" dropdown — "current" (the list's latest promoted version, no
+// pinned version param) plus every explicit version on the selected list.
+const versionSelectOptions = computed(() => [
+  { value: 'current', display: 'Current (latest promoted)' },
+  ...versionsForSelectedList.value,
 ])
 
-const chipIconByType = {
-  priceList: 'mdi-tag-multiple-outline',
-  packageType: 'mdi-shape-outline',
-}
+// v-select works with a single flat value; `selectedVersion` is `number |
+// null` (null = "current"), so bridge the two.
+const selectedVersionOption = computed<string>({
+  get: () => (selectedVersion.value === null ? 'current' : String(selectedVersion.value)),
+  set: val => {
+    selectedVersion.value = val === 'current' ? null : Number(val)
+  },
+})
 
-const packagesHelpTokens: HelpToken[] = [
+const materialHelpTokens: HelpToken[] = [
   {
     label: 'Material',
     color: 'primary',
     example: 'RAT',
     description: 'Only ships/buildings whose BOM contains this material',
   },
-  {
-    label: 'Location',
-    color: 'secondary',
-    example: 'BEN',
-    description: 'Price materials at this location',
-  },
-  {
-    label: 'Price List',
-    color: 'indigo',
-    example: 'KAWA',
-    description: 'Which price list to price against — pick a version from the chip',
-  },
-  { label: 'Type', color: 'brown', example: 'ship', description: 'Ship or building packages' },
 ]
 
 const headers = computed(() => {
@@ -425,98 +358,16 @@ const getRowProps = ({ index }: { index: number }) => ({
   class: index % 2 === 1 ? 'alt-row' : '',
 })
 
-// Search bar chips — mirrors selectedPriceList/selectedLocation/selectedVersion/
-// typeFilter/materialTickers above (those remain the URL-synced source of
-// truth); this is just how the current state renders/edits in the search bar.
+// Material search bar — the only remaining chip-based control. Chips are
+// commodity tickers only; `materialTickers` (used for filtering) mirrors them.
 const tokenSearchRef = ref<InstanceType<typeof TokenSearchInput> | null>(null)
 const chips = ref<SearchChip[]>([])
 
 const hasActiveFilters = computed(() => chips.value.length > 0)
 
-// Price List and its pinned version are a single chip — a version only exists
-// within its price list, so they're always coupled. The chip's `value`
-// encodes both: "KAWA" (no pinned version = current) or "KAWA:3" (pinned to
-// v3). The version is presented/changed via an embedded dropdown button
-// inside the chip (see the #chip-priceList slot), not as a separate token.
-const buildPriceListChip = (code: string, version: number | null): SearchChip => ({
-  type: 'priceList',
-  value: version !== null ? `${code}:${version}` : code,
-  // `display` is a plain-text fallback; the slot renders the rich version.
-  display: version !== null ? `${chipListLabel(code)} [v${version}]` : chipListLabel(code),
-  color: 'indigo',
-})
-
-// Helpers for the custom price-list chip rendering. `chipValue` is the encoded
-// "code" or "code:version" string.
-const chipCode = (chipValue: string): string => chipValue.split(':')[0]
-const chipVersion = (chipValue: string): number | null => {
-  const v = chipValue.split(':')[1]
-  return v !== undefined ? Number(v) : null
-}
-const chipListLabel = (chipValue: string): string => {
-  const code = chipCode(chipValue)
-  const pl = priceLists.value.find(p => p.value === code)
-  return pl ? `${pl.title} (${pl.currency})` : code
-}
-const chipVersionLabel = (chipValue: string): string => {
-  const version = chipVersion(chipValue)
-  return version !== null ? `v${version}` : 'Current'
-}
-
-// Change the version on the existing price-list chip in place, re-pinning to a
-// specific version or back to "current" (null).
-const setVersionForChip = (chip: SearchChip, version: number | null) => {
-  const rebuilt = buildPriceListChip(chipCode(chip.value), version)
-  tokenSearchRef.value?.setChips(chips.value.map(c => (c === chip ? rebuilt : c)))
-}
-
 const onChipsUpdate = (newChips: SearchChip[]) => {
   chips.value = newChips
-
-  const rawPriceList = newChips.find(c => c.type === 'priceList')
-  const locationValue = newChips.find(c => c.type === 'location')?.value ?? null
-  const typeValue = (newChips.find(c => c.type === 'packageType')?.value as PackageType) ?? null
-  materialTickers.value = newChips.filter(c => c.type === 'commodity').map(c => c.value)
-
-  if (rawPriceList) {
-    const code = chipCode(rawPriceList.value)
-    if (code !== selectedPriceList.value) {
-      selectedPriceList.value = code
-    }
-    selectedVersion.value = chipVersion(rawPriceList.value)
-  } else {
-    selectedVersion.value = null
-  }
-  selectedLocation.value = locationValue
-  typeFilter.value = typeValue
-}
-
-// Filter Menu clicks route through the same chip system as typed/pasted
-// tokens — priceList/location/packageType are singular (see `singular-types`
-// on TokenSearchInput), so addChip replaces any existing chip of that type;
-// commodity (material) toggles on/off.
-const onFilterMenuSelect = ({
-  filterType,
-  key,
-  display,
-}: {
-  filterType: string
-  key: string
-  display: string
-}) => {
-  if (filterType === 'commodity') {
-    if (chips.value.some(c => c.type === 'commodity' && c.value === key)) {
-      tokenSearchRef.value?.removeChipByTypeValue('commodity', key)
-    } else {
-      tokenSearchRef.value?.addChip({ type: 'commodity', value: key, display })
-    }
-    return
-  }
-  if (filterType === 'location' || filterType === 'priceList' || filterType === 'packageType') {
-    // Selecting a price list from the menu resets to its current version;
-    // the version is then re-pinned via the chip's embedded dropdown.
-    tokenSearchRef.value?.addChip({ type: filterType, value: key, display })
-  }
+  materialTickers.value = newChips.map(c => c.value)
 }
 
 // Materials filter: show only packages whose BOM contains at least one of the
@@ -605,7 +456,6 @@ const loadPriceLists = async () => {
       title: pl.name,
       value: pl.code,
       currency: pl.currency,
-      defaultLocationId: pl.defaultLocationId ?? '',
     }))
     if (!selectedPriceList.value) {
       const defaultPriceList = settingsStore.defaultPriceList.value
@@ -621,23 +471,6 @@ const loadPriceLists = async () => {
     showSnackbar('Failed to load price lists', 'error')
   } finally {
     loadingPriceLists.value = false
-  }
-}
-
-const loadLocations = async () => {
-  try {
-    const data = await locationService.getAllLocations()
-    locations.value = data.map(l => ({
-      key: l.id,
-      display: getLocationDisplay(l.id),
-    }))
-    const pl = priceLists.value.find(p => p.value === selectedPriceList.value)
-    if (pl?.defaultLocationId && !selectedLocation.value) {
-      selectedLocation.value = pl.defaultLocationId
-    }
-  } catch (error) {
-    console.error('Failed to load locations', error)
-    showSnackbar('Failed to load locations', 'error')
   }
 }
 
@@ -667,14 +500,15 @@ const loadVersionsForSelectedList = async () => {
 }
 
 const loadPrices = async () => {
-  if (!selectedPriceList.value || !selectedLocation.value) {
+  if (!selectedPriceList.value) {
     allBreakdowns.value = []
     return
   }
   try {
     loading.value = true
+    // No locationId: the API defaults to the resolved version's own
+    // defaultLocationId, which is always what we want here.
     allBreakdowns.value = await api.packages.getAllPrices(selectedPriceList.value, {
-      locationId: selectedLocation.value,
       version: selectedVersion.value ?? undefined,
       type: typeFilter.value ?? undefined,
     })
@@ -687,42 +521,15 @@ const loadPrices = async () => {
   }
 }
 
-// Seed the search bar from the (URL-restored or default) state once initial
-// data has loaded, so refreshing/bookmarking a filtered URL round-trips.
-const seedChipsFromState = () => {
-  const initial: SearchChip[] = []
-  if (selectedPriceList.value) {
-    initial.push(buildPriceListChip(selectedPriceList.value, selectedVersion.value))
-  }
-  if (selectedLocation.value) {
-    initial.push({
-      type: 'location',
-      value: selectedLocation.value,
-      display: getLocationDisplay(selectedLocation.value),
-      color: 'secondary',
-    })
-  }
-  if (typeFilter.value) {
-    initial.push({
-      type: 'packageType',
-      value: typeFilter.value,
-      display: typeFilter.value === 'ship' ? 'Ship' : 'Building',
-      color: 'brown',
-    })
-  }
-  tokenSearchRef.value?.setChips(initial)
-}
-
 watch(selectedPriceList, async () => {
   await loadVersionsForSelectedList()
   await loadPrices()
 })
-watch([selectedLocation, selectedVersion, typeFilter], loadPrices)
+watch([selectedVersion, typeFilter], loadPrices)
 
 onMounted(async () => {
   await loadPriceLists()
-  await Promise.all([loadLocations(), loadVersionsForSelectedList()])
-  seedChipsFromState()
+  await loadVersionsForSelectedList()
   await loadPrices()
 })
 </script>
@@ -732,36 +539,28 @@ onMounted(async () => {
   background-color: rgba(var(--v-theme-on-surface), 0.03) !important;
 }
 
-/* Embedded version dropdown button inside the price-list chip. Reads as a
-   distinct, clickable "branch" segment tucked against the chip's trailing
-   edge, visually coupled to the list name but obviously interactive. */
-.pl-chip-version {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 6px;
-  padding: 0 6px;
-  height: 20px;
-  border: none;
-  border-radius: 10px;
-  /* Inverted against the chip: the button's fill is the chip's own font color
-     (inherited currentColor — do NOT override `color` here or currentColor
-     collapses to the surface color set on the inner span). */
-  background: currentColor;
-  cursor: pointer;
-  transition: opacity 0.15s ease;
+/* Vuetify's default .v-card-title is single-line text (nowrap + ellipsis) —
+   fine for a plain title, but wrong once it's holding an actual toolbar of
+   controls: it was truncating/clipping the row's contents. `d-flex` already
+   overrides `display`; explicitly reset the rest here too. */
+.toolbar-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
 }
 
-/* The text/icon sit on the inverted fill, so they take the chip's background
-   (surface) color to stay legible. */
-.pl-chip-version-inner {
-  display: inline-flex;
-  align-items: center;
-  color: rgb(var(--v-theme-surface));
-  font-size: 0.75rem;
-  font-weight: 500;
+/* Fixed width (not max-width) so each select's flex-basis actually equals
+   the width below instead of shrinking to its content, which was truncating
+   the selected option's text. flex-shrink stays enabled so they can still
+   give up space on narrow viewports rather than overflowing. */
+.toolbar-select {
+  flex: 0 1 auto;
 }
 
-.pl-chip-version:hover {
-  opacity: 0.85;
+/* Grows to absorb whatever width the (fixed-width) dropdowns and buttons
+   don't use, instead of leaving a dead gap in the middle of the toolbar. */
+.toolbar-material-search {
+  flex: 1 1 240px;
+  min-width: 160px;
 }
 </style>

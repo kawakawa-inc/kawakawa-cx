@@ -6,19 +6,28 @@
       }}</v-icon>
       <kbd v-else class="search-icon search-shortcut" title="Press / to focus search">/</kbd>
 
-      <!-- Chips for parsed tokens -->
-      <v-chip
-        v-for="(chip, index) in chips"
-        :key="`${chip.type}-${chip.value}-${index}`"
-        :color="chip.color"
-        :prepend-icon="chipIconByType[chip.type]"
-        size="small"
-        closable
-        class="token-chip"
-        @click:close="removeChip(index)"
-      >
-        {{ chip.display }}
-      </v-chip>
+      <!-- Chips for parsed tokens. A per-type scoped slot (`chip-<type>`) lets a
+           consumer fully customize a chip's rendering; when none is provided
+           the default closable chip below is used. -->
+      <template v-for="(chip, index) in chips" :key="`${chip.type}-${chip.value}-${index}`">
+        <slot
+          :name="`chip-${chip.type}`"
+          :chip="chip"
+          :index="index"
+          :remove="() => removeChip(index)"
+        >
+          <v-chip
+            :color="chip.color"
+            :prepend-icon="chipIconByType[chip.type]"
+            size="small"
+            closable
+            class="token-chip"
+            @click:close="removeChip(index)"
+          >
+            {{ chip.display }}
+          </v-chip>
+        </slot>
+      </template>
 
       <!-- Text input for current/unparsed text -->
       <input
@@ -185,6 +194,8 @@ export type SearchChipType =
   | 'shoppingList'
   | 'category'
   | 'storage'
+  | 'priceList'
+  | 'packageType'
 
 export interface SearchChip {
   type: SearchChipType
@@ -266,6 +277,13 @@ interface Props {
   getLocationDisplay?: (locationId: string) => string
   /** Function to get localized commodity name (for search matching) */
   getCommodityName?: (ticker: string) => string
+  /**
+   * Optional: a commodity's category, used to narrow commodity suggestions to
+   * whatever `category` chips are currently active. When omitted (the default),
+   * category chips don't affect commodity suggestions. Lets a single search box
+   * act as "filter materials by category, then pick one".
+   */
+  getCommodityCategory?: (ticker: string) => string | null
   /** Additional suggestion types (e.g., category, storage) */
   extraSuggestionTypes?: ExtraSuggestionType[]
   /**
@@ -311,6 +329,15 @@ interface Props {
    * locations, users, and buy/sell keywords from the catch-all branches.
    */
   allowedSuggestionTypes?: SearchChipType[]
+  /**
+   * Chip types that replace any existing chip of the same type when a new
+   * one is picked, instead of accumulating alongside it (e.g. a package can
+   * only be priced against one Price List at a time). Defaults to the
+   * original hardcoded set (`itemType`, `category`) so existing surfaces are
+   * unaffected; pass a longer list to make additional types (including your
+   * own via `extraSuggestionTypes`) single-select too.
+   */
+  singularTypes?: SearchChipType[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -319,6 +346,7 @@ const props = withDefaults(defineProps<Props>(), {
   getCommodityDisplay: (ticker: string) => ticker,
   getLocationDisplay: (locationId: string) => locationId,
   getCommodityName: (ticker: string) => ticker,
+  getCommodityCategory: undefined,
   extraSuggestionTypes: () => [],
   helpTokens: () => [],
   chips: undefined,
@@ -328,7 +356,12 @@ const props = withDefaults(defineProps<Props>(), {
   enterCreatesType: undefined,
   historyKey: undefined,
   allowedSuggestionTypes: undefined,
+  singularTypes: () => ['itemType', 'category'],
 })
+
+// Whether chips of this type should replace (not accumulate alongside) any
+// existing chip of the same type — see `singularTypes` prop.
+const isSingularType = (type: SearchChipType): boolean => props.singularTypes.includes(type)
 
 // Per-surface search history (no-op when historyKey is undefined). Records on
 // every chip add and surfaces "Recent" rows in the empty-state dropdown.
@@ -363,6 +396,8 @@ const HISTORY_TYPE_LABELS: Partial<Record<SearchChipType, string>> = {
   storage: 'Storage',
   source: 'Source',
   destination: 'Destination',
+  priceList: 'Price Lists',
+  packageType: 'Type',
 }
 
 // Canonical type order for history/favorites rendering — keeps surfaces
@@ -377,6 +412,8 @@ const HISTORY_TYPE_ORDER: SearchChipType[] = [
   'storage',
   'user',
   'itemType',
+  'priceList',
+  'packageType',
 ]
 
 // Build per-type rows from a chip map, optionally hiding entries that pass
@@ -389,6 +426,9 @@ function buildRows(
   const out: HistoryRow[] = []
   const seen = new Set<string>()
   const pushRow = (type: SearchChipType): void => {
+    // Respect the field's allowlist: don't surface history/favorites for chip
+    // types this surface doesn't accept (mirrors how suggestions are gated).
+    if (props.allowedSuggestionTypes && !props.allowedSuggestionTypes.includes(type)) return
     const all = map[type]
     if (!all) return
     const chips = excludeIf ? all.filter(c => !excludeIf(c)) : all
@@ -420,7 +460,7 @@ const favoriteRows = computed<HistoryRow[]>(() => buildRows(searchHistory.favori
 // through the same singular-type-replacement logic as suggestion picks.
 function applyHistoryChip(chip: SearchChip): void {
   if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-  if (chip.type === 'itemType' || chip.type === 'category') {
+  if (isSingularType(chip.type)) {
     chips.value = chips.value.filter(c => c.type !== chip.type)
   }
   chips.value.push({ ...chip, color: chipColor(chip.type, chip.value) })
@@ -538,6 +578,21 @@ const parseXitOrigin = (origin: string): string | null => {
 }
 
 // Get suggestions based on current input
+// Active category chips narrow which commodities can be suggested (only when
+// the consumer supplies getCommodityCategory). Empty set = no restriction.
+const activeCategoryFilter = computed(() => {
+  if (!props.getCommodityCategory) return null
+  const cats = chips.value.filter(c => c.type === 'category').map(c => c.value)
+  return cats.length > 0 ? new Set(cats) : null
+})
+
+const commodityMatchesCategory = (ticker: string): boolean => {
+  const filter = activeCategoryFilter.value
+  if (!filter) return true
+  const cat = props.getCommodityCategory?.(ticker) ?? null
+  return cat !== null && filter.has(cat)
+}
+
 const suggestions = computed((): Suggestion[] => {
   const currentWord = getCurrentWord()
   if (!currentWord || currentWord.length < 1) return []
@@ -554,9 +609,10 @@ const suggestions = computed((): Suggestion[] => {
       for (const c of commodities) {
         const localizedName = props.getCommodityName(c.ticker).toLowerCase()
         if (
-          c.ticker.toLowerCase().includes(query) ||
-          c.name.toLowerCase().includes(query) ||
-          localizedName.includes(query)
+          (c.ticker.toLowerCase().includes(query) ||
+            c.name.toLowerCase().includes(query) ||
+            localizedName.includes(query)) &&
+          commodityMatchesCategory(c.ticker)
         ) {
           results.push({
             type: 'commodity',
@@ -639,7 +695,9 @@ const suggestions = computed((): Suggestion[] => {
   const commodities = commodityService.getAllCommoditiesSync()
 
   // Always include exact ticker match first (so early break doesn't skip it)
-  const exactTickerMatch = commodities.find(c => c.ticker.toUpperCase() === upperWord)
+  const exactTickerMatch = commodities.find(
+    c => c.ticker.toUpperCase() === upperWord && commodityMatchesCategory(c.ticker)
+  )
   if (exactTickerMatch) {
     results.push({
       type: 'commodity',
@@ -654,12 +712,13 @@ const suggestions = computed((): Suggestion[] => {
   for (const c of commodities) {
     const localizedName = props.getCommodityName(c.ticker).toLowerCase()
     if (
-      c.ticker.toUpperCase() === upperWord ||
-      c.ticker.toLowerCase().startsWith(lowerWord) ||
-      c.name.toLowerCase().startsWith(lowerWord) ||
-      c.name.toLowerCase().includes(lowerWord) ||
-      localizedName.startsWith(lowerWord) ||
-      localizedName.includes(lowerWord)
+      (c.ticker.toUpperCase() === upperWord ||
+        c.ticker.toLowerCase().startsWith(lowerWord) ||
+        c.name.toLowerCase().startsWith(lowerWord) ||
+        c.name.toLowerCase().includes(lowerWord) ||
+        localizedName.startsWith(lowerWord) ||
+        localizedName.includes(lowerWord)) &&
+      commodityMatchesCategory(c.ticker)
     ) {
       // Avoid duplicates (including exact match added above)
       if (!results.find(r => r.type === 'commodity' && r.value === c.ticker)) {
@@ -745,10 +804,12 @@ const suggestions = computed((): Suggestion[] => {
     storage: 3,
     user: 4,
     itemType: 5,
+    priceList: 6,
+    packageType: 7,
   }
   results.sort((a, b) => {
     // First sort by type
-    const typeCompare = typeOrder[a.type] - typeOrder[b.type]
+    const typeCompare = (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99)
     if (typeCompare !== 0) return typeCompare
 
     // Then by match quality: exact > starts-with > contains
@@ -800,8 +861,8 @@ const getCurrentWord = (): string => {
 const selectSuggestion = (suggestion: Suggestion) => {
   const chip = createChipFromSuggestion(suggestion)
   if (chip) {
-    // Remove existing chip of same type for singular types (itemType, category)
-    if (chip.type === 'itemType' || chip.type === 'category') {
+    // Remove existing chip of same type for singular types
+    if (isSingularType(chip.type)) {
       chips.value = chips.value.filter(c => c.type !== chip.type)
     }
 
@@ -1143,7 +1204,7 @@ const addChipFromRawToken = (raw: string, type: SearchChipType) => {
   const value = normalizeTokenValue(type, raw)
   if (!value) return
   if (chips.value.some(c => c.type === type && c.value === value)) return
-  if (type === 'itemType' || type === 'category') {
+  if (isSingularType(type)) {
     chips.value = chips.value.filter(c => c.type !== type)
   }
   const chip: SearchChip = {
@@ -1210,8 +1271,8 @@ defineExpose({
   addChip: (chip: SearchChip) => {
     // Deduplicate: skip if same type+value already exists
     if (chips.value.find(c => c.type === chip.type && c.value === chip.value)) return
-    // Replace existing chip for singular types (itemType, category)
-    if (chip.type === 'itemType' || chip.type === 'category') {
+    // Replace existing chip for singular types
+    if (isSingularType(chip.type)) {
       chips.value = chips.value.filter(c => c.type !== chip.type)
     }
     const decorated = { ...chip, color: chipColor(chip.type, chip.value) }

@@ -118,6 +118,13 @@ export const PERMISSIONS = {
   ADJUSTMENTS_VIEW: 'adjustments.view',
   ADJUSTMENTS_MANAGE: 'adjustments.manage',
   IMPORT_CONFIGS_MANAGE: 'import_configs.manage',
+  // Packages (bill-of-materials bundles, e.g. ships sold as a set of materials)
+  PACKAGES_VIEW: 'packages.view',
+  PACKAGES_MANAGE: 'packages.manage',
+  // Sales orders (team queue of package orders)
+  SALES_ORDERS_VIEW: 'sales_orders.view', // View the queue and own orders
+  SALES_ORDERS_CREATE: 'sales_orders.create', // Submit new sales orders to the queue
+  SALES_ORDERS_CLAIM: 'sales_orders.claim', // Claim/fulfill orders off the queue
   // Filter management
   FILTERS_PIN: 'filters.pin',
 } as const
@@ -436,6 +443,9 @@ export type NotificationType =
   | 'invoice_submitted'
   | 'invoice_cancelled'
   | 'invoice_fulfilled'
+  | 'sales_order_claimed'
+  | 'sales_order_fulfilled'
+  | 'sales_order_cancelled'
   | 'user_needs_approval'
   | 'user_auto_approved'
   | 'user_approved'
@@ -455,6 +465,9 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'invoice_submitted',
   'invoice_cancelled',
   'invoice_fulfilled',
+  'sales_order_claimed',
+  'sales_order_fulfilled',
+  'sales_order_cancelled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',
@@ -627,6 +640,16 @@ export const INVOICE_STATUSES: InvoiceStatus[] = [
   'confirmed',
   'fulfilled',
   'partially_fulfilled',
+  'cancelled',
+]
+
+// Sales order queue lifecycle (see salesOrders table)
+export type SalesOrderStatus = 'open' | 'claimed' | 'fulfilled' | 'cancelled'
+
+export const SALES_ORDER_STATUSES: SalesOrderStatus[] = [
+  'open',
+  'claimed',
+  'fulfilled',
   'cancelled',
 ]
 

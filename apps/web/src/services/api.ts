@@ -504,6 +504,217 @@ interface UpdatePriceListRequest {
   isActive?: boolean
 }
 
+// Package types (bills of materials sold as a bundle, e.g. ships)
+type PackageType = 'ship' | 'building'
+type PackagePricingMode = 'fixed' | 'margin'
+
+interface PackageInputDto {
+  commodityTicker: string
+  commodityName: string | null
+  quantity: number
+}
+
+interface PackageResponse {
+  id: number
+  name: string
+  type: PackageType
+  salePrice: number | null
+  currency: Currency | null
+  pricingMode: PackagePricingMode
+  marginMultiplier: number | null
+  iconCommodityTicker: string | null
+  description: string | null
+  isActive: boolean
+  createdByUserId: number | null
+  createdByUsername: string | null
+  createdAt: string
+  updatedAt: string
+  inputs: PackageInputDto[]
+}
+
+interface PackageInputRequest {
+  commodityTicker: string
+  quantity: number
+}
+
+interface CreatePackageRequest {
+  name: string
+  type?: PackageType
+  salePrice?: number | null
+  currency?: Currency | null
+  pricingMode?: PackagePricingMode
+  marginMultiplier?: number | null
+  iconCommodityTicker?: string | null
+  description?: string | null
+  isActive?: boolean
+  inputs: PackageInputRequest[]
+}
+
+interface UpdatePackageRequest {
+  name?: string
+  type?: PackageType
+  salePrice?: number | null
+  currency?: Currency | null
+  pricingMode?: PackagePricingMode
+  marginMultiplier?: number | null
+  iconCommodityTicker?: string | null
+  description?: string | null
+  isActive?: boolean
+  inputs?: PackageInputRequest[]
+}
+
+interface PackageLinePrice {
+  commodityTicker: string
+  commodityName: string | null
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+  isFallback: boolean
+}
+
+interface PackagePriceBreakdown {
+  packageId: number
+  packageName: string
+  type: PackageType
+  priceListCode: string
+  version: number
+  locationId: string
+  currency: Currency
+  lines: PackageLinePrice[]
+  materialCost: number
+  missingPriceTickers: string[]
+  salePrice: number | null
+  saleCurrency: Currency | null
+  currencyMismatch: boolean
+  margin: number | null
+  marginPercent: number | null
+  pricingMode: PackagePricingMode
+  marginMultiplier: number | null
+  iconCommodityTicker: string | null
+}
+
+// Pickup location fees (a flat shipping surcharge for customers picking a
+// package up at a given location — a property of the location, shared across
+// every package that lists it as a pickup point)
+interface PickupLocationResponse {
+  locationId: string
+  locationName: string
+  extraFee: number
+  currency: Currency
+  description: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface CreatePickupLocationRequest {
+  locationId: string
+  extraFee: number
+  currency: Currency
+  description?: string | null
+}
+
+interface UpdatePickupLocationRequest {
+  extraFee?: number
+  currency?: Currency
+  description?: string | null
+}
+
+// Sales orders (team queue of package orders)
+type SalesOrderStatus = 'open' | 'claimed' | 'fulfilled' | 'cancelled'
+
+interface SalesOrderItemDto {
+  id: number
+  packageId: number | null
+  packageName: string
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+}
+
+interface SalesOrderResponse {
+  id: number
+  status: SalesOrderStatus
+  requestedByUserId: number
+  requestedByName: string | null
+  claimedByUserId: number | null
+  claimedByName: string | null
+  customerName: string | null
+  notes: string | null
+  priceListCode: string | null
+  version: number | null
+  currency: Currency | null
+  pickupLocationId: string | null
+  pickupLocationName: string | null
+  pickupFee: number
+  packagesSubtotal: number
+  grandTotal: number
+  claimedAt: string | null
+  slipGeneratedAt: string | null
+  fulfilledAt: string | null
+  createdAt: string
+  updatedAt: string
+  items: SalesOrderItemDto[]
+  isRequestor: boolean
+  isClaimer: boolean
+  canClaim: boolean
+  canFulfill: boolean
+  canCancel: boolean
+  canGenerateSlip: boolean
+}
+
+interface SalesOrderItemRequest {
+  packageId: number
+  quantity: number
+}
+
+interface CreateSalesOrderRequest {
+  priceListCode: string
+  locationId: string
+  version?: number | null
+  customerName?: string | null
+  notes?: string | null
+  pickupLocationId?: string | null
+  items: SalesOrderItemRequest[]
+}
+
+// FIO readiness of a claimed order: needed materials vs. claimer's holdings.
+interface SalesOrderReadinessLine {
+  commodityTicker: string
+  commodityName: string | null
+  needed: number
+  available: number
+  shortfall: number
+}
+
+interface SalesOrderReadinessResponse {
+  salesOrderId: number
+  locationId: string | null
+  locationName: string | null
+  inventoryUploadedAt: string | null
+  ready: boolean
+  lines: SalesOrderReadinessLine[]
+  shortfalls: SalesOrderReadinessLine[]
+}
+
+// Customer-facing "sales slip" generated from a claimed order.
+interface SalesSlipLine {
+  packageName: string
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+}
+
+interface SalesSlipDocument {
+  salesOrderId: number
+  customerName: string | null
+  currency: Currency | null
+  lines: SalesSlipLine[]
+  pickupLocationName: string | null
+  pickupFee: number
+  total: number
+  slipGeneratedAt: string | null
+}
+
 // Import Config types
 type ImportSourceType = 'csv' | 'google_sheets'
 type ImportFormat = 'flat' | 'pivot'
@@ -2686,6 +2897,239 @@ const realApi = {
       `/api/price-lists/${encodeURIComponent(code)}/versions/${version}/diff/${otherVersion}`
     ),
 
+  // Packages methods (bills of materials sold as a bundle, e.g. ships)
+  getPackages: (type?: PackageType, activeOnly?: boolean): Promise<PackageResponse[]> => {
+    const params = new URLSearchParams()
+    if (type) params.set('type', type)
+    if (activeOnly !== undefined) params.set('activeOnly', String(activeOnly))
+    const qs = params.toString()
+    return apiGet<PackageResponse[]>(`/api/packages${qs ? '?' + qs : ''}`)
+  },
+
+  getPackage: (id: number): Promise<PackageResponse> =>
+    apiGet<PackageResponse>(`/api/packages/${id}`),
+
+  getPackagePrice: (
+    id: number,
+    priceListCode: string,
+    options?: { locationId?: string; version?: number }
+  ): Promise<PackagePriceBreakdown> => {
+    const params = new URLSearchParams({ priceListCode })
+    if (options?.locationId) params.set('locationId', options.locationId)
+    if (options?.version !== undefined) params.set('version', String(options.version))
+    return apiGet<PackagePriceBreakdown>(`/api/packages/${id}/price?${params}`)
+  },
+
+  getAllPackagePrices: (
+    priceListCode: string,
+    options?: { locationId?: string; version?: number; type?: PackageType }
+  ): Promise<PackagePriceBreakdown[]> => {
+    const params = new URLSearchParams({ priceListCode })
+    if (options?.locationId) params.set('locationId', options.locationId)
+    if (options?.version !== undefined) params.set('version', String(options.version))
+    if (options?.type) params.set('type', options.type)
+    return apiGet<PackagePriceBreakdown[]>(`/api/packages/price?${params}`)
+  },
+
+  createPackage: async (request: CreatePackageRequest): Promise<PackageResponse> => {
+    const response = await authenticatedFetch('/api/packages', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to create package: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updatePackage: async (id: number, request: UpdatePackageRequest): Promise<PackageResponse> => {
+    const response = await authenticatedFetch(`/api/packages/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Package not found')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to update package: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deletePackage: async (id: number): Promise<void> => {
+    const response = await authenticatedFetch(`/api/packages/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Package not found')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to delete package: ${response.statusText}`)
+    }
+  },
+
+  // Pickup location fees (shared per-location shipping surcharge, not per-package)
+  getPickupLocations: (): Promise<PickupLocationResponse[]> =>
+    apiGet<PickupLocationResponse[]>('/api/pickup-locations'),
+
+  createPickupLocation: async (
+    request: CreatePickupLocationRequest
+  ): Promise<PickupLocationResponse> => {
+    const response = await authenticatedFetch('/api/pickup-locations', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to create pickup location: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  updatePickupLocation: async (
+    locationId: string,
+    request: UpdatePickupLocationRequest
+  ): Promise<PickupLocationResponse> => {
+    const response = await authenticatedFetch(
+      `/api/pickup-locations/${encodeURIComponent(locationId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(request),
+      }
+    )
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Pickup location not found')
+      }
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to update pickup location: ${response.statusText}`)
+    }
+
+    return response.json()
+  },
+
+  deletePickupLocation: async (locationId: string): Promise<void> => {
+    const response = await authenticatedFetch(
+      `/api/pickup-locations/${encodeURIComponent(locationId)}`,
+      { method: 'DELETE' }
+    )
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Pickup location not found')
+      }
+      if (response.status === 403) {
+        throw new Error('Permission denied')
+      }
+      throw new Error(`Failed to delete pickup location: ${response.statusText}`)
+    }
+  },
+
+  // Sales orders (team queue of package orders)
+  getSalesOrders: (options?: {
+    status?: SalesOrderStatus
+    mine?: boolean
+  }): Promise<SalesOrderResponse[]> => {
+    const params = new URLSearchParams()
+    if (options?.status) params.set('status', options.status)
+    if (options?.mine) params.set('mine', 'true')
+    const qs = params.toString()
+    return apiGet<SalesOrderResponse[]>(`/api/sales-orders${qs ? '?' + qs : ''}`)
+  },
+
+  getSalesOrder: (id: number): Promise<SalesOrderResponse> =>
+    apiGet<SalesOrderResponse>(`/api/sales-orders/${id}`),
+
+  createSalesOrder: async (request: CreateSalesOrderRequest): Promise<SalesOrderResponse> => {
+    const response = await authenticatedFetch('/api/sales-orders', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) throw new Error('Permission denied')
+      throw new Error(`Failed to create sales order: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  // Shared handler for the claim/fulfill/cancel POST actions.
+  salesOrderAction: async (
+    id: number,
+    action: 'claim' | 'fulfill' | 'cancel'
+  ): Promise<SalesOrderResponse> => {
+    const response = await authenticatedFetch(`/api/sales-orders/${id}/${action}`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('Sales order not found')
+      if (response.status === 400 || response.status === 403) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || `Failed to ${action} sales order`)
+      }
+      throw new Error(`Failed to ${action} sales order: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  getSalesOrderReadiness: (id: number): Promise<SalesOrderReadinessResponse> =>
+    apiGet<SalesOrderReadinessResponse>(`/api/sales-orders/${id}/readiness`),
+
+  generateSalesSlip: async (id: number): Promise<SalesSlipDocument> => {
+    const response = await authenticatedFetch(`/api/sales-orders/${id}/slip`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('Sales order not found')
+      if (response.status === 400 || response.status === 403) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Failed to generate sales slip')
+      }
+      throw new Error(`Failed to generate sales slip: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
     const response = await authenticatedFetch('/api/import-configs', {
@@ -4170,6 +4614,40 @@ export const api = {
     syncUpload: (id: number, file: File, version?: number) =>
       realApi.syncImportConfigUpload(id, file, version),
   },
+  packages: {
+    list: (type?: PackageType, activeOnly?: boolean) => realApi.getPackages(type, activeOnly),
+    get: (id: number) => realApi.getPackage(id),
+    getPrice: (
+      id: number,
+      priceListCode: string,
+      options?: { locationId?: string; version?: number }
+    ) => realApi.getPackagePrice(id, priceListCode, options),
+    getAllPrices: (
+      priceListCode: string,
+      options?: { locationId?: string; version?: number; type?: PackageType }
+    ) => realApi.getAllPackagePrices(priceListCode, options),
+    create: (request: CreatePackageRequest) => realApi.createPackage(request),
+    update: (id: number, request: UpdatePackageRequest) => realApi.updatePackage(id, request),
+    delete: (id: number) => realApi.deletePackage(id),
+  },
+  pickupLocations: {
+    list: () => realApi.getPickupLocations(),
+    create: (request: CreatePickupLocationRequest) => realApi.createPickupLocation(request),
+    update: (locationId: string, request: UpdatePickupLocationRequest) =>
+      realApi.updatePickupLocation(locationId, request),
+    delete: (locationId: string) => realApi.deletePickupLocation(locationId),
+  },
+  salesOrders: {
+    list: (options?: { status?: SalesOrderStatus; mine?: boolean }) =>
+      realApi.getSalesOrders(options),
+    get: (id: number) => realApi.getSalesOrder(id),
+    create: (request: CreateSalesOrderRequest) => realApi.createSalesOrder(request),
+    claim: (id: number) => realApi.salesOrderAction(id, 'claim'),
+    fulfill: (id: number) => realApi.salesOrderAction(id, 'fulfill'),
+    cancel: (id: number) => realApi.salesOrderAction(id, 'cancel'),
+    readiness: (id: number) => realApi.getSalesOrderReadiness(id),
+    generateSlip: (id: number) => realApi.generateSalesSlip(id),
+  },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
   updateUserSettings: (settings: Record<string, unknown>) => realApi.updateUserSettings(settings),
@@ -4329,6 +4807,30 @@ export type {
   CreateImportConfigRequest,
   UpdateImportConfigRequest,
   PivotImportResult,
+  // Package types
+  PackageType,
+  PackagePricingMode,
+  PackageInputDto,
+  PackageResponse,
+  PackageInputRequest,
+  CreatePackageRequest,
+  UpdatePackageRequest,
+  PackageLinePrice,
+  PackagePriceBreakdown,
+  // Pickup location types
+  PickupLocationResponse,
+  CreatePickupLocationRequest,
+  UpdatePickupLocationRequest,
+  // Sales order types
+  SalesOrderStatus,
+  SalesOrderItemDto,
+  SalesOrderResponse,
+  SalesOrderItemRequest,
+  CreateSalesOrderRequest,
+  SalesOrderReadinessLine,
+  SalesOrderReadinessResponse,
+  SalesSlipLine,
+  SalesSlipDocument,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

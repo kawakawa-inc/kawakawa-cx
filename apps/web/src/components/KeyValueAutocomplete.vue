@@ -54,7 +54,7 @@
             <CommodityIcon
               v-if="showIcons && item.raw.category"
               :commodity="{
-                ticker: item.raw.key,
+                ticker: item.raw.iconTicker || item.raw.key,
                 name: item.raw.name || item.raw.display,
                 category: item.raw.category,
               }"
@@ -100,6 +100,11 @@ export interface KeyValueItem {
   name?: string
   /** Optional: commodity category for icon display */
   category?: string
+  /**
+   * Optional: ticker to use for icon lookup instead of `key` (e.g. for
+   * packages, where `key` is a package ID rather than a commodity ticker).
+   */
+  iconTicker?: string
   /** Optional: location type for sorting (Station > Planet) */
   locationType?: 'Station' | 'Planet' | 'Platform' | 'Ship'
   /** Optional: true if this is a user's location (has inventory there) */

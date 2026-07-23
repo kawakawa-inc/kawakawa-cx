@@ -1,0 +1,1 @@
+ALTER TABLE "sales_orders" ADD COLUMN "slip_generated_at" timestamp;

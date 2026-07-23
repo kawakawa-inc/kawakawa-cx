@@ -16,6 +16,9 @@ import NotificationsView from '../views/NotificationsView.vue'
 import PriceListView from '../views/PriceListView.vue'
 import PriceAdjustmentsView from '../views/PriceAdjustmentsView.vue'
 import PricingCalculatorView from '../views/PricingCalculatorView.vue'
+import PackagesView from '../views/PackagesView.vue'
+import SalesOrderCreateView from '../views/SalesOrderCreateView.vue'
+import SalesOrderQueueView from '../views/SalesOrderQueueView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 import BurnRepairView from '../views/BurnRepairView.vue'
 
@@ -119,6 +122,24 @@ const router = createRouter({
       path: '/calculator',
       name: 'calculator',
       component: PricingCalculatorView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/packages',
+      name: 'packages',
+      component: PackagesView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/sales-orders/new',
+      name: 'sales-order-create',
+      component: SalesOrderCreateView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/sales-orders',
+      name: 'sales-order-queue',
+      component: SalesOrderQueueView,
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {

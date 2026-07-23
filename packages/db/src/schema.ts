@@ -61,6 +61,9 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'invoice_submitted',
   'invoice_cancelled',
   'invoice_fulfilled',
+  'sales_order_claimed',
+  'sales_order_fulfilled',
+  'sales_order_cancelled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',
@@ -103,6 +106,27 @@ export const priceListTypeEnum = pgEnum('price_list_type', ['fio', 'custom'])
 export const importSourceTypeEnum = pgEnum('import_source_type', ['csv', 'google_sheets'])
 
 export const importFormatEnum = pgEnum('import_format', ['flat', 'pivot', 'kawa'])
+
+// A package is a bill-of-materials: a fixed list of ticker+quantity inputs sold
+// as a single bundle at a set price (e.g. a ship). 'building' is reserved for
+// a future FIO-synced building-recipe use case (see .dev/design-docs/price-list-admin).
+export const packageTypeEnum = pgEnum('package_type', ['ship', 'building'])
+
+// 'fixed' = salePrice is a manually-entered flat price.
+// 'margin' = salePrice is (last) computed as materialCost * marginMultiplier
+// at authoring time in the package editor (a snapshot, not a live recompute).
+export const packagePricingModeEnum = pgEnum('package_pricing_mode', ['fixed', 'margin'])
+
+// Sales order lifecycle: a requestor submits an order of packages to a shared
+// team queue ('open'); a member with stock 'claims' it (assigning it to
+// themselves), then marks it 'fulfilled' once delivered/contracted. Either
+// party can 'cancel'.
+export const salesOrderStatusEnum = pgEnum('sales_order_status', [
+  'open',
+  'claimed',
+  'fulfilled',
+  'cancelled',
+])
 
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'unlisted', 'public'])
 
@@ -227,18 +251,32 @@ export const permissions = pgTable('permissions', {
 })
 
 // ==================== ROLE PERMISSIONS (Many-to-Many) ====================
-export const rolePermissions = pgTable('role_permissions', {
-  id: serial('id').primaryKey(),
-  roleId: varchar('role_id', { length: 50 })
-    .notNull()
-    .references(() => roles.id, { onDelete: 'cascade' }),
-  permissionId: varchar('permission_id', { length: 100 })
-    .notNull()
-    .references(() => permissions.id, { onDelete: 'cascade' }),
-  allowed: boolean('allowed').notNull().default(true), // true = granted, false = explicitly denied
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-})
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    id: serial('id').primaryKey(),
+    roleId: varchar('role_id', { length: 50 })
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    permissionId: varchar('permission_id', { length: 100 })
+      .notNull()
+      .references(() => permissions.id, { onDelete: 'cascade' }),
+    allowed: boolean('allowed').notNull().default(true), // true = granted, false = explicitly denied
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    // One row per (role, permission): lets seeding use a single upsert
+    // (onConflictDoNothing/onConflictDoUpdate against this index) instead of
+    // hand-rolled existence checks, and prevents duplicate grants from ever
+    // accumulating (as happened previously — seeding used onConflictDoNothing
+    // with no matching unique constraint to conflict against).
+    uniqueRolePermission: uniqueIndex('role_permissions_role_permission_idx').on(
+      table.roleId,
+      table.permissionId
+    ),
+  })
+)
 
 // ==================== USERS ====================
 export const users = pgTable('users', {
@@ -1520,6 +1558,169 @@ export const importConfigs = pgTable(
   })
 )
 
+// ==================== PACKAGES (Bills of materials sold as a bundle, e.g. ships) ====================
+// A package bundles a set of materials (packageInputs) and lists them for sale at
+// a fixed price. This lets a "ships for sale" catalog be priced against a real
+// price list/version/location and compared line-by-line against the bundle price.
+// Multiple packages can be combined (see the Invoice Builder in the frontend) to
+// price out a customer order spanning more than one package; that combination is
+// an ad hoc, unpersisted expansion of packages/quantities, not its own table.
+export const packages = pgTable(
+  'packages',
+  {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    type: packageTypeEnum('type').notNull().default('ship'),
+    salePrice: decimal('sale_price', { precision: 12, scale: 2 }), // NULL = not currently listed for sale
+    currency: currencyEnum('currency'), // Currency salePrice is denominated in
+    pricingMode: packagePricingModeEnum('pricing_mode').notNull().default('fixed'),
+    // Only meaningful when pricingMode = 'margin'. e.g. 1.2000 = +20% markup
+    // over material cost, 0.9000 = -10% markdown. Preserved so the editor can
+    // restore "you set this as a 20% margin" on re-edit instead of only
+    // showing the flat salePrice snapshot.
+    marginMultiplier: decimal('margin_multiplier', { precision: 6, scale: 4 }),
+    // One of the package's BoM commodities, chosen to visually represent the
+    // package (e.g. a ship's cargo-bay ticker WCB/LCB/HCB) so packages sharing
+    // a Class name are still distinguishable at a glance. NULL = no icon.
+    // Must be one of the package's inputs; enforced at the app layer, cleared
+    // automatically if that material is removed from the BoM.
+    iconCommodityTicker: varchar('icon_commodity_ticker', { length: 10 }).references(
+      () => fioCommodities.ticker
+    ),
+    description: text('description'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    nameIdx: index('packages_name_idx').on(table.name),
+    typeIdx: index('packages_type_idx').on(table.type),
+    activeIdx: index('packages_active_idx').on(table.isActive),
+  })
+)
+
+// One material line in a package's bill of materials.
+export const packageInputs = pgTable(
+  'package_inputs',
+  {
+    id: serial('id').primaryKey(),
+    packageId: integer('package_id')
+      .notNull()
+      .references(() => packages.id, { onDelete: 'cascade' }),
+    commodityTicker: varchar('commodity_ticker', { length: 10 })
+      .notNull()
+      .references(() => fioCommodities.ticker),
+    quantity: integer('quantity').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    packageIdx: index('package_inputs_package_idx').on(table.packageId),
+    uniquePackageCommodity: uniqueIndex('package_inputs_package_commodity_idx').on(
+      table.packageId,
+      table.commodityTicker
+    ),
+  })
+)
+
+// A flat, location-scoped shipping surcharge for customers picking an order
+// up at that location (e.g. Proxion = +5,000, BEN = free/no row at all). This
+// is a property of the *location*, applied per customer invoice/order (see
+// the Invoice Builder) — not something authored per-package, since a single
+// package can be picked up from wherever the customer's order specifies.
+export const pickupLocations = pgTable('pickup_locations', {
+  locationId: varchar('location_id', { length: 20 })
+    .primaryKey()
+    .references(() => fioLocations.naturalId, { onDelete: 'cascade' }),
+  extraFee: decimal('extra_fee', { precision: 12, scale: 2 }).notNull().default('0'),
+  currency: currencyEnum('currency').notNull(),
+  description: text('description'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// ==================== SALES ORDERS (Team queue of package orders) ====================
+// A sales order is a customer request for one or more packages that a requestor
+// submits to a shared team queue. Any member with stock can claim it (assigning
+// it to themselves) and then fulfill it (deliver + contract the requestor
+// in-game). This is distinct from `invoices` (a two-party cart of reservations)
+// and `orderReservations` (a claim against a single market buy/sell order): a
+// sales order is unassigned when created and spans multiple packages.
+export const salesOrders = pgTable(
+  'sales_orders',
+  {
+    id: serial('id').primaryKey(),
+    // Who is requesting the order be filled (the team member fielding the
+    // customer). NOT the end customer — we don't model external customers.
+    requestedByUserId: integer('requested_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Who picked the order up off the queue. NULL while status = 'open'.
+    claimedByUserId: integer('claimed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    status: salesOrderStatusEnum('status').notNull().default('open'),
+    // Free-text label for the order (e.g. customer name / discord handle), so
+    // the queue is scannable without opening each order.
+    customerName: varchar('customer_name', { length: 100 }),
+    notes: text('notes'),
+    // Pricing context the item unit prices were snapshotted against, kept for
+    // display/traceability. Currency is the order's settlement currency.
+    priceListCode: varchar('price_list_code', { length: 20 }),
+    version: integer('version'),
+    currency: currencyEnum('currency'),
+    // Optional pickup location + its shipping surcharge, snapshotted at submit
+    // (the pickupLocations fee can change later; the order keeps what was quoted).
+    pickupLocationId: varchar('pickup_location_id', { length: 20 }).references(
+      () => fioLocations.naturalId,
+      { onDelete: 'set null' }
+    ),
+    pickupFee: decimal('pickup_fee', { precision: 12, scale: 2 }).notNull().default('0'),
+    // Sum of item line totals (packages subtotal) snapshotted at submit.
+    packagesSubtotal: decimal('packages_subtotal', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    claimedAt: timestamp('claimed_at'),
+    // Set when the claimer generates the customer-facing "sales slip" for this
+    // order (the priced document handed to the external customer). Named to
+    // avoid collision with the member-to-member `invoices` feature.
+    slipGeneratedAt: timestamp('slip_generated_at'),
+    fulfilledAt: timestamp('fulfilled_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    statusIdx: index('sales_orders_status_idx').on(table.status),
+    requestedByIdx: index('sales_orders_requested_by_idx').on(table.requestedByUserId),
+    claimedByIdx: index('sales_orders_claimed_by_idx').on(table.claimedByUserId),
+  })
+)
+
+// One package line on a sales order. The package name and unit price are
+// snapshotted so the order stays stable even if the package or its price list
+// later changes; packageId is kept (nullable) for traceability/linking.
+export const salesOrderItems = pgTable(
+  'sales_order_items',
+  {
+    id: serial('id').primaryKey(),
+    salesOrderId: integer('sales_order_id')
+      .notNull()
+      .references(() => salesOrders.id, { onDelete: 'cascade' }),
+    packageId: integer('package_id').references(() => packages.id, { onDelete: 'set null' }),
+    packageName: varchar('package_name', { length: 100 }).notNull(),
+    quantity: integer('quantity').notNull(),
+    unitPrice: decimal('unit_price', { precision: 12, scale: 2 }), // NULL = package had no listed price
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    salesOrderIdx: index('sales_order_items_sales_order_idx').on(table.salesOrderId),
+  })
+)
+
 // ==================== RELATIONS ====================
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -1542,6 +1743,7 @@ export const usersRelations = relations(users, ({ many, one }) => ({
     references: [userDiscordProfiles.userId],
   }),
   createdPriceAdjustments: many(priceAdjustments), // Adjustments created by this user
+  createdPackages: many(packages), // Packages (e.g. ship BOMs) created by this user
   burnRepairCache: many(burnRepairCache), // Pre-computed burn/repair needs
 }))
 
@@ -1598,12 +1800,16 @@ export const fioCommoditiesRelations = relations(fioCommodities, ({ many }) => (
   priceAdjustments: many(priceAdjustments),
 }))
 
-export const fioLocationsRelations = relations(fioLocations, ({ many }) => ({
+export const fioLocationsRelations = relations(fioLocations, ({ many, one }) => ({
   fioUserStorage: many(fioUserStorage),
   sellOrders: many(sellOrders),
   priceLists: many(priceLists), // Price lists with this as default location
   prices: many(prices),
   priceAdjustments: many(priceAdjustments),
+  pickupFee: one(pickupLocations, {
+    fields: [fioLocations.naturalId],
+    references: [pickupLocations.locationId],
+  }),
 }))
 
 export const fioUserStorageRelations = relations(fioUserStorage, ({ one, many }) => ({
@@ -1937,5 +2143,62 @@ export const priceListVersionsRelations = relations(priceListVersions, ({ one })
   createdByUser: one(users, {
     fields: [priceListVersions.createdByUserId],
     references: [users.id],
+  }),
+}))
+
+// ==================== PACKAGE RELATIONS ====================
+
+export const packagesRelations = relations(packages, ({ one, many }) => ({
+  inputs: many(packageInputs),
+  createdByUser: one(users, {
+    fields: [packages.createdByUserId],
+    references: [users.id],
+  }),
+}))
+
+export const packageInputsRelations = relations(packageInputs, ({ one }) => ({
+  package: one(packages, {
+    fields: [packageInputs.packageId],
+    references: [packages.id],
+  }),
+  commodity: one(fioCommodities, {
+    fields: [packageInputs.commodityTicker],
+    references: [fioCommodities.ticker],
+  }),
+}))
+
+export const pickupLocationsRelations = relations(pickupLocations, ({ one }) => ({
+  location: one(fioLocations, {
+    fields: [pickupLocations.locationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const salesOrdersRelations = relations(salesOrders, ({ one, many }) => ({
+  items: many(salesOrderItems),
+  requestedByUser: one(users, {
+    fields: [salesOrders.requestedByUserId],
+    references: [users.id],
+    relationName: 'salesOrderRequestedBy',
+  }),
+  claimedByUser: one(users, {
+    fields: [salesOrders.claimedByUserId],
+    references: [users.id],
+    relationName: 'salesOrderClaimedBy',
+  }),
+  pickupLocation: one(fioLocations, {
+    fields: [salesOrders.pickupLocationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const salesOrderItemsRelations = relations(salesOrderItems, ({ one }) => ({
+  salesOrder: one(salesOrders, {
+    fields: [salesOrderItems.salesOrderId],
+    references: [salesOrders.id],
+  }),
+  package: one(packages, {
+    fields: [salesOrderItems.packageId],
+    references: [packages.id],
   }),
 }))

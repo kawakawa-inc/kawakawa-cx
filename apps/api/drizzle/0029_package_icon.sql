@@ -1,0 +1,2 @@
+ALTER TABLE "packages" ADD COLUMN "icon_commodity_ticker" varchar(10);--> statement-breakpoint
+ALTER TABLE "packages" ADD CONSTRAINT "packages_icon_commodity_ticker_fio_commodities_ticker_fk" FOREIGN KEY ("icon_commodity_ticker") REFERENCES "public"."fio_commodities"("ticker") ON DELETE no action ON UPDATE no action;

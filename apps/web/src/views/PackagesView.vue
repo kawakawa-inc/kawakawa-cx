@@ -114,7 +114,11 @@
 
         <template #item.packageName="{ item }">
           <div class="d-flex align-center" style="gap: 6px">
-            <span class="font-weight-medium">{{ item.packageName }}</span>
+            <PackageLabel
+              :name="item.packageName"
+              :icon-commodity-ticker="item.iconCommodityTicker"
+              class="font-weight-medium"
+            />
             <v-chip size="x-small" variant="tonal">{{ item.type }}</v-chip>
             <v-chip
               v-if="item.pricingMode === 'margin' && item.marginMultiplier !== null"
@@ -227,7 +231,7 @@
 
         <template #no-data>
           <div class="text-center py-8">
-            <v-icon size="64" color="grey-lighten-1">mdi-rocket-launch-outline</v-icon>
+            <v-icon size="64" color="grey-lighten-1">mdi-package-variant-closed</v-icon>
             <p class="text-h6 mt-4">No packages</p>
             <p class="text-body-2 text-medium-emphasis">
               <template v-if="hasActiveFilters"> No packages match the current search. </template>
@@ -291,6 +295,7 @@ import TokenSearchInput, {
 } from '../components/TokenSearchInput.vue'
 import FilterMenu, { type FilterTypeConfig } from '../components/FilterMenu.vue'
 import PackageEditDialog from '../components/PackageEditDialog.vue'
+import PackageLabel from '../components/PackageLabel.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 
 const userStore = useUserStore()

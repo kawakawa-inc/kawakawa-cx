@@ -141,6 +141,7 @@
 
               <template v-else>
                 <div class="bom-header d-flex align-center text-caption text-medium-emphasis mb-1">
+                  <span class="bom-col-icon"></span>
                   <span class="bom-col-material">Material</span>
                   <span class="bom-col-qty text-right">Qty</span>
                   <span class="bom-col-price text-right">Unit Price</span>
@@ -153,6 +154,34 @@
                   :key="line.commodityTicker ?? index"
                   class="bom-row d-flex align-center"
                 >
+                  <v-tooltip
+                    :text="
+                      iconCommodityTicker === line.commodityTicker
+                        ? 'Package icon (click to unset)'
+                        : 'Use as package icon'
+                    "
+                    location="top"
+                  >
+                    <template #activator="{ props: tp }">
+                      <v-btn
+                        v-bind="tp"
+                        icon
+                        size="x-small"
+                        variant="text"
+                        class="bom-col-icon"
+                        :color="iconCommodityTicker === line.commodityTicker ? 'amber' : undefined"
+                        @click="toggleIcon(line.commodityTicker)"
+                      >
+                        <v-icon size="small">
+                          {{
+                            iconCommodityTicker === line.commodityTicker
+                              ? 'mdi-star'
+                              : 'mdi-star-outline'
+                          }}
+                        </v-icon>
+                      </v-btn>
+                    </template>
+                  </v-tooltip>
                   <span class="bom-col-material text-truncate">
                     {{ getCommodityDisplay(line.commodityTicker as string) }}
                   </span>
@@ -344,6 +373,9 @@ const descriptionRef = ref<{ focus: () => void } | null>(null)
 // package being edited already has one).
 const showDescription = ref(false)
 const lines = ref<{ commodityTicker: string | null; quantity: number }[]>([])
+// One BoM ticker chosen as the package's icon (e.g. a ship's cargo bay), or
+// null. Always kept in sync with the current material lines.
+const iconCommodityTicker = ref<string | null>(null)
 
 // Price list — drives currency and the live cost tally. Materials are priced
 // at the list's default location (the package itself has no notion of a
@@ -546,6 +578,7 @@ watch(dialogOpen, async open => {
     p && p.inputs.length > 0
       ? p.inputs.map(i => ({ commodityTicker: i.commodityTicker, quantity: i.quantity }))
       : []
+  iconCommodityTicker.value = p?.iconCommodityTicker ?? null
 
   pricingMode.value = p?.pricingMode ?? 'fixed'
   marginMultiplier.value = p?.marginMultiplier ?? 1
@@ -571,7 +604,17 @@ onMounted(() => {
 })
 
 const removeLine = (index: number) => {
-  lines.value.splice(index, 1)
+  const [removed] = lines.value.splice(index, 1)
+  // If the removed material was the icon, clear it.
+  if (removed?.commodityTicker && removed.commodityTicker === iconCommodityTicker.value) {
+    iconCommodityTicker.value = null
+  }
+}
+
+// Star toggle: set this material as the package icon, or unset if already it.
+const toggleIcon = (ticker: string | null) => {
+  if (!ticker) return
+  iconCommodityTicker.value = iconCommodityTicker.value === ticker ? null : ticker
 }
 
 const cancelBomPaste = () => {
@@ -628,6 +671,10 @@ const parseBomPaste = () => {
     commodityTicker,
     quantity,
   }))
+  // Keep the icon only if it survived the replacement.
+  if (iconCommodityTicker.value && !merged.has(iconCommodityTicker.value)) {
+    iconCommodityTicker.value = null
+  }
 
   const problems: string[] = []
   if (unknown.size > 0) problems.push(`unknown ticker(s): ${[...unknown].join(', ')}`)
@@ -668,6 +715,13 @@ const handleSave = () => {
   const salePrice = pricingMode.value === 'margin' ? computedMarginPrice.value : fixedPrice.value
   const resolvedCurrency = salePrice != null ? currency.value : null
 
+  // Only send the icon if it's still one of the valid material lines.
+  const icon =
+    iconCommodityTicker.value &&
+    validLines.some(l => l.commodityTicker === iconCommodityTicker.value)
+      ? iconCommodityTicker.value
+      : null
+
   const payload: CreatePackageRequest = {
     name: name.value.trim(),
     type: type.value,
@@ -675,6 +729,7 @@ const handleSave = () => {
     currency: resolvedCurrency,
     pricingMode: pricingMode.value,
     marginMultiplier: pricingMode.value === 'margin' ? marginMultiplier.value : null,
+    iconCommodityTicker: icon,
     description: description.value.trim() || null,
     isActive: isActive.value,
     inputs: validLines.map(l => ({
@@ -702,6 +757,9 @@ const close = () => {
   border-radius: 4px;
 }
 
+.bom-col-icon {
+  flex: 0 0 32px;
+}
 .bom-col-material {
   flex: 1 1 auto;
   min-width: 0;

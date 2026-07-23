@@ -133,6 +133,22 @@ export const PERMISSIONS_DATA: PermissionData[] = [
     name: 'Manage Packages',
     description: 'Can create, update, and delete packages and their material lines',
   },
+  // Sales order queue permissions
+  {
+    id: 'sales_orders.view',
+    name: 'View Sales Orders',
+    description: 'Can view the sales order queue and their own orders',
+  },
+  {
+    id: 'sales_orders.create',
+    name: 'Create Sales Orders',
+    description: 'Can submit new package sales orders to the queue',
+  },
+  {
+    id: 'sales_orders.claim',
+    name: 'Claim Sales Orders',
+    description: 'Can claim and fulfill sales orders off the queue',
+  },
   // Filter management permissions
   {
     id: 'filters.pin',
@@ -152,6 +168,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'prices.view', // Can view price lists
     'adjustments.view', // Can view adjustments
     // Note: applicants cannot post by default
+    'packages.view',
+    'sales_orders.view',
+    'sales_orders.create',
   ],
   member: [
     'orders.view_internal',
@@ -161,6 +180,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'prices.view',
     'adjustments.view',
     'packages.view',
+    'sales_orders.view',
+    'sales_orders.create',
+    'sales_orders.claim',
   ],
   lead: [
     'orders.view_internal',
@@ -178,6 +200,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'import_configs.manage',
     'packages.view',
     'packages.manage',
+    'sales_orders.view',
+    'sales_orders.create',
+    'sales_orders.claim',
   ],
   'trade-partner': [
     'orders.view_partner', // Can only see partner orders
@@ -185,6 +210,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'reservations.place_partner', // Can place reservations on partner orders
     'prices.view', // Can view prices
     'adjustments.view', // Can view adjustments
+    'packages.view',
+    'sales_orders.view',
+    'sales_orders.create',
   ],
   administrator: [
     'orders.view_internal',
@@ -202,6 +230,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'import_configs.manage',
     'packages.view',
     'packages.manage',
+    'sales_orders.view',
+    'sales_orders.create',
+    'sales_orders.claim',
     'filters.pin',
   ],
 }

@@ -17,7 +17,8 @@ import PriceListView from '../views/PriceListView.vue'
 import PriceAdjustmentsView from '../views/PriceAdjustmentsView.vue'
 import PricingCalculatorView from '../views/PricingCalculatorView.vue'
 import PackagesView from '../views/PackagesView.vue'
-import InvoiceBuilderView from '../views/InvoiceBuilderView.vue'
+import SalesOrderCreateView from '../views/SalesOrderCreateView.vue'
+import SalesOrderQueueView from '../views/SalesOrderQueueView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 import BurnRepairView from '../views/BurnRepairView.vue'
 
@@ -130,9 +131,15 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {
-      path: '/invoice-builder',
-      name: 'invoice-builder',
-      component: InvoiceBuilderView,
+      path: '/sales-orders/new',
+      name: 'sales-order-create',
+      component: SalesOrderCreateView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/sales-orders',
+      name: 'sales-order-queue',
+      component: SalesOrderQueueView,
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {

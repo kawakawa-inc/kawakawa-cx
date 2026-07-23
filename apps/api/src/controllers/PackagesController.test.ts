@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { validateInputs, validatePricing } from './PackagesController.js'
+import { validateInputs, validatePricing, resolveIconTicker } from './PackagesController.js'
 import { db } from '../db/index.js'
 
 vi.mock('../db/index.js', () => ({
@@ -172,5 +172,29 @@ describe('PackagesController validatePricing', () => {
         marginMultiplier: -1,
       })
     ).toThrow('marginMultiplier must be a positive number when pricingMode is "margin"')
+  })
+})
+
+describe('PackagesController resolveIconTicker', () => {
+  const inputs = [
+    { commodityTicker: 'WCB', quantity: 1 },
+    { commodityTicker: 'FFC', quantity: 2 },
+  ]
+
+  it('returns null when no icon requested', () => {
+    expect(resolveIconTicker(null, inputs)).toBeNull()
+    expect(resolveIconTicker(undefined, inputs)).toBeNull()
+    expect(resolveIconTicker('', inputs)).toBeNull()
+  })
+
+  it('uppercases and accepts an icon that is in the BoM', () => {
+    expect(resolveIconTicker('wcb', inputs)).toBe('WCB')
+    expect(resolveIconTicker('FFC', inputs)).toBe('FFC')
+  })
+
+  it('throws when the icon is not one of the package materials', () => {
+    expect(() => resolveIconTicker('RAT', inputs)).toThrow(
+      "Icon commodity RAT must be one of the package's materials"
+    )
   })
 })

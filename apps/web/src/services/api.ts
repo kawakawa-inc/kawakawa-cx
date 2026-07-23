@@ -522,6 +522,7 @@ interface PackageResponse {
   currency: Currency | null
   pricingMode: PackagePricingMode
   marginMultiplier: number | null
+  iconCommodityTicker: string | null
   description: string | null
   isActive: boolean
   createdByUserId: number | null
@@ -543,6 +544,7 @@ interface CreatePackageRequest {
   currency?: Currency | null
   pricingMode?: PackagePricingMode
   marginMultiplier?: number | null
+  iconCommodityTicker?: string | null
   description?: string | null
   isActive?: boolean
   inputs: PackageInputRequest[]
@@ -555,6 +557,7 @@ interface UpdatePackageRequest {
   currency?: Currency | null
   pricingMode?: PackagePricingMode
   marginMultiplier?: number | null
+  iconCommodityTicker?: string | null
   description?: string | null
   isActive?: boolean
   inputs?: PackageInputRequest[]
@@ -587,6 +590,7 @@ interface PackagePriceBreakdown {
   marginPercent: number | null
   pricingMode: PackagePricingMode
   marginMultiplier: number | null
+  iconCommodityTicker: string | null
 }
 
 // Pickup location fees (a flat shipping surcharge for customers picking a
@@ -613,6 +617,102 @@ interface UpdatePickupLocationRequest {
   extraFee?: number
   currency?: Currency
   description?: string | null
+}
+
+// Sales orders (team queue of package orders)
+type SalesOrderStatus = 'open' | 'claimed' | 'fulfilled' | 'cancelled'
+
+interface SalesOrderItemDto {
+  id: number
+  packageId: number | null
+  packageName: string
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+}
+
+interface SalesOrderResponse {
+  id: number
+  status: SalesOrderStatus
+  requestedByUserId: number
+  requestedByName: string | null
+  claimedByUserId: number | null
+  claimedByName: string | null
+  customerName: string | null
+  notes: string | null
+  priceListCode: string | null
+  version: number | null
+  currency: Currency | null
+  pickupLocationId: string | null
+  pickupLocationName: string | null
+  pickupFee: number
+  packagesSubtotal: number
+  grandTotal: number
+  claimedAt: string | null
+  slipGeneratedAt: string | null
+  fulfilledAt: string | null
+  createdAt: string
+  updatedAt: string
+  items: SalesOrderItemDto[]
+  isRequestor: boolean
+  isClaimer: boolean
+  canClaim: boolean
+  canFulfill: boolean
+  canCancel: boolean
+  canGenerateSlip: boolean
+}
+
+interface SalesOrderItemRequest {
+  packageId: number
+  quantity: number
+}
+
+interface CreateSalesOrderRequest {
+  priceListCode: string
+  locationId: string
+  version?: number | null
+  customerName?: string | null
+  notes?: string | null
+  pickupLocationId?: string | null
+  items: SalesOrderItemRequest[]
+}
+
+// FIO readiness of a claimed order: needed materials vs. claimer's holdings.
+interface SalesOrderReadinessLine {
+  commodityTicker: string
+  commodityName: string | null
+  needed: number
+  available: number
+  shortfall: number
+}
+
+interface SalesOrderReadinessResponse {
+  salesOrderId: number
+  locationId: string | null
+  locationName: string | null
+  inventoryUploadedAt: string | null
+  ready: boolean
+  lines: SalesOrderReadinessLine[]
+  shortfalls: SalesOrderReadinessLine[]
+}
+
+// Customer-facing "sales slip" generated from a claimed order.
+interface SalesSlipLine {
+  packageName: string
+  quantity: number
+  unitPrice: number | null
+  lineTotal: number | null
+}
+
+interface SalesSlipDocument {
+  salesOrderId: number
+  customerName: string | null
+  currency: Currency | null
+  lines: SalesSlipLine[]
+  pickupLocationName: string | null
+  pickupFee: number
+  total: number
+  slipGeneratedAt: string | null
 }
 
 // Import Config types
@@ -2962,6 +3062,74 @@ const realApi = {
     }
   },
 
+  // Sales orders (team queue of package orders)
+  getSalesOrders: (options?: {
+    status?: SalesOrderStatus
+    mine?: boolean
+  }): Promise<SalesOrderResponse[]> => {
+    const params = new URLSearchParams()
+    if (options?.status) params.set('status', options.status)
+    if (options?.mine) params.set('mine', 'true')
+    const qs = params.toString()
+    return apiGet<SalesOrderResponse[]>(`/api/sales-orders${qs ? '?' + qs : ''}`)
+  },
+
+  getSalesOrder: (id: number): Promise<SalesOrderResponse> =>
+    apiGet<SalesOrderResponse>(`/api/sales-orders/${id}`),
+
+  createSalesOrder: async (request: CreateSalesOrderRequest): Promise<SalesOrderResponse> => {
+    const response = await authenticatedFetch('/api/sales-orders', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+    if (!response.ok) {
+      if (response.status === 400) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Invalid request')
+      }
+      if (response.status === 403) throw new Error('Permission denied')
+      throw new Error(`Failed to create sales order: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  // Shared handler for the claim/fulfill/cancel POST actions.
+  salesOrderAction: async (
+    id: number,
+    action: 'claim' | 'fulfill' | 'cancel'
+  ): Promise<SalesOrderResponse> => {
+    const response = await authenticatedFetch(`/api/sales-orders/${id}/${action}`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('Sales order not found')
+      if (response.status === 400 || response.status === 403) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || `Failed to ${action} sales order`)
+      }
+      throw new Error(`Failed to ${action} sales order: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
+  getSalesOrderReadiness: (id: number): Promise<SalesOrderReadinessResponse> =>
+    apiGet<SalesOrderReadinessResponse>(`/api/sales-orders/${id}/readiness`),
+
+  generateSalesSlip: async (id: number): Promise<SalesSlipDocument> => {
+    const response = await authenticatedFetch(`/api/sales-orders/${id}/slip`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      if (response.status === 404) throw new Error('Sales order not found')
+      if (response.status === 400 || response.status === 403) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.message || 'Failed to generate sales slip')
+      }
+      throw new Error(`Failed to generate sales slip: ${response.statusText}`)
+    }
+    return response.json()
+  },
+
   // Import Configs methods
   getImportConfigs: async (): Promise<ImportConfigResponse[]> => {
     const response = await authenticatedFetch('/api/import-configs', {
@@ -4469,6 +4637,17 @@ export const api = {
       realApi.updatePickupLocation(locationId, request),
     delete: (locationId: string) => realApi.deletePickupLocation(locationId),
   },
+  salesOrders: {
+    list: (options?: { status?: SalesOrderStatus; mine?: boolean }) =>
+      realApi.getSalesOrders(options),
+    get: (id: number) => realApi.getSalesOrder(id),
+    create: (request: CreateSalesOrderRequest) => realApi.createSalesOrder(request),
+    claim: (id: number) => realApi.salesOrderAction(id, 'claim'),
+    fulfill: (id: number) => realApi.salesOrderAction(id, 'fulfill'),
+    cancel: (id: number) => realApi.salesOrderAction(id, 'cancel'),
+    readiness: (id: number) => realApi.getSalesOrderReadiness(id),
+    generateSlip: (id: number) => realApi.generateSalesSlip(id),
+  },
   // User Settings
   getUserSettings: () => realApi.getUserSettings(),
   updateUserSettings: (settings: Record<string, unknown>) => realApi.updateUserSettings(settings),
@@ -4642,6 +4821,16 @@ export type {
   PickupLocationResponse,
   CreatePickupLocationRequest,
   UpdatePickupLocationRequest,
+  // Sales order types
+  SalesOrderStatus,
+  SalesOrderItemDto,
+  SalesOrderResponse,
+  SalesOrderItemRequest,
+  CreateSalesOrderRequest,
+  SalesOrderReadinessLine,
+  SalesOrderReadinessResponse,
+  SalesSlipLine,
+  SalesSlipDocument,
   // Saved filter types
   SavedMarketFilter,
   CreateSavedFilterRequest,

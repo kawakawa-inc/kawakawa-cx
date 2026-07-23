@@ -61,6 +61,9 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'invoice_submitted',
   'invoice_cancelled',
   'invoice_fulfilled',
+  'sales_order_claimed',
+  'sales_order_fulfilled',
+  'sales_order_cancelled',
   'user_needs_approval',
   'user_auto_approved',
   'user_approved',
@@ -113,6 +116,17 @@ export const packageTypeEnum = pgEnum('package_type', ['ship', 'building'])
 // 'margin' = salePrice is (last) computed as materialCost * marginMultiplier
 // at authoring time in the package editor (a snapshot, not a live recompute).
 export const packagePricingModeEnum = pgEnum('package_pricing_mode', ['fixed', 'margin'])
+
+// Sales order lifecycle: a requestor submits an order of packages to a shared
+// team queue ('open'); a member with stock 'claims' it (assigning it to
+// themselves), then marks it 'fulfilled' once delivered/contracted. Either
+// party can 'cancel'.
+export const salesOrderStatusEnum = pgEnum('sales_order_status', [
+  'open',
+  'claimed',
+  'fulfilled',
+  'cancelled',
+])
 
 export const filterPrivacyEnum = pgEnum('filter_privacy', ['private', 'unlisted', 'public'])
 
@@ -1565,6 +1579,14 @@ export const packages = pgTable(
     // restore "you set this as a 20% margin" on re-edit instead of only
     // showing the flat salePrice snapshot.
     marginMultiplier: decimal('margin_multiplier', { precision: 6, scale: 4 }),
+    // One of the package's BoM commodities, chosen to visually represent the
+    // package (e.g. a ship's cargo-bay ticker WCB/LCB/HCB) so packages sharing
+    // a Class name are still distinguishable at a glance. NULL = no icon.
+    // Must be one of the package's inputs; enforced at the app layer, cleared
+    // automatically if that material is removed from the BoM.
+    iconCommodityTicker: varchar('icon_commodity_ticker', { length: 10 }).references(
+      () => fioCommodities.ticker
+    ),
     description: text('description'),
     isActive: boolean('is_active').notNull().default(true),
     createdByUserId: integer('created_by_user_id').references(() => users.id, {
@@ -1619,6 +1641,85 @@ export const pickupLocations = pgTable('pickup_locations', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
+
+// ==================== SALES ORDERS (Team queue of package orders) ====================
+// A sales order is a customer request for one or more packages that a requestor
+// submits to a shared team queue. Any member with stock can claim it (assigning
+// it to themselves) and then fulfill it (deliver + contract the requestor
+// in-game). This is distinct from `invoices` (a two-party cart of reservations)
+// and `orderReservations` (a claim against a single market buy/sell order): a
+// sales order is unassigned when created and spans multiple packages.
+export const salesOrders = pgTable(
+  'sales_orders',
+  {
+    id: serial('id').primaryKey(),
+    // Who is requesting the order be filled (the team member fielding the
+    // customer). NOT the end customer — we don't model external customers.
+    requestedByUserId: integer('requested_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Who picked the order up off the queue. NULL while status = 'open'.
+    claimedByUserId: integer('claimed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    status: salesOrderStatusEnum('status').notNull().default('open'),
+    // Free-text label for the order (e.g. customer name / discord handle), so
+    // the queue is scannable without opening each order.
+    customerName: varchar('customer_name', { length: 100 }),
+    notes: text('notes'),
+    // Pricing context the item unit prices were snapshotted against, kept for
+    // display/traceability. Currency is the order's settlement currency.
+    priceListCode: varchar('price_list_code', { length: 20 }),
+    version: integer('version'),
+    currency: currencyEnum('currency'),
+    // Optional pickup location + its shipping surcharge, snapshotted at submit
+    // (the pickupLocations fee can change later; the order keeps what was quoted).
+    pickupLocationId: varchar('pickup_location_id', { length: 20 }).references(
+      () => fioLocations.naturalId,
+      { onDelete: 'set null' }
+    ),
+    pickupFee: decimal('pickup_fee', { precision: 12, scale: 2 }).notNull().default('0'),
+    // Sum of item line totals (packages subtotal) snapshotted at submit.
+    packagesSubtotal: decimal('packages_subtotal', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    claimedAt: timestamp('claimed_at'),
+    // Set when the claimer generates the customer-facing "sales slip" for this
+    // order (the priced document handed to the external customer). Named to
+    // avoid collision with the member-to-member `invoices` feature.
+    slipGeneratedAt: timestamp('slip_generated_at'),
+    fulfilledAt: timestamp('fulfilled_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    statusIdx: index('sales_orders_status_idx').on(table.status),
+    requestedByIdx: index('sales_orders_requested_by_idx').on(table.requestedByUserId),
+    claimedByIdx: index('sales_orders_claimed_by_idx').on(table.claimedByUserId),
+  })
+)
+
+// One package line on a sales order. The package name and unit price are
+// snapshotted so the order stays stable even if the package or its price list
+// later changes; packageId is kept (nullable) for traceability/linking.
+export const salesOrderItems = pgTable(
+  'sales_order_items',
+  {
+    id: serial('id').primaryKey(),
+    salesOrderId: integer('sales_order_id')
+      .notNull()
+      .references(() => salesOrders.id, { onDelete: 'cascade' }),
+    packageId: integer('package_id').references(() => packages.id, { onDelete: 'set null' }),
+    packageName: varchar('package_name', { length: 100 }).notNull(),
+    quantity: integer('quantity').notNull(),
+    unitPrice: decimal('unit_price', { precision: 12, scale: 2 }), // NULL = package had no listed price
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  table => ({
+    salesOrderIdx: index('sales_order_items_sales_order_idx').on(table.salesOrderId),
+  })
+)
 
 // ==================== RELATIONS ====================
 
@@ -2070,5 +2171,34 @@ export const pickupLocationsRelations = relations(pickupLocations, ({ one }) => 
   location: one(fioLocations, {
     fields: [pickupLocations.locationId],
     references: [fioLocations.naturalId],
+  }),
+}))
+
+export const salesOrdersRelations = relations(salesOrders, ({ one, many }) => ({
+  items: many(salesOrderItems),
+  requestedByUser: one(users, {
+    fields: [salesOrders.requestedByUserId],
+    references: [users.id],
+    relationName: 'salesOrderRequestedBy',
+  }),
+  claimedByUser: one(users, {
+    fields: [salesOrders.claimedByUserId],
+    references: [users.id],
+    relationName: 'salesOrderClaimedBy',
+  }),
+  pickupLocation: one(fioLocations, {
+    fields: [salesOrders.pickupLocationId],
+    references: [fioLocations.naturalId],
+  }),
+}))
+
+export const salesOrderItemsRelations = relations(salesOrderItems, ({ one }) => ({
+  salesOrder: one(salesOrders, {
+    fields: [salesOrderItems.salesOrderId],
+    references: [salesOrders.id],
+  }),
+  package: one(packages, {
+    fields: [salesOrderItems.packageId],
+    references: [packages.id],
   }),
 }))

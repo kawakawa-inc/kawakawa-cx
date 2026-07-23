@@ -50,18 +50,27 @@
         <v-tooltip v-if="canViewPackages" location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" to="/packages" icon size="small" class="mx-1">
-              <v-icon>mdi-rocket-launch</v-icon>
+              <v-icon>mdi-package-variant-closed</v-icon>
             </v-btn>
           </template>
           Packages
         </v-tooltip>
-        <v-tooltip v-if="canViewPackages" location="bottom">
+        <v-tooltip v-if="canViewSalesOrders" location="bottom">
           <template #activator="{ props }">
-            <v-btn v-bind="props" to="/invoice-builder" icon size="small" class="mx-1">
-              <v-icon>mdi-rocket-launch-outline</v-icon>
+            <v-btn v-bind="props" to="/sales-orders" icon size="small" class="mx-1">
+              <v-badge
+                v-if="openSalesOrderCount > 0"
+                :content="openSalesOrderCount"
+                color="warning"
+                offset-x="-2"
+                offset-y="-2"
+              >
+                <v-icon>mdi-clipboard-text-clock</v-icon>
+              </v-badge>
+              <v-icon v-else>mdi-clipboard-text-clock</v-icon>
             </v-btn>
           </template>
-          Invoice Builder
+          Sales Order Queue
         </v-tooltip>
         <!-- Logistics — hidden until feature is ready to ship
         <v-tooltip location="bottom">
@@ -210,6 +219,23 @@ const isAdmin = computed(() => {
 })
 
 const canViewPackages = computed(() => userStore.hasPermission(PERMISSIONS.PACKAGES_VIEW))
+const canViewSalesOrders = computed(() => userStore.hasPermission(PERMISSIONS.SALES_ORDERS_VIEW))
+
+// Count of open (unclaimed) orders in the queue, shown as a nav badge.
+const openSalesOrderCount = ref(0)
+const fetchOpenSalesOrderCount = async () => {
+  if (!canViewSalesOrders.value) {
+    openSalesOrderCount.value = 0
+    return
+  }
+  try {
+    const orders = await api.salesOrders.list({ status: 'open' })
+    openSalesOrderCount.value = orders.length
+  } catch (error) {
+    console.error('Failed to fetch open sales order count:', error)
+    openSalesOrderCount.value = 0
+  }
+}
 
 // Fetch pending approvals count for admins
 const fetchPendingApprovalsCount = async () => {
@@ -325,6 +351,8 @@ onMounted(async () => {
 
   router.afterEach(() => {
     checkAuth()
+    // Refresh the queue badge on navigation so it reflects claims/new orders.
+    if (isAuthenticated.value && isVerified.value) fetchOpenSalesOrderCount()
   })
 
   // Validate session on startup (clears stale tokens)
@@ -340,6 +368,8 @@ onMounted(async () => {
     roleService.prefetch().catch(err => console.error('Failed to prefetch roles:', err))
     // Fetch pending approvals count for admins
     fetchPendingApprovalsCount()
+    // Fetch open sales order count for the queue badge
+    fetchOpenSalesOrderCount()
     // Start sync service polling
     syncService.startPolling()
   }

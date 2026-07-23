@@ -41,6 +41,8 @@ interface PackageResponse {
   currency: Currency | null
   pricingMode: PackagePricingMode
   marginMultiplier: number | null
+  /** One of the BoM commodity tickers, used as the package's visual icon. */
+  iconCommodityTicker: string | null
   description: string | null
   isActive: boolean
   createdByUserId: number | null
@@ -64,6 +66,8 @@ interface CreatePackageRequest {
   pricingMode?: PackagePricingMode
   /** Required (and must be > 0) when pricingMode is 'margin'. */
   marginMultiplier?: number | null
+  /** Optional BoM commodity ticker to use as the package's icon. */
+  iconCommodityTicker?: string | null
   description?: string | null
   isActive?: boolean
   inputs: PackageInputRequest[]
@@ -76,6 +80,7 @@ interface UpdatePackageRequest {
   currency?: Currency | null
   pricingMode?: PackagePricingMode
   marginMultiplier?: number | null
+  iconCommodityTicker?: string | null
   description?: string | null
   isActive?: boolean
   /** If provided, fully replaces the package's existing material lines. */
@@ -130,6 +135,23 @@ async function validateInputs(inputs: PackageInputRequest[]): Promise<Normalized
   return normalized
 }
 
+/**
+ * Resolve the requested icon ticker against a package's material lines. The
+ * icon must be one of the package's own inputs (uppercased); an empty/missing
+ * value clears it. Throws BadRequest if it isn't in the BoM.
+ */
+function resolveIconTicker(
+  requested: string | null | undefined,
+  inputs: NormalizedInput[]
+): string | null {
+  if (!requested) return null
+  const upper = requested.toUpperCase()
+  if (!inputs.some(i => i.commodityTicker === upper)) {
+    throw BadRequest(`Icon commodity ${upper} must be one of the package's materials`)
+  }
+  return upper
+}
+
 async function loadInputsForPackages(
   packageIds: number[]
 ): Promise<Map<number, PackageInputDto[]>> {
@@ -170,6 +192,7 @@ function toResponse(
     currency: row.currency,
     pricingMode: row.pricingMode,
     marginMultiplier: row.marginMultiplier !== null ? parseFloat(row.marginMultiplier) : null,
+    iconCommodityTicker: row.iconCommodityTicker,
     description: row.description,
     isActive: row.isActive,
     createdByUserId: row.createdByUserId,
@@ -235,6 +258,7 @@ export class PackagesController extends Controller {
         currency: packages.currency,
         pricingMode: packages.pricingMode,
         marginMultiplier: packages.marginMultiplier,
+        iconCommodityTicker: packages.iconCommodityTicker,
         description: packages.description,
         isActive: packages.isActive,
         createdByUserId: packages.createdByUserId,
@@ -286,6 +310,7 @@ export class PackagesController extends Controller {
         currency: packages.currency,
         pricingMode: packages.pricingMode,
         marginMultiplier: packages.marginMultiplier,
+        iconCommodityTicker: packages.iconCommodityTicker,
         description: packages.description,
         isActive: packages.isActive,
         createdByUserId: packages.createdByUserId,
@@ -344,6 +369,7 @@ export class PackagesController extends Controller {
       marginMultiplier: body.marginMultiplier,
     })
     const normalizedInputs = await validateInputs(body.inputs)
+    const iconCommodityTicker = resolveIconTicker(body.iconCommodityTicker, normalizedInputs)
 
     const result = await db.transaction(async tx => {
       const [row] = await tx
@@ -358,6 +384,7 @@ export class PackagesController extends Controller {
             pricingMode === 'margin' && body.marginMultiplier != null
               ? body.marginMultiplier.toFixed(4)
               : null,
+          iconCommodityTicker,
           description: body.description ?? null,
           isActive: body.isActive ?? true,
           createdByUserId: request.user.userId,
@@ -425,6 +452,36 @@ export class PackagesController extends Controller {
     const updateData: Partial<PackageRow> & { updatedAt: Date } = {
       updatedAt: new Date(),
     }
+
+    // Icon resolution: the icon must always be one of the (post-update) BoM
+    // tickers. We reconcile against whichever input set will be in effect —
+    // the replacement `inputs` if given, otherwise the package's existing ones.
+    if (body.iconCommodityTicker !== undefined || normalizedInputs !== null) {
+      const effectiveInputs =
+        normalizedInputs ??
+        (
+          await db
+            .select({ commodityTicker: packageInputs.commodityTicker })
+            .from(packageInputs)
+            .where(eq(packageInputs.packageId, id))
+        ).map(r => ({ commodityTicker: r.commodityTicker, quantity: 1 }))
+      // Requested icon (explicit) or the existing one (when only inputs changed).
+      const requestedIcon =
+        body.iconCommodityTicker !== undefined
+          ? body.iconCommodityTicker
+          : existing.iconCommodityTicker
+      const inBom =
+        requestedIcon != null &&
+        effectiveInputs.some(i => i.commodityTicker === requestedIcon.toUpperCase())
+      // Explicit request is validated (throws if not in BoM); an existing icon
+      // that fell out of the BoM after an input replace is silently cleared.
+      updateData.iconCommodityTicker =
+        body.iconCommodityTicker !== undefined
+          ? resolveIconTicker(body.iconCommodityTicker, effectiveInputs)
+          : inBom
+            ? requestedIcon
+            : null
+    }
     if (body.name !== undefined) updateData.name = body.name.trim()
     if (body.type !== undefined) updateData.type = body.type
     if (body.salePrice !== undefined) {
@@ -477,4 +534,4 @@ export class PackagesController extends Controller {
 }
 
 // Exported for unit testing
-export { validateInputs, validatePricing }
+export { validateInputs, validatePricing, resolveIconTicker }

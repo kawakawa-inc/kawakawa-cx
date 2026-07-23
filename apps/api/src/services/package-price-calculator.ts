@@ -35,6 +35,7 @@ export interface PackagePriceBreakdown {
   marginPercent: number | null // margin as a % of salePrice
   pricingMode: PackagePricingMode
   marginMultiplier: number | null // set when pricingMode = 'margin'; the multiplier salePrice was last computed from
+  iconCommodityTicker: string | null // BoM commodity chosen as the package's icon
 }
 
 interface PackageRow {
@@ -45,6 +46,7 @@ interface PackageRow {
   currency: Currency | null
   pricingMode: PackagePricingMode
   marginMultiplier: string | null
+  iconCommodityTicker: string | null
 }
 
 interface PackageInputRow {
@@ -121,6 +123,7 @@ function buildBreakdown(
     marginPercent,
     pricingMode: pkg.pricingMode,
     marginMultiplier: pkg.marginMultiplier !== null ? parseFloat(pkg.marginMultiplier) : null,
+    iconCommodityTicker: pkg.iconCommodityTicker,
   }
 }
 

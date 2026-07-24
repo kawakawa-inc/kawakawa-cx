@@ -1,12 +1,10 @@
-import { Controller, Get, Path, Post, Query, Route, Security, Tags, Request, Body } from 'tsoa'
+import { Controller, Get, Path, Query, Route, Security, Tags, Request } from 'tsoa'
 import {
   db,
   burnRepairCache,
   fioUserPlanets,
   fioPlanetBuildings,
   fioPlanetWorkforce,
-  fioUserStorage,
-  fioInventory,
 } from '../db/index.js'
 import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
@@ -28,9 +26,6 @@ import type {
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
   BurnRepairWorkforceEntry,
-  BurnRepairShoppingListRequest,
-  BurnRepairShoppingListResponse,
-  BurnRepairShoppingListItem,
   BurnRepairCacheRow,
   BurnRepairCorpMaterialBreakdown,
   BurnRepairCorpMaterialUserContribution,
@@ -132,9 +127,10 @@ export class BurnRepairController extends Controller {
    * Sums across all users whose roles match the burnRepair.includedRoles setting.
    *
    * `excludedUserIds` is a CSV of user IDs to additionally exclude on top of
-   * the role + FIO-freshness filter. Used by the "Users included" planning
-   * dropdown so the corp view can be modeled as if specific members weren't
-   * around (e.g. summer-vacation gap planning).
+   * the role + activity filter (stale or on vacation). Used by the "Users
+   * included" planning dropdown so the corp view can be modeled as if
+   * specific members weren't around (e.g. planning around someone's actual
+   * vacation).
    */
   @Get('corp')
   public async getCorpOverview(
@@ -147,17 +143,24 @@ export class BurnRepairController extends Controller {
     )
     const activeUserIds = applyExclusion(resolved.activeUserIds, excludedUserIds)
     const staleUserCount = resolved.staleUserCount
+    const vacationUserCount = resolved.vacationUserIds.length
     const fioAgeMap = resolved.fioAgeMap
 
     // Resolve display names for both groups: still-active members (for perUser
     // rows) and excluded members (for the chip tooltip). One batched lookup
     // keeps it to a single round trip even when the exclusion list is large.
-    const allDisplayNameIds = [...activeUserIds, ...manuallyExcludedIds, ...resolved.staleUserIds]
+    const allDisplayNameIds = [
+      ...activeUserIds,
+      ...manuallyExcludedIds,
+      ...resolved.staleUserIds,
+      ...resolved.vacationUserIds,
+    ]
     const usernameMap = await resolveDisplayUsernames([...new Set(allDisplayNameIds)])
 
     const excludedMembers = buildExcludedMembers(
       manuallyExcludedIds,
       resolved.staleUserIds,
+      resolved.vacationUserIds,
       fioAgeMap,
       usernameMap
     )
@@ -167,6 +170,7 @@ export class BurnRepairController extends Controller {
         materials: [],
         includedUserCount: 0,
         staleUserCount,
+        vacationUserCount,
         availableSurplus: {},
         listedStock: {},
         perUser: [],
@@ -226,6 +230,7 @@ export class BurnRepairController extends Controller {
       materials,
       includedUserCount: activeUserIds.length,
       staleUserCount,
+      vacationUserCount,
       availableSurplus,
       listedStock,
       perUser,
@@ -427,92 +432,9 @@ export class BurnRepairController extends Controller {
     }
   }
 
-  /**
-   * Generate a shopping list for a specific base.
-   * Formula: (burn_daily + inputs_daily) * days + repair_total - origin_stock - base_stock
-   * Per-user scope: only the requesting user's demand and stock.
-   */
-  @Post('shopping-list')
-  public async getShoppingList(
-    @Body() body: BurnRepairShoppingListRequest,
-    @Request() request: { user: JwtPayload }
-  ): Promise<BurnRepairShoppingListResponse> {
-    const userId = request.user.userId
-    const { originLocationId, basePlanetId, days } = body
-
-    if (days <= 0) {
-      this.setStatus(400)
-      throw BadRequest('Days must be greater than 0')
-    }
-
-    // Get cache rows for the specified base
-    const cacheRows = await db
-      .select()
-      .from(burnRepairCache)
-      .where(
-        and(eq(burnRepairCache.userId, userId), eq(burnRepairCache.planetNaturalId, basePlanetId))
-      )
-
-    // Get user's inventory at origin
-    const originStock = await this.getInventoryAtLocation(userId, originLocationId)
-
-    // Get user's inventory at base
-    const baseStock = await this.getInventoryAtLocation(userId, basePlanetId)
-
-    const items: BurnRepairShoppingListItem[] = []
-
-    for (const row of cacheRows) {
-      const consumption =
-        (Number(row.burnDaily) + Number(row.inputsDaily)) * days + Number(row.repairTotal)
-      const production = Number(row.productionDaily) * days
-      const oStock = originStock.get(row.commodityTicker) ?? 0
-      const bStock = baseStock.get(row.commodityTicker) ?? 0
-      const gap = Math.max(0, Math.ceil(consumption - production - oStock - bStock))
-
-      if (gap > 0) {
-        items.push({
-          commodityTicker: row.commodityTicker,
-          demand: Math.ceil(consumption),
-          production: Math.floor(production),
-          originStock: oStock,
-          baseStock: bStock,
-          gap,
-        })
-      }
-    }
-
-    // Sort by gap descending
-    items.sort((a, b) => b.gap - a.gap)
-
-    return { items, days, originLocationId, basePlanetId }
-  }
-
   // Active-member resolution + FIO stock aggregation moved to the shared
   // services in `@kawakawa/services/burn-repair` so the scheduled snapshot cron
   // uses the same logic. See `resolveActiveMembers` and `computeCorpStock`.
-
-  /**
-   * Get a user's total inventory at a location, grouped by ticker.
-   */
-  private async getInventoryAtLocation(
-    userId: number,
-    locationId: string
-  ): Promise<Map<string, number>> {
-    const rows = await db
-      .select({
-        ticker: fioInventory.commodityTicker,
-        quantity: fioInventory.quantity,
-      })
-      .from(fioInventory)
-      .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
-      .where(and(eq(fioUserStorage.userId, userId), eq(fioUserStorage.locationId, locationId)))
-
-    const stock = new Map<string, number>()
-    for (const r of rows) {
-      stock.set(r.ticker, (stock.get(r.ticker) ?? 0) + r.quantity)
-    }
-    return stock
-  }
 }
 
 /** CSV → unique sanitized integer IDs. Shared by applyExclusion + member detail. */
@@ -542,12 +464,20 @@ export function applyExclusion(activeUserIds: number[], excludedUserIds?: string
 
 /**
  * Build the per-member breakdown the UI uses for the "N excluded" tooltip.
- * Manual exclusions take precedence over the FIO-stale tag in the (rare) case
- * a user falls into both buckets.
+ * Manual exclusions take precedence over vacation/stale tags in the (rare)
+ * case a user falls into more than one bucket.
  */
+/** Sort precedence for excluded-member groups: manual, then vacation, then stale. */
+const REASON_ORDER: Record<ExcludedMember['reason'], number> = {
+  manual: 0,
+  vacation: 1,
+  stale: 2,
+}
+
 function buildExcludedMembers(
   manuallyExcludedIds: number[],
   staleUserIds: number[],
+  vacationUserIds: number[],
   fioAgeMap: Map<number, string>,
   usernameMap: Map<number, string>
 ): ExcludedMember[] {
@@ -563,11 +493,13 @@ function buildExcludedMembers(
       reason,
     })
   }
+  // Manual takes precedence over vacation, which takes precedence over stale,
+  // in the (rare) case a user falls into more than one bucket.
   for (const id of manuallyExcludedIds) push(id, 'manual')
-  for (const id of staleUserIds) push(id, 'fio-stale')
-  // Sort: manual first then stale, alphabetical within each group.
+  for (const id of vacationUserIds) push(id, 'vacation')
+  for (const id of staleUserIds) push(id, 'stale')
   return out.sort((a, b) => {
-    if (a.reason !== b.reason) return a.reason === 'manual' ? -1 : 1
+    if (a.reason !== b.reason) return REASON_ORDER[a.reason] - REASON_ORDER[b.reason]
     return a.username.localeCompare(b.username)
   })
 }

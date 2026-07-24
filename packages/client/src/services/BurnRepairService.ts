@@ -7,8 +7,6 @@ import type { BurnRepairCorpMaterialBreakdown } from '../models/BurnRepairCorpMa
 import type { BurnRepairCorpResponse } from '../models/BurnRepairCorpResponse'
 import type { BurnRepairCorpWorkforceResponse } from '../models/BurnRepairCorpWorkforceResponse'
 import type { BurnRepairMyBasesResponse } from '../models/BurnRepairMyBasesResponse'
-import type { BurnRepairShoppingListRequest } from '../models/BurnRepairShoppingListRequest'
-import type { BurnRepairShoppingListResponse } from '../models/BurnRepairShoppingListResponse'
 import type { CancelablePromise } from '../core/CancelablePromise'
 import { OpenAPI } from '../core/OpenAPI'
 import { request as __request } from '../core/request'
@@ -112,25 +110,6 @@ export class BurnRepairService {
       query: {
         excludedUserIds: excludedUserIds,
       },
-    })
-  }
-  /**
-   * Generate a shopping list for a specific base.
-   * Formula: (burn_daily + inputs_daily) * days + repair_total - origin_stock - base_stock
-   * Per-user scope: only the requesting user's demand and stock.
-   * @returns BurnRepairShoppingListResponse Ok
-   * @throws ApiError
-   */
-  public static getShoppingList({
-    requestBody,
-  }: {
-    requestBody: BurnRepairShoppingListRequest
-  }): CancelablePromise<BurnRepairShoppingListResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/burn-repair/shopping-list',
-      body: requestBody,
-      mediaType: 'application/json',
     })
   }
 }

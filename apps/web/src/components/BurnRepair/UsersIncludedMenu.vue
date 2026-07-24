@@ -122,9 +122,9 @@ interface Member {
 
 /**
  * Toggleable members — active users (from perUser) plus anyone manually
- * excluded (so they remain checkable). FIO-stale members are intentionally
- * omitted: they're not toggleable from this menu since the FIO gate is
- * automatic. The combined "N excluded" chip surfaces them separately.
+ * excluded (so they remain checkable). Stale and vacationing members are
+ * intentionally omitted: they're not toggleable from this menu since that
+ * gate is automatic. The combined "N excluded" chip surfaces them separately.
  */
 const members = computed<Member[]>(() => {
   const seen = new Map<number, Member>()

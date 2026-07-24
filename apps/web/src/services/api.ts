@@ -64,8 +64,6 @@ import type {
   BurnRepairCorpBuildingsResponse,
   BurnRepairCorpWorkforceResponse,
   BurnRepairCorpMaterialBreakdown,
-  BurnRepairShoppingListRequest,
-  BurnRepairShoppingListResponse,
   UserShip,
   Trip,
   TripStatus,
@@ -4364,19 +4362,6 @@ const realApi = {
     if (!response.ok) throw new Error(`Failed to get material breakdown: ${response.statusText}`)
     return response.json()
   },
-
-  getBurnRepairShoppingList: async (
-    body: BurnRepairShoppingListRequest
-  ): Promise<BurnRepairShoppingListResponse> => {
-    const response = await fetchWithLogging('/api/burn-repair/shopping-list', {
-      method: 'POST',
-      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) throw new Error(`Failed to get shopping list: ${response.statusText}`)
-    return response.json()
-  },
 }
 
 interface SupplyPlanetSummary {
@@ -4692,7 +4677,6 @@ export const api = {
       realApi.getBurnRepairCorpWorkforce(excludedUserIds),
     corpMaterialBreakdown: (ticker: string, excludedUserIds?: number[]) =>
       realApi.getBurnRepairCorpMaterialBreakdown(ticker, excludedUserIds),
-    shoppingList: (body: BurnRepairShoppingListRequest) => realApi.getBurnRepairShoppingList(body),
   },
   logistics: {
     graph: () => realApi.getLogisticsGraph(),

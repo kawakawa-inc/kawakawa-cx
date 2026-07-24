@@ -20,7 +20,8 @@ import PackagesView from '../views/PackagesView.vue'
 import SalesOrderCreateView from '../views/SalesOrderCreateView.vue'
 import SalesOrderQueueView from '../views/SalesOrderQueueView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
-import BurnRepairView from '../views/BurnRepairView.vue'
+import MyBasesView from '../views/MyBasesView.vue'
+import CorpOverviewView from '../views/CorpOverviewView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -149,10 +150,21 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresVerified: true },
     },
     {
-      path: '/burn-repair',
-      name: 'burn-repair',
-      component: BurnRepairView,
+      path: '/my-bases',
+      name: 'my-bases',
+      component: MyBasesView,
       meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      path: '/corp-overview',
+      name: 'corp-overview',
+      component: CorpOverviewView,
+      meta: { requiresAuth: true, requiresVerified: true },
+    },
+    {
+      // Old combined Burn & Repair page, split into /my-bases and /corp-overview.
+      path: '/burn-repair',
+      redirect: '/my-bases',
     },
     {
       path: '/:pathMatch(.*)*',

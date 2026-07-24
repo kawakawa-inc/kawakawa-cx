@@ -1,5 +1,6 @@
 // Shared types for Kawakawa CX
-export * from './supply.js'
+export * from './burn-repair.js'
+export * from './logistics.js'
 
 export type Currency = 'ICA' | 'CIS' | 'AIC' | 'NCC'
 

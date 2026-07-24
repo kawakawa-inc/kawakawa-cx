@@ -93,6 +93,20 @@
       <template #item.actions="{ item }">
         <!-- Desktop: show buttons -->
         <div class="d-none d-sm-flex ga-1">
+          <v-tooltip location="top" text="Find buyers for this item">
+            <template #activator="{ props: tooltipProps }">
+              <v-btn
+                v-bind="tooltipProps"
+                color="info"
+                size="small"
+                variant="tonal"
+                @click="$emit('find-buyers', item)"
+              >
+                <v-icon start size="small">mdi-account-search</v-icon>
+                Buyers
+              </v-btn>
+            </template>
+          </v-tooltip>
           <v-tooltip
             location="top"
             :text="
@@ -121,6 +135,12 @@
             </v-btn>
           </template>
           <v-list density="compact">
+            <v-list-item @click="$emit('find-buyers', item)">
+              <template #prepend>
+                <v-icon color="info">mdi-account-search</v-icon>
+              </template>
+              <v-list-item-title>Find Buyers</v-list-item-title>
+            </v-list-item>
             <v-tooltip
               :disabled="canCreateOrders"
               text="You do not have permission to create orders"
@@ -135,7 +155,7 @@
                   <template #prepend>
                     <v-icon color="success">mdi-tag</v-icon>
                   </template>
-                  <v-list-item-title>Sell</v-list-item-title>
+                  <v-list-item-title>Create Sell Order</v-list-item-title>
                 </v-list-item>
               </template>
             </v-tooltip>
@@ -198,6 +218,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:sortBy': [value: SortItem[]]
   sell: [item: FioInventoryItem]
+  'find-buyers': [item: FioInventoryItem]
   'view-sell': [order: SellOrderResponse]
   'view-buy': [order: BuyOrderResponse]
   'edit-sell': [order: SellOrderResponse]

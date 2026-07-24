@@ -91,17 +91,26 @@
                 {{ orderType === 'sell' ? 'Available' : 'Quantity' }}
               </div>
               <div class="text-body-1 font-weight-medium">
-                {{
-                  orderType === 'sell'
-                    ? (order as SellOrderData).availableQuantity.toLocaleString()
-                    : (order as BuyOrderData).quantity.toLocaleString()
-                }}
+                <template v-if="orderType === 'sell'">
+                  {{ (order as SellOrderData).availableQuantity.toLocaleString() }}
+                </template>
+                <template v-else-if="(order as BuyOrderData).isStanding">
+                  <span class="text-info">&infin;</span>
+                </template>
+                <template v-else>
+                  {{ (order as BuyOrderData).quantity.toLocaleString() }}
+                </template>
               </div>
             </v-col>
             <v-col cols="6" sm="3">
               <div class="text-caption text-medium-emphasis">Remaining</div>
               <div class="text-body-1 font-weight-medium">
-                {{ order.remainingQuantity.toLocaleString() }}
+                <template v-if="orderType === 'buy' && (order as BuyOrderData).isStanding">
+                  <span class="text-info">&infin;</span>
+                </template>
+                <template v-else>
+                  {{ order.remainingQuantity.toLocaleString() }}
+                </template>
                 <span v-if="order.reservedQuantity > 0" class="text-caption text-medium-emphasis">
                   ({{ order.reservedQuantity }} {{ orderType === 'buy' ? 'filled' : 'reserved' }})
                 </span>

@@ -182,6 +182,7 @@ export interface BuyOrder {
   price: number
   currency: Currency
   orderType: OrderType // internal = members only, partner = trade partners
+  isStanding: boolean // standing order = unlimited quantity, always buying
 }
 
 // Market listing (sell order visible in market)
@@ -211,10 +212,11 @@ export interface MarketBuyRequest {
   currency: Currency
   orderType: OrderType
   isOwn: boolean
+  isStanding: boolean // standing order = unlimited quantity, always buying
   jumpCount: number | null // Jump count from destination (null if no destination specified)
   activeReservationCount: number // count of pending/confirmed reservations
   reservedQuantity: number // sum of quantities in active reservations
-  remainingQuantity: number // quantity - reservedQuantity
+  remainingQuantity: number // quantity - reservedQuantity (ignored if isStanding)
 }
 
 // ==================== DISCORD INTEGRATION ====================

@@ -849,6 +849,7 @@ interface BuyOrderResponse {
   currency: Currency
   priceListCode: string | null
   orderType: OrderType
+  isStanding: boolean // standing order = unlimited quantity, always buying
   activeReservationCount: number
   reservedQuantity: number
   fulfilledQuantity: number
@@ -868,6 +869,7 @@ interface CreateBuyOrderRequest {
   currency: Currency
   priceListCode?: string | null
   orderType?: OrderType
+  isStanding?: boolean
 }
 
 interface UpdateBuyOrderRequest {
@@ -876,6 +878,7 @@ interface UpdateBuyOrderRequest {
   currency?: Currency
   priceListCode?: string | null
   orderType?: OrderType
+  isStanding?: boolean
 }
 
 // Market listing types
@@ -918,10 +921,11 @@ interface MarketBuyRequest {
   pricingMode: PricingMode
   orderType: OrderType
   isOwn: boolean
+  isStanding: boolean // standing order = unlimited quantity, always buying
   jumpCount: number | null
   activeReservationCount: number
   reservedQuantity: number
-  remainingQuantity: number
+  remainingQuantity: number // ignored if isStanding
   fioUploadedAt: string | null
 }
 

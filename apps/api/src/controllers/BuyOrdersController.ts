@@ -41,6 +41,7 @@ interface BuyOrderResponse {
   sourceMode: BuyOrderSourceMode
   demandSource: DemandSource | null
   targetDays: number | null
+  isStanding: boolean
   activeReservationCount: number
   reservedQuantity: number
   fulfilledQuantity: number
@@ -62,6 +63,7 @@ interface CreateBuyOrderRequest {
   sourceMode?: BuyOrderSourceMode
   demandSource?: DemandSource
   targetDays?: number
+  isStanding?: boolean
 }
 
 interface UpdateBuyOrderRequest {
@@ -71,6 +73,7 @@ interface UpdateBuyOrderRequest {
   priceListCode?: string | null
   orderType?: OrderType
   targetDays?: number
+  isStanding?: boolean
 }
 
 /**
@@ -134,6 +137,7 @@ export class BuyOrdersController extends Controller {
         sourceMode: buyOrders.sourceMode,
         demandSource: buyOrders.demandSource,
         targetDays: buyOrders.targetDays,
+        isStanding: buyOrders.isStanding,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -190,6 +194,7 @@ export class BuyOrdersController extends Controller {
         sourceMode: order.sourceMode,
         demandSource: order.demandSource,
         targetDays: order.targetDays,
+        isStanding: order.isStanding,
 
         activeReservationCount: activeCount,
         reservedQuantity: reservedQty,
@@ -247,6 +252,7 @@ export class BuyOrdersController extends Controller {
         sourceMode: buyOrders.sourceMode,
         demandSource: buyOrders.demandSource,
         targetDays: buyOrders.targetDays,
+        isStanding: buyOrders.isStanding,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -297,6 +303,7 @@ export class BuyOrdersController extends Controller {
       sourceMode: order.sourceMode,
       demandSource: order.demandSource,
       targetDays: order.targetDays,
+      isStanding: order.isStanding,
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,
@@ -345,8 +352,8 @@ export class BuyOrdersController extends Controller {
       }
     }
 
-    // Validate quantity (demand orders can start at 0, recalculated after creation)
-    if (sourceMode === 'manual' && body.quantity <= 0) {
+    // Validate quantity (demand orders and standing orders can start at 0)
+    if (sourceMode === 'manual' && !body.isStanding && body.quantity <= 0) {
       this.setStatus(400)
       throw BadRequest('Quantity must be greater than 0')
     }
@@ -427,6 +434,7 @@ export class BuyOrdersController extends Controller {
         sourceMode,
         demandSource: sourceMode === 'demand' ? body.demandSource! : null,
         targetDays: sourceMode === 'demand' ? (body.targetDays ?? null) : null,
+        isStanding: body.isStanding ?? false,
       })
       .returning()
 
@@ -464,6 +472,7 @@ export class BuyOrdersController extends Controller {
       sourceMode: newOrder.sourceMode,
       demandSource: newOrder.demandSource,
       targetDays: newOrder.targetDays,
+      isStanding: newOrder.isStanding,
       activeReservationCount: 0,
       reservedQuantity: 0,
       fulfilledQuantity: 0,
@@ -531,8 +540,14 @@ export class BuyOrdersController extends Controller {
       }
     }
 
-    // Validate quantity — demand orders skip manual quantity validation
-    if (body.quantity !== undefined && existing.sourceMode === 'manual' && body.quantity <= 0) {
+    // Validate quantity — demand orders and standing orders skip manual quantity validation
+    const isStanding = body.isStanding ?? existing.isStanding
+    if (
+      body.quantity !== undefined &&
+      existing.sourceMode === 'manual' &&
+      !isStanding &&
+      body.quantity <= 0
+    ) {
       this.setStatus(400)
       throw BadRequest('Quantity must be greater than 0')
     }
@@ -550,6 +565,9 @@ export class BuyOrdersController extends Controller {
     if (body.orderType !== undefined) updateData.orderType = body.orderType
     if (body.targetDays !== undefined && existing.sourceMode === 'demand') {
       updateData.targetDays = body.targetDays
+    }
+    if (body.isStanding !== undefined) {
+      updateData.isStanding = body.isStanding
     }
 
     // Update
@@ -589,6 +607,7 @@ export class BuyOrdersController extends Controller {
         sourceMode: buyOrders.sourceMode,
         demandSource: buyOrders.demandSource,
         targetDays: buyOrders.targetDays,
+        isStanding: buyOrders.isStanding,
         activeReservationCount: reservationStats.activeCount,
         reservedQuantity: reservationStats.activeQuantity,
         fulfilledQuantity: reservationStats.fulfilledQuantity,
@@ -634,6 +653,7 @@ export class BuyOrdersController extends Controller {
       sourceMode: updated.sourceMode,
       demandSource: updated.demandSource,
       targetDays: updated.targetDays,
+      isStanding: updated.isStanding,
       activeReservationCount: activeCount,
       reservedQuantity: reservedQty,
       fulfilledQuantity: fulfilledQty,

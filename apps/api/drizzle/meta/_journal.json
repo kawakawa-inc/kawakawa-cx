@@ -218,6 +218,13 @@
       "when": 1784786605559,
       "tag": "0030_sales_order_slip",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784918809933,
+      "tag": "0031_parallel_blonde_phantom",
+      "breakpoints": true
     }
   ]
 }

@@ -37,6 +37,7 @@
       :can-create-orders="canCreateAnyOrders"
       :has-icons="hasIcons"
       @sell="openSellDialog"
+      @find-buyers="openFindBuyersDialog"
       @view-sell="viewSellOrder"
       @view-buy="viewBuyOrder"
       @edit-sell="editSellOrder"
@@ -135,6 +136,13 @@
       :loading="deleting"
       @confirm="executeDelete"
     />
+
+    <!-- Find Buyers Dialog -->
+    <FindBuyersDialog
+      v-model="findBuyersDialog"
+      :item="findBuyersItem"
+      @reserved="onReservationCreated"
+    />
   </v-container>
 </template>
 
@@ -164,6 +172,7 @@ import OrderDetailDialog from '../components/OrderDetailDialog.vue'
 import SellOrderEditDialog from '../components/SellOrderEditDialog.vue'
 import BuyOrderEditDialog from '../components/BuyOrderEditDialog.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
+import FindBuyersDialog from '../components/FindBuyersDialog.vue'
 import { localizeMaterialCategory } from '../utils/materials'
 import { locationService } from '../services/locationService'
 
@@ -221,6 +230,8 @@ const deleteDialog = ref(false)
 const deletingOrderType = ref<'sell' | 'buy'>('sell')
 const deletingOrderId = ref<number>(0)
 const deleting = ref(false)
+const findBuyersDialog = ref(false)
+const findBuyersItem = ref<FioInventoryItem | null>(null)
 
 // Persisted page state (sort, etc.)
 const { state: pageState } = usePageState('inventory', {
@@ -501,6 +512,17 @@ const syncInventory = async () => {
 const openSellDialog = (item: FioInventoryItem) => {
   selectedItem.value = item
   orderDialog.value = true
+}
+
+const openFindBuyersDialog = (item: FioInventoryItem) => {
+  findBuyersItem.value = item
+  findBuyersDialog.value = true
+}
+
+const onReservationCreated = () => {
+  showSnackbar('Reservation created successfully')
+  loadOrders()
+  loadInventory()
 }
 
 const onOrderCreated = (type: 'buy' | 'sell') => {

@@ -53,10 +53,11 @@ interface MarketBuyRequest {
   pricingMode: PricingMode // 'fixed' = custom price, 'dynamic' = from price list
   orderType: OrderType
   isOwn: boolean
+  isStanding: boolean // standing order = unlimited quantity, always buying
   jumpCount: number | null // Jump count from destination (null if no destination specified)
   activeReservationCount: number // count of pending/confirmed reservations
   reservedQuantity: number // sum of quantities in active reservations
-  remainingQuantity: number // quantity - reservedQuantity
+  remainingQuantity: number // quantity - reservedQuantity (ignored if isStanding)
   fioUploadedAt: string | null // Not applicable for buy orders (always null)
 }
 
@@ -96,6 +97,7 @@ interface FilteredBuyOrder {
   orderType: OrderType
   buyerName: string
   isOwn: boolean
+  isStanding: boolean
   effectivePrice: number | null
   isFallback: boolean
   priceLocationId: string | null
@@ -333,6 +335,7 @@ export class MarketController extends Controller {
         currency: buyOrders.currency,
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
+        isStanding: buyOrders.isStanding,
         buyerName: users.displayName,
       })
       .from(buyOrders)
@@ -400,6 +403,7 @@ export class MarketController extends Controller {
         orderType: order.orderType,
         buyerName: order.buyerName,
         isOwn,
+        isStanding: order.isStanding,
         effectivePrice,
         isFallback,
         priceLocationId,
@@ -445,6 +449,7 @@ export class MarketController extends Controller {
         pricingMode: order.pricingMode,
         orderType: order.orderType,
         isOwn: order.isOwn,
+        isStanding: order.isStanding,
         jumpCount: destination ? (jumpCountMap.get(order.locationId) ?? null) : null,
         activeReservationCount: stats.count,
         reservedQuantity: stats.quantity,

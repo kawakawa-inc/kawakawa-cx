@@ -368,7 +368,13 @@
         </template>
 
         <template #item.quantity="{ item }">
-          <v-tooltip location="top">
+          <v-tooltip v-if="item.isStanding" location="top">
+            <template #activator="{ props }">
+              <span v-bind="props" class="font-weight-medium text-info">&infin;</span>
+            </template>
+            <span>Standing order - unlimited quantity</span>
+          </v-tooltip>
+          <v-tooltip v-else location="top">
             <template #activator="{ props }">
               <span v-bind="props" class="font-weight-medium">
                 {{ item.remainingQuantity.toLocaleString() }}
@@ -578,10 +584,35 @@
               label="Quantity"
               type="number"
               min="1"
-              :rules="[v => v > 0 || 'Quantity must be positive']"
-              required
+              :rules="[v => editForm.isStanding || v > 0 || 'Quantity must be positive']"
+              :disabled="editForm.isStanding"
+              :hint="editForm.isStanding ? 'Standing order - unlimited quantity' : ''"
+              :persistent-hint="editForm.isStanding"
               class="mb-2"
             />
+
+            <!-- Standing Order Toggle (only for buy orders) -->
+            <v-checkbox
+              v-if="editingItem?.itemType === 'buy'"
+              v-model="editForm.isStanding"
+              density="compact"
+              hide-details
+              class="mb-3"
+            >
+              <template #label>
+                <span>Standing order</span>
+                <v-tooltip location="top">
+                  <template #activator="{ props: tooltipProps }">
+                    <v-icon v-bind="tooltipProps" size="small" class="ml-1">
+                      mdi-information-outline
+                    </v-icon>
+                  </template>
+                  <span
+                    >Always buying - no quantity limit. Sellers can sell any amount to you.</span
+                  >
+                </v-tooltip>
+              </template>
+            </v-checkbox>
 
             <!-- Automatic Pricing Toggle -->
             <div class="d-flex align-center mb-3 text-body-2">
@@ -1091,6 +1122,7 @@ const editForm = ref({
   quantity: 0, // Only used for buy orders
   usePriceList: false,
   priceListCode: null as string | null,
+  isStanding: false, // Only used for buy orders
 })
 
 // Suggested price for edit dialog
@@ -2090,6 +2122,7 @@ const openEditDialog = (item: MarketItem) => {
     quantity: item.quantity,
     usePriceList,
     priceListCode: item.priceListCode,
+    isStanding: item.isStanding ?? false,
   }
   editSuggestedPrice.value = null
   editDialog.value = true
@@ -2138,8 +2171,9 @@ const saveEdit = async () => {
         price,
         currency: editForm.value.currency,
         orderType: editForm.value.orderType,
-        quantity: editForm.value.quantity,
+        quantity: editForm.value.isStanding ? 0 : editForm.value.quantity,
         priceListCode,
+        isStanding: editForm.value.isStanding,
       })
     }
     showSnackbar('Order updated successfully')

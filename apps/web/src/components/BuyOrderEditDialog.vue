@@ -21,9 +21,26 @@
             label="Quantity"
             type="number"
             min="1"
-            :rules="[v => v > 0 || 'Quantity must be positive']"
-            required
+            :rules="[v => form.isStanding || v > 0 || 'Quantity must be positive']"
+            :disabled="form.isStanding"
+            :hint="form.isStanding ? 'Standing order - unlimited quantity' : ''"
+            :persistent-hint="form.isStanding"
           />
+
+          <!-- Standing Order Toggle -->
+          <v-checkbox v-model="form.isStanding" density="compact" hide-details class="mb-3">
+            <template #label>
+              <span>Standing order</span>
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <v-icon v-bind="tooltipProps" size="small" class="ml-1">
+                    mdi-information-outline
+                  </v-icon>
+                </template>
+                <span>Always buying - no quantity limit. Sellers can sell any amount to you.</span>
+              </v-tooltip>
+            </template>
+          </v-checkbox>
 
           <!-- Automatic Pricing Status -->
           <div class="d-flex align-center mb-3 text-body-2">
@@ -168,6 +185,7 @@ const form = ref({
   orderType: 'internal' as OrderType,
   usePriceList: false,
   priceListCode: null as string | null,
+  isStanding: false,
 })
 
 // Constants
@@ -254,11 +272,12 @@ const save = async () => {
   try {
     saving.value = true
     await api.buyOrders.update(props.order.id, {
-      quantity: form.value.quantity,
+      quantity: form.value.isStanding ? 0 : form.value.quantity,
       price: form.value.usePriceList ? 0 : form.value.price,
       currency: form.value.currency,
       priceListCode: form.value.priceListCode,
       orderType: form.value.orderType,
+      isStanding: form.value.isStanding,
     })
     emit('saved')
     dialogOpen.value = false
@@ -282,6 +301,7 @@ watch(
         orderType: order.orderType,
         usePriceList,
         priceListCode: order.priceListCode ?? null,
+        isStanding: order.isStanding,
       }
       suggestedPrice.value = null
       // Load suggested price if user has a default price list

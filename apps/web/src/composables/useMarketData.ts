@@ -26,6 +26,7 @@ export interface MarketItem {
   reservedQuantity: number
   activeReservationCount: number
   isOwn: boolean
+  isStanding: boolean // standing order = unlimited quantity (buy orders only)
   fioUploadedAt: string | null // When seller's FIO inventory was last synced
   pricingMode: PricingMode
   effectivePrice: number | null
@@ -82,6 +83,7 @@ export function useMarketData(options?: { onError?: (error: unknown) => void }) 
         reservedQuantity: listing.reservedQuantity,
         activeReservationCount: listing.activeReservationCount,
         isOwn: listing.isOwn,
+        isStanding: false, // sell orders are never standing
         fioUploadedAt: listing.fioUploadedAt,
         pricingMode: listing.pricingMode,
         effectivePrice: listing.effectivePrice,
@@ -104,6 +106,7 @@ export function useMarketData(options?: { onError?: (error: unknown) => void }) 
         reservedQuantity: request.reservedQuantity,
         activeReservationCount: request.activeReservationCount,
         isOwn: request.isOwn,
+        isStanding: request.isStanding,
         fioUploadedAt: request.fioUploadedAt,
         pricingMode: request.pricingMode,
         effectivePrice: request.effectivePrice,

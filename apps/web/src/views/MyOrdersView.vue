@@ -311,6 +311,23 @@
                     </span>
                   </template>
                 </v-tooltip>
+                <v-tooltip
+                  :text="canCreateAnyOrders ? '' : 'You do not have permission to create orders'"
+                  :disabled="canCreateAnyOrders"
+                >
+                  <template #activator="{ props }">
+                    <span v-bind="props">
+                      <v-btn
+                        variant="outlined"
+                        prepend-icon="mdi-playlist-plus"
+                        :disabled="!canCreateAnyOrders"
+                        @click="openBuyOrderDialog"
+                      >
+                        Bulk
+                      </v-btn>
+                    </span>
+                  </template>
+                </v-tooltip>
               </v-col>
             </v-row>
           </v-card-title>
@@ -384,7 +401,13 @@
             </template>
 
             <template #item.quantity="{ item }">
-              <v-tooltip location="top">
+              <v-tooltip v-if="item.isStanding" location="top">
+                <template #activator="{ props }">
+                  <span v-bind="props" class="font-weight-medium text-info">&infin;</span>
+                </template>
+                <span>Standing order - unlimited quantity</span>
+              </v-tooltip>
+              <v-tooltip v-else location="top">
                 <template #activator="{ props }">
                   <span v-bind="props" class="font-weight-medium">
                     {{ item.remainingQuantity.toLocaleString() }}

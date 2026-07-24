@@ -707,6 +707,7 @@ export const buyOrders = pgTable(
     sourceMode: buyOrderSourceModeEnum('source_mode').notNull().default('manual'), // manual = fixed qty, demand = auto-calculated
     demandSource: demandSourceEnum('demand_source'), // null for manual, 'burn' or 'repair' for demand
     targetDays: integer('target_days'), // days of stock to maintain (burn only)
+    isStanding: boolean('is_standing').notNull().default(false), // standing order = unlimited quantity, always buying
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
     deletedAt: timestamp('deleted_at'), // soft-delete tombstone; preserves history for fulfilled invoices

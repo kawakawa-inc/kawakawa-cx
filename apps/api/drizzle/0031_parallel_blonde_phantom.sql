@@ -1,0 +1,1 @@
+ALTER TABLE "buy_orders" ADD COLUMN "is_standing" boolean DEFAULT false NOT NULL;

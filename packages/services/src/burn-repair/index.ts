@@ -17,6 +17,5 @@ export { computeCorpStock, computeCorpListedStock, captureCorpStockSnapshot } fr
 export {
   resolveActiveMembers,
   resolveDisplayUsernames,
-  STALE_DATA_DAYS,
   type ActiveMembersResult,
 } from './corp-members.js'

@@ -33,17 +33,6 @@ vi.mock('../db/index.js', () => {
       population: 'population',
       required: 'required',
     },
-    fioUserStorage: {
-      id: 'id',
-      userId: 'user_id',
-      locationId: 'location_id',
-      fioUploadedAt: 'fio_uploaded_at',
-    },
-    fioInventory: {
-      userStorageId: 'user_storage_id',
-      commodityTicker: 'commodity_ticker',
-      quantity: 'quantity',
-    },
     sellOrders: {
       id: 'id',
       userId: 'user_id',
@@ -196,6 +185,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [],
         staleUserCount: 0,
         staleUserIds: [],
+        vacationUserIds: [],
         fioAgeMap: new Map(),
       })
 
@@ -209,6 +199,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [1, 2],
         staleUserCount: 1,
         staleUserIds: [3],
+        vacationUserIds: [],
         fioAgeMap: new Map(),
       })
       vi.mocked(computeCorpStock).mockResolvedValue({})
@@ -257,6 +248,55 @@ describe('BurnRepairController', () => {
       expect(result.perUser).toEqual([])
     })
 
+    it('should build excludedMembers with manual, vacation, and stale reasons in precedence order', async () => {
+      vi.mocked(resolveActiveMembers).mockResolvedValue({
+        activeUserIds: [1, 2, 3],
+        staleUserCount: 1,
+        staleUserIds: [3],
+        vacationUserIds: [2],
+        fioAgeMap: new Map(),
+      })
+      vi.mocked(computeCorpStock).mockResolvedValue({})
+      vi.mocked(computeCorpListedStock).mockResolvedValue({})
+      vi.mocked(resolveDisplayUsernames).mockResolvedValue(
+        new Map([
+          [1, 'Alice'],
+          [2, 'Bob'],
+          [3, 'Carol'],
+        ])
+      )
+
+      const aggregateChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      }
+      const perUserChain = {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      }
+      vi.mocked(db.select)
+        .mockReturnValueOnce(aggregateChain as unknown as ReturnType<typeof db.select>)
+        .mockReturnValueOnce(perUserChain as unknown as ReturnType<typeof db.select>)
+
+      // User 1 is manually excluded on top of the two auto-excluded members.
+      const result = await controller.getCorpOverview(mockRequest, '1')
+
+      expect(result.staleUserCount).toBe(1)
+      expect(result.excludedMembers).toEqual([
+        { userId: 1, username: 'Alice', fioDataAge: null, reason: 'manual' },
+        { userId: 2, username: 'Bob', fioDataAge: null, reason: 'vacation' },
+        { userId: 3, username: 'Carol', fioDataAge: null, reason: 'stale' },
+      ])
+    })
+
     // FIO-age filtering (both the stale-data cutoff and the never-uploaded
     // exclusion) is exercised by the corp-members service tests. The
     // controller just forwards whatever resolveActiveMembers returns.
@@ -269,6 +309,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [1, 2],
         staleUserCount: 0,
         staleUserIds: [],
+        vacationUserIds: [],
         fioAgeMap: new Map([
           [1, '2026-04-20T00:00:00.000Z'],
           [2, '2026-04-15T00:00:00.000Z'],
@@ -341,6 +382,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [],
         staleUserCount: 0,
         staleUserIds: [],
+        vacationUserIds: [],
         fioAgeMap: new Map(),
       })
 
@@ -364,6 +406,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [1, 2, 3],
         staleUserCount: 0,
         staleUserIds: [],
+        vacationUserIds: [],
         fioAgeMap: new Map(),
       })
       vi.mocked(resolveDisplayUsernames).mockResolvedValue(
@@ -452,6 +495,7 @@ describe('BurnRepairController', () => {
         activeUserIds: [1, 2],
         staleUserCount: 0,
         staleUserIds: [],
+        vacationUserIds: [],
         fioAgeMap: new Map(),
       })
       vi.mocked(resolveDisplayUsernames).mockResolvedValue(new Map([[1, 'alice']]))
@@ -480,118 +524,6 @@ describe('BurnRepairController', () => {
       expect(vi.mocked(resolveDisplayUsernames).mock.calls[0][0]).toEqual([1])
       expect(result.perUser).toHaveLength(1)
       expect(result.perUser[0].userId).toBe(1)
-    })
-  })
-
-  describe('getShoppingList', () => {
-    it('should compute shopping list with correct formula including production', async () => {
-      // Mock cache rows for the base
-      const cacheChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            {
-              commodityTicker: 'RAT',
-              burnDaily: '4.0000',
-              inputsDaily: '1.0000',
-              repairTotal: '10.0000',
-              productionDaily: '2.0000',
-            },
-          ]),
-        }),
-      }
-
-      // Mock inventory at origin (has 5 RAT)
-      const originInvChain = {
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ ticker: 'RAT', quantity: 5 }]),
-          }),
-        }),
-      }
-
-      // Mock inventory at base (has 0 RAT)
-      const baseInvChain = {
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      }
-
-      vi.mocked(db.select)
-        .mockReturnValueOnce(cacheChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(originInvChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(baseInvChain as unknown as ReturnType<typeof db.select>)
-
-      const result = await controller.getShoppingList(
-        { originLocationId: 'BEN', basePlanetId: 'UV-351a', days: 7 },
-        mockRequest
-      )
-
-      // consumption = (4 + 1) * 7 + 10 = 45
-      // production = 2 * 7 = 14
-      // gap = max(0, ceil(45 - 14 - 5 - 0)) = 26
-      expect(result.items).toHaveLength(1)
-      expect(result.items[0].commodityTicker).toBe('RAT')
-      expect(result.items[0].demand).toBe(45)
-      expect(result.items[0].production).toBe(14)
-      expect(result.items[0].originStock).toBe(5)
-      expect(result.items[0].baseStock).toBe(0)
-      expect(result.items[0].gap).toBe(26)
-    })
-
-    it('should return empty when stock covers demand', async () => {
-      const cacheChain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            {
-              commodityTicker: 'RAT',
-              burnDaily: '1.0000',
-              inputsDaily: '0.0000',
-              repairTotal: '0.0000',
-              productionDaily: '0.0000',
-            },
-          ]),
-        }),
-      }
-
-      const originInvChain = {
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ ticker: 'RAT', quantity: 100 }]),
-          }),
-        }),
-      }
-
-      const baseInvChain = {
-        from: vi.fn().mockReturnValue({
-          innerJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      }
-
-      vi.mocked(db.select)
-        .mockReturnValueOnce(cacheChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(originInvChain as unknown as ReturnType<typeof db.select>)
-        .mockReturnValueOnce(baseInvChain as unknown as ReturnType<typeof db.select>)
-
-      const result = await controller.getShoppingList(
-        { originLocationId: 'BEN', basePlanetId: 'UV-351a', days: 7 },
-        mockRequest
-      )
-
-      // demand = 1 * 7 = 7, stock = 100 → gap = 0 → excluded
-      expect(result.items).toHaveLength(0)
-    })
-
-    it('should reject days <= 0', async () => {
-      await expect(
-        controller.getShoppingList(
-          { originLocationId: 'BEN', basePlanetId: 'UV-351a', days: 0 },
-          mockRequest
-        )
-      ).rejects.toThrow('Days must be greater than 0')
     })
   })
 })

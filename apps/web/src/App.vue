@@ -84,11 +84,19 @@
         -->
         <v-tooltip location="bottom">
           <template #activator="{ props }">
-            <v-btn v-bind="props" to="/burn-repair" icon size="small" class="mx-1">
-              <v-icon>mdi-fire</v-icon>
+            <v-btn v-bind="props" to="/my-bases" icon size="small" class="mx-1">
+              <v-icon>mdi-factory</v-icon>
             </v-btn>
           </template>
-          Burn &amp; Repair
+          My Bases
+        </v-tooltip>
+        <v-tooltip location="bottom">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" to="/corp-overview" icon size="small" class="mx-1">
+              <v-icon>mdi-chart-box</v-icon>
+            </v-btn>
+          </template>
+          Corp Overview
         </v-tooltip>
         <v-tooltip location="bottom">
           <template #activator="{ props }">

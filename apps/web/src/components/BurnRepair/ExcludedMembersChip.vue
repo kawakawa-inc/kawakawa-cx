@@ -32,10 +32,27 @@
         </div>
       </template>
 
-      <template v-if="stale.length > 0">
-        <div class="text-overline mt-2">Inactive — FIO &gt; 30 days ({{ stale.length }})</div>
+      <template v-if="vacation.length > 0">
+        <div class="text-overline mt-2">On vacation ({{ vacation.length }})</div>
         <p class="text-caption text-medium-emphasis mb-1">
-          Auto-excluded because their PrUn client hasn't pushed FIO data recently.
+          Auto-excluded — they've marked themselves (or been marked) inactive until a future date.
+        </p>
+        <div class="d-flex flex-column ga-1">
+          <div
+            v-for="m in vacation"
+            :key="`vacation-${m.userId}`"
+            class="d-flex align-center justify-space-between"
+          >
+            <span>{{ m.username }}</span>
+            <FioAgeChip :fio-uploaded-at="m.fioDataAge" size="x-small" />
+          </div>
+        </div>
+      </template>
+
+      <template v-if="stale.length > 0">
+        <div class="text-overline mt-2">Inactive ({{ stale.length }})</div>
+        <p class="text-caption text-medium-emphasis mb-1">
+          Auto-excluded because they haven't been active recently (no login, bot use, or FIO sync).
         </p>
         <div class="d-flex flex-column ga-1">
           <div
@@ -62,5 +79,6 @@ const props = defineProps<{
 }>()
 
 const manual = computed(() => props.members.filter(m => m.reason === 'manual'))
-const stale = computed(() => props.members.filter(m => m.reason === 'fio-stale'))
+const vacation = computed(() => props.members.filter(m => m.reason === 'vacation'))
+const stale = computed(() => props.members.filter(m => m.reason === 'stale'))
 </script>

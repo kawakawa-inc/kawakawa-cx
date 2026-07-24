@@ -251,6 +251,66 @@ describe('CorpOverviewViewsController', () => {
       ).rejects.toThrow(/not a valid metric/)
     })
 
+    it('rejects table card with empty columns', async () => {
+      const bad: ViewCard = { ...validCard, type: 'table', columns: [] }
+      await expect(
+        controller.create(
+          { name: 'v', tickers: [], cards: [bad], privacy: 'private' },
+          ownerRequest
+        )
+      ).rejects.toThrow(/columns must be a non-empty array/)
+    })
+
+    it('accepts a graph card with empty columns', async () => {
+      const graphCard: ViewCard = {
+        clientId: 'test-graph-card',
+        name: 'New graph',
+        groupBy: 'ticker',
+        type: 'graph',
+        filters: [],
+        sortBy: [],
+        columns: [],
+        limit: 5,
+        graph: {
+          yMetrics: ['productionDaily'],
+          seriesBy: 'corp',
+          seriesLimit: 5,
+          rangePreset: '90d',
+        },
+      }
+      const { txInserts } = mockTransaction(100)
+      queueSelect(
+        [],
+        [
+          {
+            id: 100,
+            ownersJson: JSON.stringify([{ userId: OWNER_ID, username: 'owner' }]),
+            name: 'v',
+            tickers: [],
+            cards: [graphCard],
+            excludedUserIds: [],
+            materialsTableColumns: [],
+            materialsTableTickers: [],
+            privacy: 'private',
+            isPinned: false,
+            deletedAt: null,
+            createdAt: new Date('2026-04-22T00:00:00Z'),
+            updatedAt: new Date('2026-04-22T00:00:00Z'),
+          },
+        ]
+      )
+
+      const result = await controller.create(
+        { name: 'v', tickers: [], cards: [graphCard], privacy: 'private' },
+        ownerRequest
+      )
+
+      expect(txInserts[0].values).toMatchObject({
+        cards: [expect.objectContaining({ type: 'graph', columns: [] })],
+      })
+      expect(result.cards).toEqual([expect.objectContaining({ type: 'graph', columns: [] })])
+    })
+
     it('rejects limit <= 0', async () => {
       const bad = { ...validCard, limit: 0 }
       await expect(

@@ -71,6 +71,7 @@ describe('CorpSnapshotsController.query', () => {
       activeUserIds: [1, 2, 3],
       staleUserCount: 0,
       staleUserIds: [],
+      vacationUserIds: [],
       fioAgeMap: new Map(),
     })
     vi.mocked(resolveDisplayUsernames).mockResolvedValue(
@@ -146,6 +147,7 @@ describe('CorpSnapshotsController.query', () => {
       activeUserIds: [],
       staleUserCount: 0,
       staleUserIds: [],
+      vacationUserIds: [],
       fioAgeMap: new Map(),
     })
     const r = await controller.query(mockRequest, 'productionDaily', 'user', '30d')
@@ -233,6 +235,7 @@ describe('CorpSnapshotsController.query', () => {
       activeUserIds: [1, 2, 3, 4, 5, 6, 7],
       staleUserCount: 0,
       staleUserIds: [],
+      vacationUserIds: [],
       fioAgeMap: new Map(),
     })
     vi.mocked(resolveDisplayUsernames).mockResolvedValue(

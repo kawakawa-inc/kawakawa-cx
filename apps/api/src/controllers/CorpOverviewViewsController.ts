@@ -115,26 +115,34 @@ function validateCard(card: unknown, index: number): ViewCard {
   const filters = validateFilters(c.filters, groupBy, index)
   const sortBy = validateSortBy(c.sortBy, groupBy, index)
 
-  if (!Array.isArray(c.columns) || c.columns.length === 0) {
-    throw BadRequest(`cards[${index}].columns must be a non-empty array`)
-  }
-  for (const [ci, col] of c.columns.entries()) {
-    if (typeof col !== 'string' || !isMetricValidFor(col, groupBy)) {
-      throw BadRequest(
-        `cards[${index}].columns[${ci}] is not a valid metric for groupBy='${groupBy}'`
-      )
-    }
-  }
-
-  if (typeof c.limit !== 'number' || !Number.isInteger(c.limit) || c.limit <= 0 || c.limit > 100) {
-    throw BadRequest(`cards[${index}].limit must be an integer between 1 and 100`)
-  }
-
   // Card type: defaults to 'table' when missing so pre-histogram cards in the
   // DB still round-trip cleanly. Graph-specific validation arrives with the
   // histogram feature; for now any `type` that's not 'graph' is treated as
   // 'table', and graph config is preserved verbatim for forward compatibility.
   const type: ViewCard['type'] = c.type === 'graph' ? 'graph' : 'table'
+
+  // `columns` renders the table body, so it's meaningless for graph cards —
+  // the dashboard creates new graph cards with `columns: []` (see
+  // `makeDefaultCard` in CorpDashboard.vue). Only enforce the non-empty /
+  // valid-metric shape for table cards; graph cards just need an array.
+  if (type === 'table') {
+    if (!Array.isArray(c.columns) || c.columns.length === 0) {
+      throw BadRequest(`cards[${index}].columns must be a non-empty array`)
+    }
+    for (const [ci, col] of c.columns.entries()) {
+      if (typeof col !== 'string' || !isMetricValidFor(col, groupBy)) {
+        throw BadRequest(
+          `cards[${index}].columns[${ci}] is not a valid metric for groupBy='${groupBy}'`
+        )
+      }
+    }
+  } else if (!Array.isArray(c.columns)) {
+    throw BadRequest(`cards[${index}].columns must be an array`)
+  }
+
+  if (typeof c.limit !== 'number' || !Number.isInteger(c.limit) || c.limit <= 0 || c.limit > 100) {
+    throw BadRequest(`cards[${index}].limit must be an integer between 1 and 100`)
+  }
 
   let cardTickers: string[] | undefined
   if (c.tickers !== undefined) {

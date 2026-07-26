@@ -47,6 +47,15 @@ const log = createLogger({ service: 'invoices' })
 
 import type { ReservationStatus } from '@kawakawa/types'
 
+/** Default reservation expiration: 3 days from now */
+const DEFAULT_RESERVATION_EXPIRY_DAYS = 3
+
+function getDefaultExpiresAt(): Date {
+  const date = new Date()
+  date.setDate(date.getDate() + DEFAULT_RESERVATION_EXPIRY_DAYS)
+  return date
+}
+
 // Request to update invoice
 interface UpdateInvoiceRequest {
   name?: string
@@ -1137,7 +1146,7 @@ export class InvoicesController extends Controller {
             quantity: lineItem.quantity,
             status: 'pending',
             notes: lineItem.notes,
-            expiresAt: null,
+            expiresAt: getDefaultExpiresAt(),
           })
           .returning()
 

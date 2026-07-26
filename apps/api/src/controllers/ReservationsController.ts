@@ -40,6 +40,15 @@ import {
   calculateEffectivePriceBatch,
 } from '../services/price-calculator.js'
 
+/** Default reservation expiration: 3 days from now */
+const DEFAULT_RESERVATION_EXPIRY_DAYS = 3
+
+function getDefaultExpiresAt(): Date {
+  const date = new Date()
+  date.setDate(date.getDate() + DEFAULT_RESERVATION_EXPIRY_DAYS)
+  return date
+}
+
 interface ReservationResponse {
   id: number
   sellOrderId: number | null
@@ -505,7 +514,7 @@ export class ReservationsController extends Controller {
       throw BadRequest('Quantity must be greater than 0')
     }
 
-    // Create the reservation
+    // Create the reservation (default to 3 days expiry if not specified)
     const [reservation] = await db
       .insert(orderReservations)
       .values({
@@ -515,7 +524,7 @@ export class ReservationsController extends Controller {
         quantity: body.quantity,
         status: 'pending',
         notes: body.notes ?? null,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        expiresAt: body.expiresAt ? new Date(body.expiresAt) : getDefaultExpiresAt(),
       })
       .returning()
 
@@ -600,7 +609,7 @@ export class ReservationsController extends Controller {
       throw BadRequest('Quantity must be greater than 0')
     }
 
-    // Create the reservation
+    // Create the reservation (default to 3 days expiry if not specified)
     const [reservation] = await db
       .insert(orderReservations)
       .values({
@@ -610,7 +619,7 @@ export class ReservationsController extends Controller {
         quantity: body.quantity,
         status: 'pending',
         notes: body.notes ?? null,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        expiresAt: body.expiresAt ? new Date(body.expiresAt) : getDefaultExpiresAt(),
       })
       .returning()
 

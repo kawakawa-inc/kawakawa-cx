@@ -39,7 +39,8 @@
     "logs:dev": "tsx --env-file-if-exists=.env src/scripts/logs.ts dev",
     "logs:prod": "tsx --env-file-if-exists=.env src/scripts/logs.ts prod",
     "db:drop": "tsx --env-file-if-exists=.env src/scripts/drop-all-tables.ts",
-    "db:mock-data": "tsx --env-file-if-exists=.env src/scripts/load-mock-data.ts"
+    "db:mock-data": "tsx --env-file-if-exists=.env src/scripts/load-mock-data.ts",
+    "batch:run": "tsx --env-file-if-exists=.env src/scripts/run-batch.ts"
   },
   "dependencies": {
     "@kawakawa/db": "workspace:*",

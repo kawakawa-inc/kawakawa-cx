@@ -5,6 +5,7 @@ export type { RunnerResult } from './runner.js'
 // Import all batch processes
 import { migrateOrphanReservations } from './migrateOrphanReservations.js'
 import { fixReservationCounterparty } from './fixReservationCounterparty.js'
+import { setReservationExpiry } from './setReservationExpiry.js'
 import type { BatchProcess } from './types.js'
 
 /**
@@ -13,4 +14,5 @@ import type { BatchProcess } from './types.js'
 export const batchProcesses: BatchProcess[] = [
   migrateOrphanReservations,
   fixReservationCounterparty,
+  setReservationExpiry,
 ]

@@ -8,6 +8,7 @@ import { db, syncJobs, users, notifications } from '@kawakawa/db'
 import { eq, and, inArray, ne } from 'drizzle-orm'
 import { FioClient } from '../fio/client.js'
 import { syncUserInventory } from '../fio/sync-user-inventory.js'
+import { syncUserCxos } from '../fio/sync-user-cxos.js'
 import { syncUserPlanetsList, syncSinglePlanet } from '../fio/sync-user-planets.js'
 import { syncUserShips } from '../fio/sync-user-ships.js'
 import { syncCommodities } from '../fio/sync-commodities.js'
@@ -100,6 +101,22 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
   const excludedLocations =
     ((await userSettingsService.getSetting(job.userId, 'fio.excludedLocations')) as string[]) ?? []
   const result = await syncUserInventory(job.userId, apiKey, username, { excludedLocations })
+
+  // Also sync CX sell orders as a form of recoverable storage
+  const cxosResult = await syncUserCxos(job.userId, apiKey, username)
+  if (cxosResult.errors.length > 0) {
+    log.warn({ userId: job.userId, errors: cxosResult.errors }, 'CXOS sync had errors (non-fatal)')
+  } else {
+    log.info(
+      {
+        userId: job.userId,
+        sellOrders: cxosResult.sellOrdersProcessed,
+        inventoryEntries: cxosResult.inserted,
+      },
+      'Synced CX sell orders with inventory'
+    )
+  }
+
   // Update activity timestamp before checking errors — partial syncs still have valid FIO data
   if (result.fioLastSync) {
     await db

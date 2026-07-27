@@ -19,6 +19,7 @@ import type {
   SellOrderLimitMode,
   BuyOrderSourceMode,
   DemandSource,
+  StorageType,
 } from '@kawakawa/types'
 import { db, sellOrders, fioCommodities, fioLocations } from '../db/index.js'
 import { eq, and, isNull } from 'drizzle-orm'
@@ -36,6 +37,7 @@ interface SellOrderResponse {
   id: number
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   priceListCode: string | null
@@ -61,6 +63,7 @@ interface SellOrderResponse {
 interface CreateSellOrderRequest {
   commodityTicker: string
   locationId: string
+  storageType?: StorageType | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   priceListCode?: string | null
@@ -73,6 +76,8 @@ interface CreateSellOrderRequest {
 }
 
 interface UpdateSellOrderRequest {
+  // Note: storageType is NOT updatable - it's part of the unique constraint
+  // To change storage type, delete the order and create a new one
   price?: number
   currency?: Currency
   priceListCode?: string | null
@@ -126,6 +131,7 @@ export class SellOrdersController extends Controller {
         userId: o.userId,
         commodityTicker: o.commodityTicker,
         locationId: o.locationId,
+        storageType: o.storageType as StorageType | null,
         limitMode: o.limitMode,
         limitQuantity: o.limitQuantity,
       }))
@@ -172,6 +178,7 @@ export class SellOrdersController extends Controller {
         id: order.id,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,
+        storageType: order.storageType as StorageType | null,
         price: parseFloat(order.price),
         currency: order.currency,
         priceListCode: order.priceListCode,
@@ -225,6 +232,7 @@ export class SellOrdersController extends Controller {
         userId: order.userId,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,
+        storageType: order.storageType as StorageType | null,
         limitMode: order.limitMode,
         limitQuantity: order.limitQuantity,
       },
@@ -264,6 +272,7 @@ export class SellOrdersController extends Controller {
       id: order.id,
       commodityTicker: order.commodityTicker,
       locationId: order.locationId,
+      storageType: order.storageType as StorageType | null,
       price: parseFloat(order.price),
       currency: order.currency,
       priceListCode: order.priceListCode,
@@ -345,8 +354,14 @@ export class SellOrdersController extends Controller {
       throw BadRequest(`Location ${body.locationId} not found`)
     }
 
-    // Check for duplicate ACTIVE sell order (same commodity/location/orderType/currency)
+    // Check for duplicate ACTIVE sell order (same commodity/location/storageType/orderType/currency)
     // Soft-deleted prior listings are ignored, matching the partial unique index.
+    // Note: PostgreSQL treats NULL as distinct, so we need explicit handling for storageType
+    const storageType = body.storageType ?? null
+    const storageTypeCondition = storageType
+      ? eq(sellOrders.storageType, storageType)
+      : isNull(sellOrders.storageType)
+
     const [existing] = await db
       .select({ id: sellOrders.id })
       .from(sellOrders)
@@ -355,6 +370,7 @@ export class SellOrdersController extends Controller {
           eq(sellOrders.userId, userId),
           eq(sellOrders.commodityTicker, body.commodityTicker),
           eq(sellOrders.locationId, body.locationId),
+          storageTypeCondition,
           eq(sellOrders.orderType, orderType),
           eq(sellOrders.currency, body.currency),
           isNull(sellOrders.deletedAt)
@@ -362,9 +378,10 @@ export class SellOrdersController extends Controller {
       )
 
     if (existing) {
+      const storageTypeDisplay = storageType ? ` [${storageType}]` : ''
       this.setStatus(400)
       throw BadRequest(
-        `Sell order already exists for ${body.commodityTicker} at ${body.locationId} (${getOrderTypeDisplay(orderType)}, ${body.currency}). Update the existing order instead.`
+        `Sell order already exists for ${body.commodityTicker} at ${body.locationId}${storageTypeDisplay} (${getOrderTypeDisplay(orderType)}, ${body.currency}). Update the existing order instead.`
       )
     }
 
@@ -391,6 +408,7 @@ export class SellOrdersController extends Controller {
         userId,
         commodityTicker: body.commodityTicker,
         locationId: body.locationId,
+        storageType,
         price: body.price.toString(),
         currency: body.currency,
         priceListCode,
@@ -413,6 +431,7 @@ export class SellOrdersController extends Controller {
         userId: newOrder.userId,
         commodityTicker: newOrder.commodityTicker,
         locationId: newOrder.locationId,
+        storageType: newOrder.storageType as StorageType | null,
         limitMode: newOrder.limitMode,
         limitQuantity: newOrder.limitQuantity,
       },
@@ -452,6 +471,7 @@ export class SellOrdersController extends Controller {
       id: newOrder.id,
       commodityTicker: newOrder.commodityTicker,
       locationId: newOrder.locationId,
+      storageType: newOrder.storageType as StorageType | null,
       price: parseFloat(newOrder.price),
       currency: newOrder.currency,
       priceListCode: newOrder.priceListCode,
@@ -563,6 +583,7 @@ export class SellOrdersController extends Controller {
         userId: updated.userId,
         commodityTicker: updated.commodityTicker,
         locationId: updated.locationId,
+        storageType: updated.storageType as StorageType | null,
         limitMode: updated.limitMode,
         limitQuantity: updated.limitQuantity,
       },
@@ -602,6 +623,7 @@ export class SellOrdersController extends Controller {
       id: updated.id,
       commodityTicker: updated.commodityTicker,
       locationId: updated.locationId,
+      storageType: updated.storageType as StorageType | null,
       price: parseFloat(updated.price),
       currency: updated.currency,
       priceListCode: updated.priceListCode,

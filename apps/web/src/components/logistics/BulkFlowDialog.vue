@@ -52,6 +52,10 @@
               <v-icon start size="small">mdi-warehouse</v-icon>
               Warehouse
             </v-btn>
+            <v-btn v-if="hubAllowsCxSellOrder" value="CX_SELL_ORDER" size="small">
+              <v-icon start size="small">mdi-chart-line</v-icon>
+              CX Sell Order
+            </v-btn>
           </v-btn-toggle>
 
           <!-- Planets -->
@@ -654,6 +658,8 @@ function locationTypeOf(locationId: string): string | undefined {
 }
 
 const hubAllowsBase = computed(() => locationTypeOf(hubLocationId.value) !== 'Station')
+// CX sell orders are only valid at stations (exchanges)
+const hubAllowsCxSellOrder = computed(() => locationTypeOf(hubLocationId.value) === 'Station')
 
 function hubDefaultStorage(locationId: string): string[] {
   if (locationTypeOf(locationId) === 'Station') return ['WAREHOUSE_STORE']

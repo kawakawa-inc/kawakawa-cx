@@ -1,5 +1,5 @@
 import { Controller, Get, Query, Route, Security, Tags, Request } from 'tsoa'
-import type { Currency, OrderType, PricingMode } from '@kawakawa/types'
+import type { Currency, OrderType, PricingMode, StorageType } from '@kawakawa/types'
 import {
   enrichSellOrdersWithQuantities,
   getReservationStatsForBuyOrders,
@@ -19,6 +19,7 @@ interface MarketListing {
   sellerName: string
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null // null = all storage types, specific = only that storage
   price: number // Fixed price (0 for dynamic pricing)
   currency: Currency
   priceListCode: string | null // null = custom/fixed price, set = dynamic pricing
@@ -67,6 +68,7 @@ interface FilteredSellOrder {
   userId: number
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null
   price: string
   currency: Currency
   priceListCode: string | null
@@ -140,6 +142,7 @@ export class MarketController extends Controller {
         userId: sellOrders.userId,
         commodityTicker: sellOrders.commodityTicker,
         locationId: sellOrders.locationId,
+        storageType: sellOrders.storageType,
         price: sellOrders.price,
         currency: sellOrders.currency,
         priceListCode: sellOrders.priceListCode,
@@ -163,6 +166,7 @@ export class MarketController extends Controller {
         userId: o.userId,
         commodityTicker: o.commodityTicker,
         locationId: o.locationId,
+        storageType: o.storageType as StorageType | null,
         limitMode: o.limitMode,
         limitQuantity: o.limitQuantity,
       }))
@@ -216,6 +220,7 @@ export class MarketController extends Controller {
         userId: order.userId,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,
+        storageType: order.storageType as StorageType | null,
         price: order.price,
         currency: order.currency,
         priceListCode: order.priceListCode,
@@ -256,6 +261,7 @@ export class MarketController extends Controller {
         sellerName: order.sellerName,
         commodityTicker: order.commodityTicker,
         locationId: order.locationId,
+        storageType: order.storageType,
         price: parseFloat(order.price),
         currency: order.currency,
         priceListCode: order.priceListCode,

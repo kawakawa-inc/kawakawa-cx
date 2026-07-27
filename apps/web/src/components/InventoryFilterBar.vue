@@ -13,7 +13,7 @@
         :active-location-type="activeLocationType"
         :active-storage-type="activeStorageType"
         :show-saved="false"
-        @select="$emit('filter-select', $event)"
+        @select="onFilterMenuSelect"
       />
       <TokenSearchInput
         ref="tokenSearchRef"
@@ -95,10 +95,12 @@ const inventoryHelpTokens: HelpToken[] = [
 ]
 
 const commodityFilterOptions = computed(() =>
-  props.commodityOptions.map(item => ({
-    value: item.key,
-    display: item.display,
-  }))
+  props.commodityOptions
+    .map(item => ({
+      value: item.key,
+      display: item.display,
+    }))
+    .sort((a, b) => a.display.localeCompare(b.display))
 )
 
 const locationFilterOptions = computed(() =>
@@ -114,5 +116,25 @@ const tokenSearchRef = ref<InstanceType<typeof TokenSearchInput> | null>(null)
 
 const onChipsUpdate = (chips: SearchChip[]) => {
   emit('update:chips', chips)
+}
+
+// Handle FilterMenu selections - add chips for commodity/location, emit for others
+const onFilterMenuSelect = (payload: { filterType: string; key: string; display: string }) => {
+  const { filterType, key, display } = payload
+
+  // Chip-based filters: toggle via TokenSearchInput
+  if (filterType === 'commodity' || filterType === 'location') {
+    const chipType = filterType as 'commodity' | 'location'
+    // Check if chip already exists
+    const exists = props.searchChips.some(c => c.type === chipType && c.value === key)
+    if (exists) {
+      tokenSearchRef.value?.removeChipByTypeValue(chipType, key)
+    } else {
+      tokenSearchRef.value?.addChip({ type: chipType, value: key, display })
+    }
+  } else {
+    // Single-select filters (category, locationType, storageType): emit to parent
+    emit('filter-select', payload)
+  }
 }
 </script>

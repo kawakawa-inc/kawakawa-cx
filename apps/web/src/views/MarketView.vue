@@ -266,7 +266,12 @@
         :loading="loading"
         :items-per-page="25"
         :row-props="getRowProps"
-        :item-value="item => `${item.itemType}-${item.id}`"
+        :item-value="
+          item =>
+            item.isCollapsed
+              ? `${item.itemType}-group-${item.groupedOrderIds.join('-')}`
+              : `${item.itemType}-${item.id}`
+        "
         :class="['elevation-0', 'clickable-rows', { 'icon-rows': hasIcons }]"
         show-expand
         @click:row="onRowClick"
@@ -329,7 +334,24 @@
         </template>
 
         <template #item.fioUploadedAt="{ item }">
-          <FioAgeChip :fio-uploaded-at="item.fioUploadedAt" />
+          <v-tooltip v-if="item.isCollapsed" location="top">
+            <template #activator="{ props: tooltipProps }">
+              <span v-bind="tooltipProps" class="d-inline-flex align-center">
+                <FioAgeChip :fio-uploaded-at="item.fioUploadedAt" />
+                <v-icon size="x-small" class="ml-1 text-medium-emphasis">mdi-layers-outline</v-icon>
+              </span>
+            </template>
+            <div>
+              <div class="text-caption font-weight-medium mb-1">
+                {{ item.groupedOrderIds.length }} orders collapsed
+              </div>
+              <div v-for="(fioTime, idx) in item.groupedFioTimes" :key="idx" class="text-caption">
+                Order #{{ item.groupedOrderIds[idx] }}:
+                {{ fioTime ? formatRelativeTime(fioTime) : '—' }}
+              </div>
+            </div>
+          </v-tooltip>
+          <FioAgeChip v-else :fio-uploaded-at="item.fioUploadedAt" />
         </template>
 
         <template #item.price="{ item }">
@@ -377,16 +399,41 @@
           <v-tooltip v-else location="top">
             <template #activator="{ props }">
               <span v-bind="props" class="font-weight-medium">
-                {{ item.remainingQuantity.toLocaleString() }}
+                {{
+                  (item.itemType === 'sell'
+                    ? item.aggregateRemainingQuantity
+                    : item.remainingQuantity
+                  ).toLocaleString()
+                }}
               </span>
             </template>
             <div>
-              <div>Total: {{ item.quantity.toLocaleString() }}</div>
-              <div v-if="item.reservedQuantity > 0">
-                {{ item.itemType === 'buy' ? 'Filled' : 'Reserved' }}:
-                {{ item.reservedQuantity.toLocaleString() }}
-              </div>
-              <div>Remaining: {{ item.remainingQuantity.toLocaleString() }}</div>
+              <!-- For sell orders, show aggregate info if multiple storage types exist -->
+              <template v-if="item.itemType === 'sell'">
+                <div v-if="item.hasMultipleStorageTypes" class="text-caption text-info mb-1">
+                  Total across all storage types at this location
+                </div>
+                <div>Total: {{ item.aggregateQuantity.toLocaleString() }}</div>
+                <div v-if="item.aggregateQuantity !== item.aggregateRemainingQuantity">
+                  Remaining: {{ item.aggregateRemainingQuantity.toLocaleString() }}
+                </div>
+                <!-- Show per-order breakdown if different from aggregate -->
+                <template v-if="item.hasMultipleStorageTypes">
+                  <v-divider class="my-1" />
+                  <div class="text-caption text-medium-emphasis">
+                    This order: {{ item.remainingQuantity.toLocaleString() }}
+                    <span v-if="item.storageType">({{ item.storageType }})</span>
+                  </div>
+                </template>
+              </template>
+              <!-- For buy orders, show simple breakdown -->
+              <template v-else>
+                <div>Total: {{ item.quantity.toLocaleString() }}</div>
+                <div v-if="item.reservedQuantity > 0">
+                  Filled: {{ item.reservedQuantity.toLocaleString() }}
+                </div>
+                <div>Remaining: {{ item.remainingQuantity.toLocaleString() }}</div>
+              </template>
             </div>
           </v-tooltip>
         </template>
@@ -810,6 +857,7 @@
       v-model="orderDetailDialog"
       :order-type="orderDetailType"
       :order-id="orderDetailId"
+      :grouped-order-ids="orderDetailGroupIds"
       @deleted="loadMarketItems"
       @updated="loadMarketItems"
       @edit="onEditFromDetail"
@@ -925,7 +973,7 @@ const router = useRouter()
 const { snackbar, showSnackbar } = useSnackbar()
 const { getLocationDisplay, getCommodityDisplay, getCommodityCategory, getCommodityName } =
   useDisplayHelpers()
-const { getFioAgeColor } = useFormatters()
+const { getFioAgeColor, formatRelativeTime } = useFormatters()
 
 // Check if commodity icons are enabled
 const hasIcons = computed(() => settingsStore.commodityIconStyle.value !== 'none')
@@ -1996,8 +2044,18 @@ const openOrderDialog = (type: 'buy' | 'sell') => {
   orderDialog.value = true
 }
 
+// State for viewing collapsed groups
+const orderDetailGroupIds = ref<number[]>([])
+
 const viewOrder = (item: MarketItem) => {
-  openOrder(item.itemType, item.id)
+  if (item.isCollapsed) {
+    // For collapsed rows, pass all grouped order IDs
+    orderDetailGroupIds.value = item.groupedOrderIds
+    openOrder(item.itemType, item.groupedOrderIds[0])
+  } else {
+    orderDetailGroupIds.value = []
+    openOrder(item.itemType, item.id)
+  }
 }
 
 // Handler for row clicks on the data table

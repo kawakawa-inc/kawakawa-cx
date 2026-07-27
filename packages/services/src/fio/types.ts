@@ -342,3 +342,41 @@ export interface FioShipFlight {
   UserNameSubmitted: string
   Timestamp: string
 }
+
+// ==================== CXOS (Commodity Exchange Orders) API Types ====================
+
+/**
+ * A single CX order from /cxos/{username} endpoint.
+ * The endpoint returns an array of these for both buy and sell orders.
+ */
+export interface FioCxOrder {
+  CXOSTradeOrderId: string
+  BrokerId: string
+  ExchangeName: string
+  ExchangeCode: string // CI1, CI2, NC1, NC2, IC1, AI1
+  OrderType: 'SELLING' | 'BUYING'
+  MaterialId: string
+  MaterialName: string
+  MaterialTicker: string
+  Amount: number // Current quantity remaining on the order
+  InitialAmount: number // Original quantity when order was placed
+  Limit: number // Price per unit
+  LimitCurrency: string // CIS, NCC, ICA, AIC
+  Status: 'PLACED' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELLED'
+  CreatedEpochMs: number
+  UserNameSubmitted: string
+  Timestamp: string
+  Trades?: unknown[] // Trade history, not needed for our use case
+}
+
+/**
+ * Mapping from exchange codes to station natural IDs
+ */
+export const EXCHANGE_TO_STATION: Record<string, string> = {
+  CI1: 'BEN', // Benten Station
+  CI2: 'ARC', // Arclight Station
+  NC1: 'MOR', // Moria Station
+  NC2: 'HUB', // Hubur Station
+  IC1: 'HRT', // Hortus Station
+  AI1: 'ANT', // Antares Station
+}

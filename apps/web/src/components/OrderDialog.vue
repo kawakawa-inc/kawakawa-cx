@@ -393,7 +393,8 @@
                     </div>
                     <div class="text-caption">
                       {{ getLocationDisplay(inventoryItem.locationId) }}
-                      &bull; {{ inventoryItem.quantity?.toLocaleString() }} available
+                      &bull; {{ formatStorageType(inventoryItem.storageType) }} &bull;
+                      {{ inventoryItem.quantity?.toLocaleString() }} available
                     </div>
                   </v-alert>
 
@@ -863,6 +864,7 @@ import {
 } from '../services/api'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
+import { formatStorageType } from '../utils/locationUtils'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
 import { useDisplayHelpers, useDialogBehavior } from '../composables'
@@ -996,6 +998,7 @@ const buyForm = ref({
 const sellForm = ref({
   commodityTicker: '',
   locationId: '',
+  storageType: null as string | null, // null = all storage types, specific = only that storage
   price: 0,
   currency: userStore.getPreferredCurrency(),
   limitMode: 'none' as SellOrderLimitMode,
@@ -1245,6 +1248,7 @@ const resetSellForm = () => {
   sellForm.value = {
     commodityTicker: props.inventoryItem?.commodityTicker ?? '',
     locationId: props.inventoryItem?.locationId ?? '',
+    storageType: props.inventoryItem?.storageType ?? null, // Use inventory item's storage type if available
     price: usePriceList ? 0 : 0,
     currency: userStore.getPreferredCurrency(),
     limitMode: 'none',
@@ -1385,6 +1389,7 @@ const submitOrder = async () => {
       await api.sellOrders.create({
         commodityTicker,
         locationId,
+        storageType: sellForm.value.storageType,
         price: sellForm.value.price,
         currency: sellForm.value.currency,
         orderType: sellForm.value.orderType,
@@ -1560,6 +1565,7 @@ watch(
     if (item) {
       sellForm.value.commodityTicker = item.commodityTicker
       sellForm.value.locationId = item.locationId ?? ''
+      sellForm.value.storageType = item.storageType ?? null
     }
   }
 )

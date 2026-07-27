@@ -1,0 +1,3 @@
+DROP INDEX "sell_orders_user_commodity_location_type_currency_idx";--> statement-breakpoint
+ALTER TABLE "sell_orders" ADD COLUMN "storage_type" varchar(30);--> statement-breakpoint
+CREATE UNIQUE INDEX "sell_orders_user_commodity_location_storage_type_currency_idx" ON "sell_orders" USING btree ("user_id","commodity_ticker","location_id","storage_type","order_type","currency") WHERE "sell_orders"."deleted_at" IS NULL;

@@ -598,6 +598,7 @@
       :initial-commodity="orderInitialCommodity"
       :initial-location="orderInitialLocation"
       @created="onOrderCreated"
+      @edit="onEditFromDetail"
     />
 
     <!-- Edit Order Dialog -->

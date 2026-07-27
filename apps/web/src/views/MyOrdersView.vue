@@ -959,7 +959,12 @@
     </v-tabs-window>
 
     <!-- Order Dialog -->
-    <OrderDialog v-model="orderDialog" :initial-tab="orderDialogTab" @created="onOrderCreated" />
+    <OrderDialog
+      v-model="orderDialog"
+      :initial-tab="orderDialogTab"
+      @created="onOrderCreated"
+      @edit="onEditFromOrderDialog"
+    />
 
     <!-- Order Detail Dialog -->
     <OrderDetailDialog
@@ -1801,6 +1806,17 @@ const onOrderUpdated = async () => {
     await loadBuyOrders()
   } else {
     await loadSellOrders()
+  }
+}
+
+// Handler for edit event from OrderDialog (when an existing order is detected)
+const onEditFromOrderDialog = (orderType: 'sell' | 'buy', orderId: number) => {
+  if (orderType === 'sell') {
+    const order = sellOrders.value.find(o => o.id === orderId)
+    if (order) openEditSellDialog(order)
+  } else {
+    const order = buyOrders.value.find(o => o.id === orderId)
+    if (order) openEditBuyDialog(order)
   }
 }
 

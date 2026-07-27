@@ -849,7 +849,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+
 import {
   PERMISSIONS,
   type Currency,
@@ -894,9 +894,9 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'created', type: OrderTab): void
+  (e: 'edit', orderType: 'sell' | 'buy', orderId: number): void
 }>()
 
-const router = useRouter()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 const { getLocationDisplay, getCommodityDisplay } = useDisplayHelpers()
@@ -1094,12 +1094,13 @@ const sellOrderTotalValue = computed((): number | null => {
   return displaySellPrice.value * sellForm.value.limitQuantity
 })
 
-// Check if an existing sell order matches the current form (commodity + location + currency)
+// Check if an existing sell order matches the current form (commodity + location + storageType + currency + orderType)
 const existingSellOrder = computed(() => {
   if (activeTab.value !== 'sell') return null
 
   const commodity = props.inventoryItem?.commodityTicker ?? sellForm.value.commodityTicker
   const location = props.inventoryItem?.locationId ?? sellForm.value.locationId
+  const storageType = sellForm.value.storageType
   const currency = sellForm.value.currency
   const orderType = sellForm.value.orderType
 
@@ -1109,6 +1110,7 @@ const existingSellOrder = computed(() => {
     order =>
       order.commodityTicker === commodity &&
       order.locationId === location &&
+      order.storageType === storageType &&
       order.currency === currency &&
       order.orderType === orderType
   )
@@ -1123,14 +1125,11 @@ const toggleBulkMode = () => {
   }
 }
 
-// Navigate to edit existing order
+// Emit edit event so the parent can open the appropriate edit dialog in-place
 const editExistingOrder = () => {
   if (!existingSellOrder.value) return
   dialog.value = false
-  router.push({
-    path: '/my-orders',
-    query: { order: `sell:${existingSellOrder.value.id}` },
-  })
+  emit('edit', 'sell', existingSellOrder.value.id)
 }
 
 // Load suggested price from user's default price list

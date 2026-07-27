@@ -163,13 +163,20 @@ pnpm format:check  # Check formatting without modifying
    - The `tsoa:generate` script does this automatically, but `tsc` alone does not
    - Types can be used directly as TSOA controller return types — no need to redeclare them inline
 
-5. **Run format, lint, and tests before committing**
+5. **Database schema changes require migrations**
+   - The schema lives in `packages/db/src/schema.ts`
+   - Dev uses `db:push` which syncs the schema directly — **production uses `db:migrate` which only applies migration files**
+   - After any schema change, **always** generate a migration: `pnpm --filter @kawakawa/api db:generate`
+   - Verify the generated SQL in `apps/api/drizzle/` is correct before committing
+   - Never rely on `db:push` alone — if a migration isn't generated, production will break
+
+6. **Run format, lint, and tests before committing**
 
    ```bash
    make checkpoint
    ```
 
-6. **Test file naming**: `[filename].test.ts` alongside source files
+7. **Test file naming**: `[filename].test.ts` alongside source files
 
 See [apps/api/src/controllers/](apps/api/src/controllers/) for examples of well-tested controllers.
 

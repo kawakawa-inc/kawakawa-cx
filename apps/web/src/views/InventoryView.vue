@@ -107,6 +107,7 @@
       initial-tab="sell"
       :inventory-item="selectedItem"
       @created="onOrderCreated"
+      @edit="onEditFromDetail"
     />
 
     <!-- Order Detail Dialog -->

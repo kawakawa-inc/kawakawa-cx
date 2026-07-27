@@ -253,7 +253,11 @@ const headers = [
 
 const getSellOrders = (item: FioInventoryItem): SellOrderResponse[] => {
   return props.sellOrders.filter(
-    order => order.commodityTicker === item.commodityTicker && order.locationId === item.locationId
+    order =>
+      order.commodityTicker === item.commodityTicker &&
+      order.locationId === item.locationId &&
+      // Match storage type: order.storageType === null means "all storage", otherwise must match exactly
+      (order.storageType === null || order.storageType === item.storageType)
   )
 }
 

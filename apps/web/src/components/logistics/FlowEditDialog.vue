@@ -74,6 +74,10 @@
                 <v-icon start size="small">mdi-warehouse</v-icon>
                 Warehouse
               </v-btn>
+              <v-btn v-if="fromAllowsCxSellOrder" value="CX_SELL_ORDER" size="small">
+                <v-icon start size="small">mdi-chart-line</v-icon>
+                CX Sell Order
+              </v-btn>
             </v-btn-toggle>
           </v-col>
 
@@ -328,6 +332,11 @@ const fromAllowsBase = computed(() => {
 const toAllowsBase = computed(() => {
   const id = form.value.toLocationId
   return !id || locationTypeOf(id) !== 'Station'
+})
+// CX sell orders are only valid at stations (exchanges)
+const fromAllowsCxSellOrder = computed(() => {
+  const id = form.value.fromLocationId
+  return id && locationTypeOf(id) === 'Station'
 })
 
 let suppressLocationWatchers = false

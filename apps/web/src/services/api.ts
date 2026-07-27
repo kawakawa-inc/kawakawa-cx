@@ -795,16 +795,23 @@ interface FioClearResponse {
 }
 
 // Sell Order types
+type BuyOrderSourceMode = 'manual' | 'demand'
+type DemandSource = 'burn' | 'repair'
+
 interface SellOrderResponse {
   id: number
   commodityTicker: string
   locationId: string
+  storageType: string | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   priceListCode: string | null
   orderType: OrderType
   limitMode: SellOrderLimitMode
   limitQuantity: number | null
+  reserveSource: BuyOrderSourceMode
+  reserveDemandSource: DemandSource | null
+  reserveTargetDays: number | null
   fioQuantity: number
   availableQuantity: number
   activeReservationCount: number
@@ -822,6 +829,7 @@ interface SellOrderResponse {
 interface CreateSellOrderRequest {
   commodityTicker: string
   locationId: string
+  storageType?: string | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   priceListCode?: string | null
@@ -837,6 +845,7 @@ interface UpdateSellOrderRequest {
   orderType?: OrderType
   limitMode?: SellOrderLimitMode
   limitQuantity?: number | null
+  reserveTargetDays?: number | null
 }
 
 // Buy Order types
@@ -888,6 +897,7 @@ interface MarketListing {
   sellerName: string
   commodityTicker: string
   locationId: string
+  storageType: string | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   priceListCode: string | null

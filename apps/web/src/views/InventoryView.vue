@@ -116,6 +116,7 @@
       :order-id="orderDetailId"
       @updated="onOrderUpdated"
       @deleted="onOrderDeleted"
+      @edit="onEditFromDetail"
     />
 
     <!-- Sell Order Edit Dialog -->
@@ -312,12 +313,14 @@ const onFilterMenuSelect = (payload: { filterType: string; key: string; display:
 // Computed filter options based on inventory data
 const commodityOptions = computed(() => {
   const tickers = new Set(inventory.value.map(i => i.commodityTicker))
-  return Array.from(tickers).map(ticker => ({
-    key: ticker,
-    display: getCommodityDisplay(ticker),
-    name: getCommodityName(ticker),
-    category: getCommodityCategory(ticker) ?? undefined,
-  }))
+  return Array.from(tickers)
+    .sort((a, b) => a.localeCompare(b)) // Stable alphabetical sort by ticker
+    .map(ticker => ({
+      key: ticker,
+      display: getCommodityDisplay(ticker),
+      name: getCommodityName(ticker),
+      category: getCommodityCategory(ticker) ?? undefined,
+    }))
 })
 
 const categoryOptions = computed(() => {
@@ -556,6 +559,21 @@ const editBuyOrder = (order: BuyOrderResponse) => {
 const onEditSaved = () => {
   showSnackbar('Order updated successfully')
   loadOrders()
+}
+
+// Handler for edit event from OrderDetailDialog
+const onEditFromDetail = (orderType: 'sell' | 'buy', orderId: number) => {
+  if (orderType === 'sell') {
+    const order = sellOrders.value.find(o => o.id === orderId)
+    if (order) {
+      editSellOrder(order)
+    }
+  } else {
+    const order = buyOrders.value.find(o => o.id === orderId)
+    if (order) {
+      editBuyOrder(order)
+    }
+  }
 }
 
 const confirmDeleteSellOrder = (order: SellOrderResponse) => {

@@ -664,16 +664,17 @@ export class SalesOrdersController extends Controller {
     let inventoryUploadedAt: Date | null = null
     if (holderUserId !== null && needed.size > 0) {
       const inv = await getInventoryForUsers([holderUserId])
-      for (const [key, info] of inv) {
+      for (const [key, infoByType] of inv) {
         const [uid, ticker, locationId] = key.split(':')
         if (Number(uid) !== holderUserId) continue
         if (order.pickupLocationId && locationId !== order.pickupLocationId) continue
-        available.set(ticker, (available.get(ticker) ?? 0) + info.quantity)
+        // Use total inventory across all storage types
+        available.set(ticker, (available.get(ticker) ?? 0) + infoByType.total.quantity)
         if (
-          info.fioUploadedAt &&
-          (!inventoryUploadedAt || info.fioUploadedAt > inventoryUploadedAt)
+          infoByType.total.fioUploadedAt &&
+          (!inventoryUploadedAt || infoByType.total.fioUploadedAt > inventoryUploadedAt)
         ) {
-          inventoryUploadedAt = info.fioUploadedAt
+          inventoryUploadedAt = infoByType.total.fioUploadedAt
         }
       }
     }

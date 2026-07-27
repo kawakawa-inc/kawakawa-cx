@@ -1,6 +1,6 @@
 import { db, fioInventory, fioUserStorage, orderReservations } from '@kawakawa/db'
 import { and, eq, inArray, or, gt, isNull, sql, max } from 'drizzle-orm'
-import type { SellOrderLimitMode } from '@kawakawa/types'
+import type { SellOrderLimitMode, StorageType } from '@kawakawa/types'
 
 /**
  * Inventory information for a specific commodity at a location
@@ -8,6 +8,16 @@ import type { SellOrderLimitMode } from '@kawakawa/types'
 export interface InventoryInfo {
   quantity: number
   fioUploadedAt: Date | null
+}
+
+/**
+ * Inventory with storage type breakdown
+ */
+export interface InventoryInfoByStorageType {
+  /** Total quantity across all storage types */
+  total: InventoryInfo
+  /** Quantity per storage type */
+  byStorageType: Map<StorageType, InventoryInfo>
 }
 
 /**
@@ -99,11 +109,14 @@ export async function getUserMaxFioUploadedAt(
 
 /**
  * Get inventory data for multiple users, building a lookup map.
+ * Includes both total quantities and per-storage-type breakdowns.
  *
  * @param userIds - Array of user IDs to fetch inventory for
- * @returns Map with key "userId:ticker:locationId" -> InventoryInfo
+ * @returns Map with key "userId:ticker:locationId" -> InventoryInfoByStorageType
  */
-export async function getInventoryForUsers(userIds: number[]): Promise<Map<string, InventoryInfo>> {
+export async function getInventoryForUsers(
+  userIds: number[]
+): Promise<Map<string, InventoryInfoByStorageType>> {
   if (userIds.length === 0) {
     return new Map()
   }
@@ -114,29 +127,52 @@ export async function getInventoryForUsers(userIds: number[]): Promise<Map<strin
       commodityTicker: fioInventory.commodityTicker,
       quantity: fioInventory.quantity,
       locationId: fioUserStorage.locationId,
+      storageType: fioUserStorage.type,
       fioUploadedAt: fioUserStorage.fioUploadedAt,
     })
     .from(fioInventory)
     .innerJoin(fioUserStorage, eq(fioInventory.userStorageId, fioUserStorage.id))
     .where(inArray(fioUserStorage.userId, userIds))
 
-  const inventoryMap = new Map<string, InventoryInfo>()
+  const inventoryMap = new Map<string, InventoryInfoByStorageType>()
 
   for (const item of inventoryData) {
     if (item.locationId) {
       const key = `${item.userId}:${item.commodityTicker}:${item.locationId}`
-      const existing = inventoryMap.get(key)
-      const newQuantity = (existing?.quantity ?? 0) + item.quantity
+      const storageType = item.storageType as StorageType
 
-      // Keep the most recent fioUploadedAt from any storage at this location
-      let fioUploadedAt = existing?.fioUploadedAt ?? null
+      let existing = inventoryMap.get(key)
+      if (!existing) {
+        existing = {
+          total: { quantity: 0, fioUploadedAt: null },
+          byStorageType: new Map<StorageType, InventoryInfo>(),
+        }
+        inventoryMap.set(key, existing)
+      }
+
+      // Update total
+      existing.total.quantity += item.quantity
       if (item.fioUploadedAt) {
-        if (!fioUploadedAt || item.fioUploadedAt > fioUploadedAt) {
-          fioUploadedAt = item.fioUploadedAt
+        if (!existing.total.fioUploadedAt || item.fioUploadedAt > existing.total.fioUploadedAt) {
+          existing.total.fioUploadedAt = item.fioUploadedAt
         }
       }
 
-      inventoryMap.set(key, { quantity: newQuantity, fioUploadedAt })
+      // Update per-storage-type breakdown
+      const storageInfo = existing.byStorageType.get(storageType)
+      if (storageInfo) {
+        storageInfo.quantity += item.quantity
+        if (item.fioUploadedAt) {
+          if (!storageInfo.fioUploadedAt || item.fioUploadedAt > storageInfo.fioUploadedAt) {
+            storageInfo.fioUploadedAt = item.fioUploadedAt
+          }
+        }
+      } else {
+        existing.byStorageType.set(storageType, {
+          quantity: item.quantity,
+          fioUploadedAt: item.fioUploadedAt,
+        })
+      }
     }
   }
 
@@ -388,11 +424,12 @@ export async function getReservationStatsForBuyOrders(
 /**
  * Minimal sell order data required for quantity enrichment
  */
-interface SellOrderForEnrichment {
+export interface SellOrderForEnrichment {
   id: number
   userId: number
   commodityTicker: string
   locationId: string
+  storageType?: StorageType | null // null = all storage types, specific = only that storage
   limitMode: SellOrderLimitMode
   limitQuantity: number | null
 }
@@ -437,7 +474,24 @@ export async function enrichSellOrdersWithQuantities(
 
   for (const order of orders) {
     const inventoryKey = `${order.userId}:${order.commodityTicker}:${order.locationId}`
-    const inventoryInfo = inventoryMap.get(inventoryKey) ?? { quantity: 0, fioUploadedAt: null }
+    const inventoryInfoByType = inventoryMap.get(inventoryKey) ?? {
+      total: { quantity: 0, fioUploadedAt: null },
+      byStorageType: new Map<StorageType, InventoryInfo>(),
+    }
+
+    // Get inventory filtered by storage type if specified
+    let inventoryInfo: InventoryInfo
+    if (order.storageType) {
+      // Use only the specific storage type's inventory
+      inventoryInfo = inventoryInfoByType.byStorageType.get(order.storageType) ?? {
+        quantity: 0,
+        fioUploadedAt: null,
+      }
+    } else {
+      // Use total across all storage types
+      inventoryInfo = inventoryInfoByType.total
+    }
+
     const activeStats = activeReservationMap.get(order.id) ?? { count: 0, quantity: 0 }
     const fulfilledReservations = fulfilledReservationsMap.get(order.id) ?? []
 

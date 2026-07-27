@@ -660,6 +660,7 @@ export const sellOrders = pgTable(
     locationId: varchar('location_id', { length: 20 })
       .notNull()
       .references(() => fioLocations.naturalId),
+    storageType: varchar('storage_type', { length: 30 }), // null = all storage types, or specific: 'STORE', 'WAREHOUSE_STORE', 'CX_SELL_ORDER', etc.
     price: decimal('price', { precision: 12, scale: 2 }).notNull(),
     currency: currencyEnum('currency').notNull(),
     priceListCode: varchar('price_list_code', { length: 20 }), // null = custom/fixed price, set = dynamic pricing from price list
@@ -674,12 +675,20 @@ export const sellOrders = pgTable(
     deletedAt: timestamp('deleted_at'), // soft-delete tombstone; preserves history for fulfilled invoices
   },
   table => ({
-    // Unique constraint: one ACTIVE sell order per commodity/location/orderType/currency per user.
+    // Unique constraint: one ACTIVE sell order per commodity/location/storageType/orderType/currency per user.
     // Partial index lets a user re-create a listing after the prior one was soft-deleted.
-    uniqueUserCommodityLocationTypeCurrency: uniqueIndex(
-      'sell_orders_user_commodity_location_type_currency_idx'
+    // Note: NULL storageType is treated as distinct from specific types by PostgreSQL.
+    uniqueUserCommodityLocationStorageTypeCurrency: uniqueIndex(
+      'sell_orders_user_commodity_location_storage_type_currency_idx'
     )
-      .on(table.userId, table.commodityTicker, table.locationId, table.orderType, table.currency)
+      .on(
+        table.userId,
+        table.commodityTicker,
+        table.locationId,
+        table.storageType,
+        table.orderType,
+        table.currency
+      )
       .where(sql`${table.deletedAt} IS NULL`),
     deletedAtIdx: index('sell_orders_deleted_at_idx').on(table.deletedAt),
   })

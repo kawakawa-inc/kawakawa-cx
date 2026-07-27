@@ -155,11 +155,30 @@ export type MessageVisibility = 'ephemeral' | 'public'
 
 export const MESSAGE_VISIBILITIES: MessageVisibility[] = ['ephemeral', 'public']
 
+// Storage types from FIO inventory - defines where items are stored
+export type StorageType =
+  | 'STORE' // Base storage
+  | 'WAREHOUSE_STORE' // Warehouse storage
+  | 'PLANETARY_STORE' // Planetary storage (LM/WAR)
+  | 'SPACE_STATION_STORE' // Space station storage (e.g., Benten, Moria)
+  | 'SHIP_STORE' // Ship cargo
+  | 'CX_SELL_ORDER' // Items locked in CX sell orders
+
+export const STORAGE_TYPES: StorageType[] = [
+  'STORE',
+  'WAREHOUSE_STORE',
+  'PLANETARY_STORE',
+  'SPACE_STATION_STORE',
+  'SHIP_STORE',
+  'CX_SELL_ORDER',
+]
+
 // User sell order (offer to sell)
 export interface SellOrder {
   id: number
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null // null = sell from any storage, specific = only from that storage
   price: number
   currency: Currency
   orderType: OrderType // internal = members only, partner = trade partners
@@ -169,7 +188,7 @@ export interface SellOrder {
 
 // Sell order with calculated available quantity
 export interface SellOrderWithAvailability extends SellOrder {
-  fioQuantity: number // Raw FIO inventory quantity
+  fioQuantity: number // Raw FIO inventory quantity (filtered by storageType if set)
   availableQuantity: number // Calculated based on limitMode
 }
 
@@ -191,6 +210,7 @@ export interface MarketListing {
   sellerName: string
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null // null = all storage types, specific = only that storage
   price: number
   currency: Currency
   orderType: OrderType

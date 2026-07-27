@@ -21,7 +21,15 @@
         <v-card-title class="d-flex align-center pb-0">
           <div>
             <span class="text-h6">
-              {{ orderType === 'sell' ? 'Sell' : 'Buy' }} Order #{{ orderId }}
+              <template v-if="isGroupedView">
+                {{ orderType === 'sell' ? 'Sell' : 'Buy' }} Orders
+                <v-chip size="x-small" color="info" variant="tonal" class="ml-1">
+                  {{ groupedOrders.length }} orders
+                </v-chip>
+              </template>
+              <template v-else>
+                {{ orderType === 'sell' ? 'Sell' : 'Buy' }} Order #{{ orderId }}
+              </template>
             </span>
             <div class="text-body-2 text-medium-emphasis">
               {{ getCommodityDisplay(order.commodityTicker) }} at
@@ -59,8 +67,8 @@
                 {{ getLocationDisplay(order.locationId) }}
               </div>
             </v-col>
-            <!-- FIO Age column for sell orders only -->
-            <v-col v-if="orderType === 'sell'" cols="6" sm="3">
+            <!-- FIO Age column for sell orders only (hidden in grouped view since each order has its own) -->
+            <v-col v-if="orderType === 'sell' && !isGroupedView" cols="6" sm="3">
               <div class="text-caption text-medium-emphasis">FIO Age</div>
               <v-chip
                 v-if="(order as SellOrderData).fioUploadedAt"
@@ -72,6 +80,8 @@
               </v-chip>
               <span v-else class="text-medium-emphasis">—</span>
             </v-col>
+            <!-- Empty placeholder for grouped view to maintain alignment -->
+            <v-col v-else-if="orderType === 'sell' && isGroupedView" cols="6" sm="3" />
             <!-- Empty placeholder column for buy orders to maintain grid alignment -->
             <v-col v-else cols="6" sm="3" />
             <v-col cols="6" sm="3">
@@ -89,10 +99,16 @@
             <v-col cols="6" sm="3">
               <div class="text-caption text-medium-emphasis">
                 {{ orderType === 'sell' ? 'Available' : 'Quantity' }}
+                <span v-if="isGroupedView" class="text-info">(total)</span>
               </div>
               <div class="text-body-1 font-weight-medium">
                 <template v-if="orderType === 'sell'">
-                  {{ (order as SellOrderData).availableQuantity.toLocaleString() }}
+                  <template v-if="isGroupedView">
+                    {{ groupedTotalAvailable.toLocaleString() }}
+                  </template>
+                  <template v-else>
+                    {{ (order as SellOrderData).availableQuantity.toLocaleString() }}
+                  </template>
                 </template>
                 <template v-else-if="(order as BuyOrderData).isStanding">
                   <span class="text-info">&infin;</span>
@@ -108,10 +124,22 @@
                 <template v-if="orderType === 'buy' && (order as BuyOrderData).isStanding">
                   <span class="text-info">&infin;</span>
                 </template>
+                <template v-else-if="isGroupedView">
+                  {{ groupedTotalRemaining.toLocaleString() }}
+                </template>
                 <template v-else>
                   {{ order.remainingQuantity.toLocaleString() }}
                 </template>
-                <span v-if="order.reservedQuantity > 0" class="text-caption text-medium-emphasis">
+                <span
+                  v-if="isGroupedView && groupedTotalReserved > 0"
+                  class="text-caption text-medium-emphasis"
+                >
+                  ({{ groupedTotalReserved }} reserved)
+                </span>
+                <span
+                  v-else-if="order.reservedQuantity > 0"
+                  class="text-caption text-medium-emphasis"
+                >
                   ({{ order.reservedQuantity }} {{ orderType === 'buy' ? 'filled' : 'reserved' }})
                 </span>
               </div>
@@ -152,6 +180,69 @@
               </div>
             </v-col>
           </v-row>
+
+          <!-- Individual Orders Section (for grouped/collapsed rows) -->
+          <template v-if="isGroupedView && groupedOrders.length > 0">
+            <v-divider class="my-4" />
+
+            <div class="text-subtitle-2 mb-2">
+              Individual Sell Orders
+              <v-chip size="x-small" color="info" variant="tonal" class="ml-1">
+                {{ groupedOrders.length }}
+              </v-chip>
+            </div>
+
+            <v-table density="compact" class="grouped-orders-table">
+              <thead>
+                <tr>
+                  <th class="text-left">Order</th>
+                  <th class="text-left">Storage</th>
+                  <th class="text-right">Available</th>
+                  <th class="text-right">Remaining</th>
+                  <th class="text-left">FIO Age</th>
+                  <th v-if="isOwnOrder" class="text-right">Reservations</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(groupOrder, index) in groupedOrders"
+                  :key="groupOrder.id"
+                  :class="{ 'alt-row': index % 2 === 1 }"
+                >
+                  <td class="text-body-2">#{{ groupOrder.id }}</td>
+                  <td class="text-body-2 text-medium-emphasis">
+                    {{ groupOrder.storageType ?? 'All' }}
+                  </td>
+                  <td class="text-right text-body-2">
+                    {{ groupOrder.availableQuantity.toLocaleString() }}
+                  </td>
+                  <td class="text-right text-body-2">
+                    {{ groupOrder.remainingQuantity.toLocaleString() }}
+                    <span
+                      v-if="groupOrder.reservedQuantity > 0"
+                      class="text-caption text-medium-emphasis"
+                    >
+                      ({{ groupOrder.reservedQuantity }} reserved)
+                    </span>
+                  </td>
+                  <td>
+                    <v-chip
+                      v-if="groupOrder.fioUploadedAt"
+                      size="x-small"
+                      variant="tonal"
+                      :color="getFioAgeColor(groupOrder.fioUploadedAt)"
+                    >
+                      {{ formatRelativeTime(groupOrder.fioUploadedAt) }}
+                    </v-chip>
+                    <span v-else class="text-medium-emphasis text-caption">—</span>
+                  </td>
+                  <td v-if="isOwnOrder" class="text-right text-body-2">
+                    {{ groupOrder.activeReservationCount }}
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </template>
 
           <!-- Reservations Section (for own orders) -->
           <template v-if="isOwnOrder">
@@ -323,7 +414,7 @@
         </v-card-text>
 
         <v-card-actions>
-          <template v-if="isOwnOrder">
+          <template v-if="isOwnOrder && !isGroupedView">
             <v-btn color="error" variant="text" prepend-icon="mdi-delete" @click="confirmDelete">
               Delete
             </v-btn>
@@ -401,11 +492,17 @@ type BuyOrderData = BuyOrderResponse & {
 }
 type OrderData = SellOrderData | BuyOrderData
 
-const props = defineProps<{
-  modelValue: boolean
-  orderType: 'sell' | 'buy'
-  orderId: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean
+    orderType: 'sell' | 'buy'
+    orderId: number
+    groupedOrderIds?: number[]
+  }>(),
+  {
+    groupedOrderIds: () => [],
+  }
+)
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
@@ -433,6 +530,21 @@ const loadingReservations = ref(false)
 const actionLoading = ref<string | null>(null)
 const showActiveOnly = ref(true)
 const expandedReservations = ref<Record<number, boolean>>({})
+
+// Grouped orders (for collapsed rows)
+const groupedOrders = ref<SellOrderData[]>([])
+const isGroupedView = computed(() => props.groupedOrderIds.length > 1)
+
+// Aggregated totals for grouped views
+const groupedTotalAvailable = computed(() =>
+  groupedOrders.value.reduce((sum, o) => sum + (o.availableQuantity ?? 0), 0)
+)
+const groupedTotalRemaining = computed(() =>
+  groupedOrders.value.reduce((sum, o) => sum + o.remainingQuantity, 0)
+)
+const groupedTotalReserved = computed(() =>
+  groupedOrders.value.reduce((sum, o) => sum + o.reservedQuantity, 0)
+)
 
 // Active statuses are pending and confirmed
 const activeStatuses = ['pending', 'confirmed']
@@ -490,48 +602,81 @@ const formatPrice = (price: number): string => {
   return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// Convert a MarketListing to SellOrderData for grouped display
+function listingToSellOrderData(listing: MarketListing): SellOrderData {
+  return {
+    id: listing.id,
+    commodityTicker: listing.commodityTicker,
+    locationId: listing.locationId,
+    storageType: listing.storageType,
+    price: listing.price,
+    currency: listing.currency,
+    orderType: listing.orderType,
+    availableQuantity: listing.availableQuantity,
+    activeReservationCount: listing.activeReservationCount,
+    reservedQuantity: listing.reservedQuantity,
+    remainingQuantity: listing.remainingQuantity,
+    limitMode: 'none',
+    limitQuantity: null,
+    fioQuantity: listing.availableQuantity,
+    sellerName: listing.sellerName,
+    priceListCode: listing.priceListCode,
+    effectivePrice: listing.effectivePrice,
+    isFallback: listing.isFallback,
+    priceLocationId: listing.priceLocationId,
+    pricingMode: listing.pricingMode,
+    fioUploadedAt: listing.fioUploadedAt,
+  } as SellOrderData
+}
+
 // Fetch order data
 async function loadOrder() {
   loading.value = true
   error.value = null
   expandedReservations.value = {}
+  groupedOrders.value = []
 
   try {
     if (props.orderType === 'sell') {
-      try {
-        const sellOrder = await api.sellOrders.get(props.orderId)
-        order.value = sellOrder
-        isOwnOrder.value = true
-      } catch {
-        const listings = await api.market.getListings()
-        const listing = listings.find((l: MarketListing) => l.id === props.orderId)
-        if (listing) {
-          order.value = {
-            id: listing.id,
-            commodityTicker: listing.commodityTicker,
-            locationId: listing.locationId,
-            price: listing.price,
-            currency: listing.currency,
-            orderType: listing.orderType,
-            availableQuantity: listing.availableQuantity,
-            activeReservationCount: listing.activeReservationCount,
-            reservedQuantity: listing.reservedQuantity,
-            remainingQuantity: listing.remainingQuantity,
-            limitMode: 'none',
-            limitQuantity: null,
-            fioQuantity: listing.availableQuantity,
-            sellerName: listing.sellerName,
-            priceListCode: listing.priceListCode,
-            effectivePrice: listing.effectivePrice,
-            isFallback: listing.isFallback,
-            priceLocationId: listing.priceLocationId,
-            pricingMode: listing.pricingMode,
-            fioUploadedAt: listing.fioUploadedAt,
-          } as SellOrderData
-          ownerName.value = listing.sellerName
-          isOwnOrder.value = false
-        } else {
-          throw new Error('Order not found')
+      // If viewing a collapsed group, load all orders in the group
+      if (props.groupedOrderIds.length > 1) {
+        try {
+          // Try loading as own orders first
+          const orders = await Promise.all(props.groupedOrderIds.map(id => api.sellOrders.get(id)))
+          groupedOrders.value = orders
+          order.value = orders[0]
+          isOwnOrder.value = true
+        } catch {
+          // Fall back to market listings
+          const listings = await api.market.getListings()
+          const matchedListings = props.groupedOrderIds
+            .map(id => listings.find((l: MarketListing) => l.id === id))
+            .filter((l): l is MarketListing => l !== undefined)
+
+          if (matchedListings.length > 0) {
+            groupedOrders.value = matchedListings.map(listingToSellOrderData)
+            order.value = groupedOrders.value[0]
+            ownerName.value = matchedListings[0].sellerName
+            isOwnOrder.value = false
+          } else {
+            throw new Error('Orders not found')
+          }
+        }
+      } else {
+        try {
+          const sellOrder = await api.sellOrders.get(props.orderId)
+          order.value = sellOrder
+          isOwnOrder.value = true
+        } catch {
+          const listings = await api.market.getListings()
+          const listing = listings.find((l: MarketListing) => l.id === props.orderId)
+          if (listing) {
+            order.value = listingToSellOrderData(listing)
+            ownerName.value = listing.sellerName
+            isOwnOrder.value = false
+          } else {
+            throw new Error('Order not found')
+          }
         }
       }
     } else {
@@ -584,9 +729,19 @@ async function loadReservations() {
   try {
     // Use 'owner' role to get reservations where user owns the order
     const allReservations = await api.reservations.list('owner')
-    reservations.value = allReservations.filter((r: ReservationWithDetails) =>
-      props.orderType === 'sell' ? r.sellOrderId === props.orderId : r.buyOrderId === props.orderId
-    )
+    if (isGroupedView.value && props.orderType === 'sell') {
+      // For grouped views, show reservations across all orders in the group
+      const groupIds = new Set(props.groupedOrderIds)
+      reservations.value = allReservations.filter((r: ReservationWithDetails) =>
+        groupIds.has(r.sellOrderId!)
+      )
+    } else {
+      reservations.value = allReservations.filter((r: ReservationWithDetails) =>
+        props.orderType === 'sell'
+          ? r.sellOrderId === props.orderId
+          : r.buyOrderId === props.orderId
+      )
+    }
   } catch (e) {
     console.error('Failed to load reservations:', e)
   } finally {
@@ -698,11 +853,27 @@ watch(dialog, open => {
     reservations.value = []
     expandedReservations.value = {}
     showActiveOnly.value = true
+    groupedOrders.value = []
   }
 })
 </script>
 
 <style scoped>
+.grouped-orders-table {
+  font-size: 0.875rem;
+}
+
+.grouped-orders-table th {
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.grouped-orders-table .alt-row {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
+}
+
 .reservations-table {
   font-size: 0.875rem;
 }

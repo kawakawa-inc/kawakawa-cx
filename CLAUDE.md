@@ -60,6 +60,14 @@ Full-stack internal commodity exchange for Kawakawa, Inc., a fictional corporati
 
 All commands should be run from the repository root using `pnpm --filter` syntax.
 
+### Database Access
+
+Use `$DATABASE_URL` for direct database queries:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT * FROM users LIMIT 5;"
+```
+
 ### Makefile (recommended)
 
 ```bash

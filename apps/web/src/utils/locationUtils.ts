@@ -37,9 +37,15 @@ export const getLocationWarehouseEmoji = (storageTypes?: string[]): string => {
 const STORAGE_TYPE_LABELS: Record<string, string> = {
   STORE: 'Base',
   WAREHOUSE_STORE: 'Warehouse',
+  CX_SELL_ORDER: 'CX Sell Order',
 }
 
 export const formatStorageType = (storageType: string | null | undefined): string => {
   if (!storageType) return ''
   return STORAGE_TYPE_LABELS[storageType] ?? storageType
+}
+
+/** Get emoji for CX sell order storage */
+export const getCxSellOrderEmoji = (storageTypes?: string[]): string => {
+  return storageTypes?.includes('CX_SELL_ORDER') ? '📊' : ''
 }

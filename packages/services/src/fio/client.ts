@@ -633,6 +633,16 @@ export class FioClient {
   clearJumpCountCache(): void {
     this.jumpCountCache.clear()
   }
+
+  /**
+   * Fetch a user's CX orders (CXOS) from FIO API.
+   * Returns both buy and sell orders. Filter by OrderType='SELLING' for sell orders.
+   * Endpoint: GET /cxos/{username}
+   * Requires API key authentication via Authorization header.
+   */
+  async getUserCxos<T>(apiKey: string, username: string): Promise<T> {
+    return this.fetchAuthedJson<T>(`/cxos/${encodeURIComponent(username)}`, apiKey)
+  }
 }
 
 // Export singleton instance for public endpoints (commodities, locations, etc.)

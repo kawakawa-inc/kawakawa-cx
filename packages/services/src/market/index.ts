@@ -7,8 +7,10 @@ export {
   enrichSellOrdersWithQuantities,
   calculateEffectiveFulfilledQuantity,
   type InventoryInfo,
+  type InventoryInfoByStorageType,
   type ReservationStats,
   type SellOrderQuantityInfo,
+  type SellOrderForEnrichment,
 } from './service.js'
 
 export {

@@ -195,6 +195,24 @@
               </v-list-item>
             </template>
 
+            <!-- Availability -->
+            <template v-else-if="activeType === 'availability'">
+              <v-list-item
+                v-for="opt in availabilityOptions"
+                :key="opt.value"
+                :prepend-icon="opt.icon"
+                :title="opt.title"
+                :subtitle="opt.subtitle"
+                :color="isActive('availability', opt.value) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('availability', opt.value, opt.title)"
+              >
+                <template v-if="isActive('availability', opt.value)" #append>
+                  <v-icon color="primary" size="small">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
             <!-- Location Type -->
             <template v-else-if="activeType === 'locationType'">
               <v-list-item
@@ -456,6 +474,7 @@ const props = withDefaults(
     orderTypeOptions?: { title: string; value: string }[]
     activePricing?: string | null
     activeOrderType?: string | null
+    activeAvailability?: string | null
     // Inventory-only optional props
     locationTypeOptions?: string[]
     storageTypeOptions?: string[]
@@ -474,6 +493,7 @@ const props = withDefaults(
       { key: 'category', label: 'Category', icon: 'mdi-tag-outline' },
       { key: 'pricing', label: 'Pricing', icon: 'mdi-currency-usd' },
       { key: 'orderType', label: 'Visibility', icon: 'mdi-eye-outline' },
+      { key: 'availability', label: 'Availability', icon: 'mdi-package-variant' },
     ],
     showSaved: true,
     activeCategory: null,
@@ -482,6 +502,7 @@ const props = withDefaults(
     orderTypeOptions: () => [],
     activePricing: null,
     activeOrderType: null,
+    activeAvailability: null,
     locationTypeOptions: () => [],
     storageTypeOptions: () => [],
     activeLocationType: null,
@@ -502,6 +523,27 @@ const currentUsername = computed(() => userStore.getUser()?.username ?? '')
 
 const isOpen = ref(false)
 const activeType = ref<string>(props.filterTypes[0]?.key ?? 'commodity')
+
+const availabilityOptions = [
+  {
+    value: 'available',
+    title: 'Available',
+    subtitle: 'In stock or standing orders',
+    icon: 'mdi-package-check',
+  },
+  {
+    value: 'standing',
+    title: 'Standing',
+    subtitle: 'Storefronts with unlimited quantity',
+    icon: 'mdi-infinity',
+  },
+  {
+    value: 'one-time',
+    title: 'One-time',
+    subtitle: 'Finite orders with remaining stock',
+    icon: 'mdi-counter',
+  },
+]
 
 // Saved filters state
 const savedFilters = ref<SavedMarketFilter[]>([])
@@ -526,6 +568,7 @@ const isActive = (filterType: string, value: string): boolean => {
   if (filterType === 'category') return props.activeCategory === value
   if (filterType === 'pricing') return props.activePricing === value
   if (filterType === 'orderType') return props.activeOrderType === value
+  if (filterType === 'availability') return props.activeAvailability === value
   if (filterType === 'locationType') return props.activeLocationType === value
   if (filterType === 'storageType') return props.activeStorageType === value
   return false

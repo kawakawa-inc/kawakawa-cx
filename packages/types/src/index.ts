@@ -829,6 +829,7 @@ export interface SavedFilterData {
   orderType?: string
   pricing?: string
   userName?: string[]
+  availability?: 'available' | 'standing' | 'one-time'
 }
 
 export interface SavedMarketFilter {

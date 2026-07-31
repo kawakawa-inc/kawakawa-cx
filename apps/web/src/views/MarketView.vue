@@ -170,6 +170,7 @@
           :active-category="filters.category"
           :active-pricing="filters.pricing"
           :active-order-type="filters.orderType"
+          :active-availability="filters.availability"
           :current-filter-data="getCurrentFilterData()"
           :can-pin="canPinFilters"
           @select="onFilterMenuSelect"
@@ -962,7 +963,7 @@ import FilterMenu from '../components/FilterMenu.vue'
 import { localizeMaterialCategory } from '../utils/materials'
 import { getLocationCategoryPriority } from '../utils/locationUtils'
 import { useShoppingListStore } from '../stores/shoppingList'
-import type { CommodityCategory } from '@kawakawa/types'
+import type { CommodityCategory, SavedFilterData } from '@kawakawa/types'
 import { useInvoicesStore } from '../stores/invoices'
 
 const userStore = useUserStore()
@@ -1275,6 +1276,7 @@ const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
     userName: { type: 'array' },
     orderType: { type: 'string' },
     pricing: { type: 'string' },
+    availability: { type: 'string' },
   },
 })
 // Get FIO age border class for responsive view
@@ -1393,6 +1395,8 @@ const onFilterMenuSelect = ({ filterType, key }: { filterType: string; key: stri
     filters.value.pricing = filters.value.pricing === key ? null : key
   } else if (filterType === 'orderType') {
     filters.value.orderType = filters.value.orderType === key ? null : key
+  } else if (filterType === 'availability') {
+    filters.value.availability = filters.value.availability === key ? null : key
   }
 }
 
@@ -2009,6 +2013,15 @@ const filteredItems = computed(() => {
     }
   }
 
+  // Availability filter
+  if (filters.value.availability === 'available') {
+    result = result.filter(l => l.isStanding || l.remainingQuantity > 0)
+  } else if (filters.value.availability === 'standing') {
+    result = result.filter(l => l.isStanding)
+  } else if (filters.value.availability === 'one-time') {
+    result = result.filter(l => !l.isStanding && l.remainingQuantity > 0)
+  }
+
   return result
 })
 
@@ -2356,6 +2369,9 @@ const removeSavedFilterChips = (filterData: SavedMarketFilter['filterData']) => 
   if (filterData.pricing && filters.value.pricing === filterData.pricing) {
     filters.value.pricing = null
   }
+  if (filterData.availability && filters.value.availability === filterData.availability) {
+    filters.value.availability = null
+  }
 }
 
 const dismissSavedFilter = () => {
@@ -2411,6 +2427,7 @@ const applyFilterData = (filterData: SavedMarketFilter['filterData']) => {
   if (filterData.category) filters.value.category = filterData.category
   if (filterData.orderType) filters.value.orderType = filterData.orderType
   if (filterData.pricing) filters.value.pricing = filterData.pricing
+  if (filterData.availability) filters.value.availability = filterData.availability
 }
 
 const applySavedFilter = (savedFilter: SavedMarketFilter) => {
@@ -2447,6 +2464,7 @@ const getCurrentFilterData = (): SavedMarketFilter['filterData'] => {
     category: filters.value.category ?? undefined,
     orderType: filters.value.orderType ?? undefined,
     pricing: filters.value.pricing ?? undefined,
+    availability: (filters.value.availability as SavedFilterData['availability']) ?? undefined,
   }
 }
 

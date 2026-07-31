@@ -75,7 +75,12 @@ export async function computeBurnRepairCache(
 
   const excludedPlanetsRaw =
     ((await userSettingsService.getSetting(userId, 'burnRepair.excludedPlanets')) as string[]) ?? []
-  const excludedPlanets = new Set(excludedPlanetsRaw.map(p => p.toLowerCase()))
+  const fioExcludedLocationsRaw =
+    ((await userSettingsService.getSetting(userId, 'fio.excludedLocations')) as string[]) ?? []
+  const excludedPlanets = new Set([
+    ...excludedPlanetsRaw.map(p => p.toLowerCase()),
+    ...fioExcludedLocationsRaw.map(p => p.toLowerCase()),
+  ])
 
   // 2. Load planet data from DB (already synced)
   const planets = await getUserPlanetData(userId)

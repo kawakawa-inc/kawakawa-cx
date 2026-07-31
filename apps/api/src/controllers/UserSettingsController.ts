@@ -16,6 +16,7 @@ const BURN_REPAIR_SETTINGS = new Set([
   'burnRepair.repairDays',
   'burnRepair.planetOverrides',
   'burnRepair.excludedPlanets',
+  'fio.excludedLocations',
 ])
 
 // ==================== REQUEST/RESPONSE TYPES ====================

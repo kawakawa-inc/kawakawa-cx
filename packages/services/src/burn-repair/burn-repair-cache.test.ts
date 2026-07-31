@@ -58,6 +58,7 @@ describe('computeBurnRepairCache', () => {
       .mockResolvedValueOnce(0) // burnRepair.repairDays
       .mockResolvedValueOnce('{}') // burnRepair.planetOverrides
       .mockResolvedValueOnce([]) // burnRepair.excludedPlanets
+      .mockResolvedValueOnce([]) // fio.excludedLocations
   }
 
   beforeEach(() => {
@@ -124,6 +125,7 @@ describe('computeBurnRepairCache', () => {
       .mockResolvedValueOnce(0) // burnRepair.repairDays
       .mockResolvedValueOnce('{}') // burnRepair.planetOverrides
       .mockResolvedValueOnce(['UV-351a']) // burnRepair.excludedPlanets
+      .mockResolvedValueOnce([]) // fio.excludedLocations
 
     vi.mocked(getUserPlanetData).mockResolvedValue([
       {

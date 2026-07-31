@@ -834,7 +834,7 @@
                   multiple
                   chips
                   closable-chips
-                  hint="Locations to exclude from FIO sync"
+                  hint="Locations to exclude from FIO sync and Corp Overview calculations"
                   persistent-hint
                   class="mb-4"
                   @update:model-value="autoSaveSetting('fio.excludedLocations', $event)"

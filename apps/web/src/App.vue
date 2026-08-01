@@ -275,6 +275,7 @@ const checkAuth = () => {
 
 const confirmLogout = () => {
   logoutDialog.value = false
+  localStorage.removeItem('jwt')
   handleAuthFailure()
   userStore.clearUser()
   invoicesStore.clearAll()
@@ -283,7 +284,7 @@ const confirmLogout = () => {
   router.push('/login')
 }
 
-// Validate the session on startup - clears stale tokens
+// Validate the session on startup - validates token with server
 const validateSession = async () => {
   const token = localStorage.getItem('jwt')
   if (!token) return
@@ -294,13 +295,20 @@ const validateSession = async () => {
     userStore.setUser(user)
     isAuthenticated.value = true
   } catch (error) {
-    // Token is invalid — handleAuthFailure already cleared localStorage
+    // Token is invalid
     console.warn('Session invalid:', error)
-    userStore.clearUser()
-    invoicesStore.clearAll()
-    shoppingListStore.clearList()
-    isAuthenticated.value = false
-    router.push('/login')
+    // Only clear and redirect if the JWT in storage hasn't changed since
+    // we started (prevents wiping a fresh token from a concurrent Discord
+    // login callback in another tab or just-completed login flow).
+    const currentToken = localStorage.getItem('jwt')
+    if (currentToken === token) {
+      localStorage.removeItem('jwt')
+      userStore.clearUser()
+      invoicesStore.clearAll()
+      shoppingListStore.clearList()
+      isAuthenticated.value = false
+      router.push('/login')
+    }
   }
 }
 
@@ -350,6 +358,11 @@ onMounted(async () => {
 
   // Listen for centralized auth failures (401 from any API call)
   unsubAuthFailure = onAuthFailure(() => {
+    // Guard: if a fresh JWT has appeared in localStorage (e.g. from a
+    // Discord callback in another tab, or a just-completed login flow),
+    // don't wipe the session — the new token takes precedence.
+    if (localStorage.getItem('jwt')) return
+
     userStore.clearUser()
     invoicesStore.clearAll()
     shoppingListStore.clearList()

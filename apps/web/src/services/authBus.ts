@@ -10,11 +10,10 @@ const AUTH_FAILURE_EVENT = 'kawa:auth-failure'
 
 /**
  * Called by the API layer when a 401 is received.
- * Clears stored credentials and notifies listeners.
+ * Only dispatches the event — the subscriber handles credential cleanup
+ * and redirect, so it can guard against a fresh JWT from another tab/window.
  */
 export function handleAuthFailure(): void {
-  localStorage.removeItem('jwt')
-  localStorage.removeItem('user')
   window.dispatchEvent(new CustomEvent(AUTH_FAILURE_EVENT))
 }
 

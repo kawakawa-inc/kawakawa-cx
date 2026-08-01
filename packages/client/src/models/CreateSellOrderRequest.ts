@@ -7,9 +7,11 @@ import type { Currency } from './Currency'
 import type { DemandSource } from './DemandSource'
 import type { OrderType } from './OrderType'
 import type { SellOrderLimitMode } from './SellOrderLimitMode'
+import type { StorageType } from './StorageType'
 export type CreateSellOrderRequest = {
   commodityTicker: string
   locationId: string
+  storageType?: StorageType | null
   price: number
   currency: Currency
   priceListCode?: string | null

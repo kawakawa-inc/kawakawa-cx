@@ -3,9 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A corp member who has been excluded from the current view, either because
- * their FIO data is past the staleness cutoff or because the requesting user
- * manually unchecked them in the planning dropdown.
+ * A corp member who has been excluded from the current view: they're
+ * generally inactive (stale or never active), they're currently in vacation
+ * mode, or the requesting user manually unchecked them in the planning
+ * dropdown.
  */
 export type ExcludedMember = {
   userId: number
@@ -18,7 +19,8 @@ export type ExcludedMember = {
 }
 export namespace ExcludedMember {
   export enum reason {
-    FIO_STALE = 'fio-stale',
+    STALE = 'stale',
+    VACATION = 'vacation',
     MANUAL = 'manual',
   }
 }

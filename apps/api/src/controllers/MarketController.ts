@@ -4,13 +4,31 @@ import {
   enrichSellOrdersWithQuantities,
   getReservationStatsForBuyOrders,
 } from '@kawakawa/services/market'
-import { db, sellOrders, buyOrders, users } from '../db/index.js'
+import { db, sellOrders, buyOrders, users, userSettings } from '../db/index.js'
 import { eq, isNull, and } from 'drizzle-orm'
 import type { JwtPayload } from '../utils/jwt.js'
 import { hasPermission } from '../utils/permissionService.js'
 import { fioClient } from '@kawakawa/services/fio'
 import { calculateEffectivePriceBatch, type PriceRequest } from '../services/price-calculator.js'
 import { activeUserCondition } from '@kawakawa/services/activity'
+
+function parseFioUsername(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return typeof parsed === 'string' && parsed.length > 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function coalesceUserName(
+  fioUsernameRaw: string | null,
+  displayName: string,
+  username: string
+): string {
+  return parseFioUsername(fioUsernameRaw) ?? displayName ?? username
+}
 
 // Market listing with seller info and calculated availability
 interface MarketListing {
@@ -136,6 +154,17 @@ export class MarketController extends Controller {
 
     // Filter out inactive users unless explicitly requested
     const activeFilter = includeInactive ? undefined : await activeUserCondition()
+
+    // Subquery for FIO username from settings (stored as JSON in user_settings.value)
+    const fioUsernameSubquery = db
+      .select({
+        userId: userSettings.userId,
+        fioUsername: userSettings.value,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.settingKey, 'fio.username'))
+      .as('fio_username')
+
     const orders = await db
       .select({
         id: sellOrders.id,
@@ -149,10 +178,13 @@ export class MarketController extends Controller {
         orderType: sellOrders.orderType,
         limitMode: sellOrders.limitMode,
         limitQuantity: sellOrders.limitQuantity,
-        sellerName: users.displayName,
+        displayName: users.displayName,
+        username: users.username,
+        fioUsernameRaw: fioUsernameSubquery.fioUsername,
       })
       .from(sellOrders)
       .innerJoin(users, eq(sellOrders.userId, users.id))
+      .leftJoin(fioUsernameSubquery, eq(sellOrders.userId, fioUsernameSubquery.userId))
       .where(and(isNull(sellOrders.deletedAt), activeFilter))
 
     if (orders.length === 0) {
@@ -227,7 +259,7 @@ export class MarketController extends Controller {
         orderType: order.orderType,
         limitMode: order.limitMode,
         limitQuantity: order.limitQuantity,
-        sellerName: order.sellerName,
+        sellerName: coalesceUserName(order.fioUsernameRaw, order.displayName, order.username),
         fioQuantity: qty?.fioQuantity ?? 0,
         availableQuantity: qty?.availableQuantity ?? 0,
         isOwn,
@@ -330,6 +362,16 @@ export class MarketController extends Controller {
 
     // Filter out inactive users unless explicitly requested
     const activeFilter = includeInactive ? undefined : await activeUserCondition()
+
+    const fioUsernameSubquery = db
+      .select({
+        userId: userSettings.userId,
+        fioUsername: userSettings.value,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.settingKey, 'fio.username'))
+      .as('fio_username')
+
     const orders = await db
       .select({
         id: buyOrders.id,
@@ -342,10 +384,13 @@ export class MarketController extends Controller {
         priceListCode: buyOrders.priceListCode,
         orderType: buyOrders.orderType,
         isStanding: buyOrders.isStanding,
-        buyerName: users.displayName,
+        displayName: users.displayName,
+        username: users.username,
+        fioUsernameRaw: fioUsernameSubquery.fioUsername,
       })
       .from(buyOrders)
       .innerJoin(users, eq(buyOrders.userId, users.id))
+      .leftJoin(fioUsernameSubquery, eq(buyOrders.userId, fioUsernameSubquery.userId))
       .where(and(isNull(buyOrders.deletedAt), activeFilter))
 
     if (orders.length === 0) {
@@ -407,7 +452,7 @@ export class MarketController extends Controller {
         currency: order.currency,
         priceListCode: order.priceListCode,
         orderType: order.orderType,
-        buyerName: order.buyerName,
+        buyerName: coalesceUserName(order.fioUsernameRaw, order.displayName, order.username),
         isOwn,
         isStanding: order.isStanding,
         effectivePrice,

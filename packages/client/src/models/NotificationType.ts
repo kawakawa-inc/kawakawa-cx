@@ -12,6 +12,9 @@ export enum NotificationType {
   INVOICE_SUBMITTED = 'invoice_submitted',
   INVOICE_CANCELLED = 'invoice_cancelled',
   INVOICE_FULFILLED = 'invoice_fulfilled',
+  SALES_ORDER_CLAIMED = 'sales_order_claimed',
+  SALES_ORDER_FULFILLED = 'sales_order_fulfilled',
+  SALES_ORDER_CANCELLED = 'sales_order_cancelled',
   USER_NEEDS_APPROVAL = 'user_needs_approval',
   USER_AUTO_APPROVED = 'user_auto_approved',
   USER_APPROVED = 'user_approved',
@@ -19,4 +22,5 @@ export enum NotificationType {
   SYNC_QUEUED = 'sync_queued',
   SYNC_COMPLETED = 'sync_completed',
   SYNC_FAILED = 'sync_failed',
+  FIO_DATA_STALE = 'fio_data_stale',
 }

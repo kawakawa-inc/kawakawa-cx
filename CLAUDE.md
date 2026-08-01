@@ -68,6 +68,22 @@ Use `$DATABASE_URL` for direct database queries:
 psql "$DATABASE_URL" -c "SELECT * FROM users LIMIT 5;"
 ```
 
+### Dev Process Manager (`dev`)
+
+Use the `dev` script for managing dev servers and package watchers. It manages
+PID files, logs, and stdin FIFOs for hot-reloading.
+
+```bash
+dev start [all|api|web|bot|sync-worker|packages]  # Start service(s); auto-starts package watchers
+dev stop [target]                                 # Stop service(s); 'stop all' also stops watchers
+dev restart api                                    # Restart the API (e.g. after regenerating TSOA routes)
+dev reload <service>                               # Hot-reload via tsx watch stdin
+dev status                                         # Show all service + package-watcher statuses
+dev logs <name>                                    # Tail logs (api / web / bot / sync-worker / pkg-*)
+```
+
+Logs are written to `.dev/logs/`. PID files in `.dev/pids/`.
+
 ### Makefile (recommended)
 
 ```bash

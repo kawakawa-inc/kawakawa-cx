@@ -18,6 +18,7 @@ export class MarketService {
     commodity,
     location,
     destination,
+    includeInactive,
   }: {
     commodity?: string
     location?: string
@@ -25,6 +26,7 @@ export class MarketService {
      * Location ID to calculate jump counts from (optional)
      */
     destination?: string
+    includeInactive?: boolean
   }): CancelablePromise<Array<MarketListing>> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -33,6 +35,7 @@ export class MarketService {
         commodity: commodity,
         location: location,
         destination: destination,
+        includeInactive: includeInactive,
       },
     })
   }
@@ -46,6 +49,7 @@ export class MarketService {
     commodity,
     location,
     destination,
+    includeInactive,
   }: {
     commodity?: string
     location?: string
@@ -53,6 +57,7 @@ export class MarketService {
      * Location ID to calculate jump counts from (optional)
      */
     destination?: string
+    includeInactive?: boolean
   }): CancelablePromise<Array<MarketBuyRequest>> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -61,6 +66,7 @@ export class MarketService {
         commodity: commodity,
         location: location,
         destination: destination,
+        includeInactive: includeInactive,
       },
     })
   }

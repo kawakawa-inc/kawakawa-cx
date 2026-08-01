@@ -825,10 +825,11 @@ export interface SavedFilterData {
   itemType?: 'sell' | 'buy'
   commodity?: string[]
   location?: string[]
-  category?: string
+  category?: string[]
   orderType?: string
   pricing?: string
   userName?: string[]
+  availability?: 'available' | 'standing' | 'one-time'
 }
 
 export interface SavedMarketFilter {

@@ -195,6 +195,24 @@
               </v-list-item>
             </template>
 
+            <!-- Availability -->
+            <template v-else-if="activeType === 'availability'">
+              <v-list-item
+                v-for="opt in availabilityOptions"
+                :key="opt.value"
+                :prepend-icon="opt.icon"
+                :title="opt.title"
+                :subtitle="opt.subtitle"
+                :color="isActive('availability', opt.value) ? 'primary' : undefined"
+                rounded="lg"
+                @click="onSelect('availability', opt.value, opt.title)"
+              >
+                <template v-if="isActive('availability', opt.value)" #append>
+                  <v-icon color="primary" size="small">mdi-check</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+
             <!-- Location Type -->
             <template v-else-if="activeType === 'locationType'">
               <v-list-item
@@ -443,7 +461,7 @@ const props = withDefaults(
     locationOptions: LocationFilterOption[]
     categoryOptions?: { title: string; value: string }[]
     activeChips: SearchChip[]
-    activeCategory?: string | null
+    activeCategory?: string | string[]
     currentFilterData?: SavedFilterData | null
     canPin?: boolean
     /** Override which filter types appear in the left panel. Defaults to Market types. */
@@ -456,6 +474,7 @@ const props = withDefaults(
     orderTypeOptions?: { title: string; value: string }[]
     activePricing?: string | null
     activeOrderType?: string | null
+    activeAvailability?: string | null
     // Inventory-only optional props
     locationTypeOptions?: string[]
     storageTypeOptions?: string[]
@@ -474,14 +493,16 @@ const props = withDefaults(
       { key: 'category', label: 'Category', icon: 'mdi-tag-outline' },
       { key: 'pricing', label: 'Pricing', icon: 'mdi-currency-usd' },
       { key: 'orderType', label: 'Visibility', icon: 'mdi-eye-outline' },
+      { key: 'availability', label: 'Availability', icon: 'mdi-package-variant' },
     ],
     showSaved: true,
-    activeCategory: null,
+    activeCategory: () => [],
     userOptions: () => [],
     pricingOptions: () => [],
     orderTypeOptions: () => [],
     activePricing: null,
     activeOrderType: null,
+    activeAvailability: null,
     locationTypeOptions: () => [],
     storageTypeOptions: () => [],
     activeLocationType: null,
@@ -503,6 +524,27 @@ const currentUsername = computed(() => userStore.getUser()?.username ?? '')
 const isOpen = ref(false)
 const activeType = ref<string>(props.filterTypes[0]?.key ?? 'commodity')
 
+const availabilityOptions = [
+  {
+    value: 'available',
+    title: 'Available',
+    subtitle: 'In stock or standing orders',
+    icon: 'mdi-package-check',
+  },
+  {
+    value: 'standing',
+    title: 'Standing',
+    subtitle: 'Storefronts with unlimited quantity',
+    icon: 'mdi-infinity',
+  },
+  {
+    value: 'one-time',
+    title: 'One-time',
+    subtitle: 'Finite orders with remaining stock',
+    icon: 'mdi-counter',
+  },
+]
+
 // Saved filters state
 const savedFilters = ref<SavedMarketFilter[]>([])
 const loadingSavedFilters = ref(false)
@@ -523,9 +565,13 @@ const isActive = (filterType: string, value: string): boolean => {
     return props.activeChips.some(c => c.type === 'user' && c.value === value)
   if (filterType === 'itemType')
     return props.activeChips.some(c => c.type === 'itemType' && c.value === value)
-  if (filterType === 'category') return props.activeCategory === value
+  if (filterType === 'category') {
+    const cat = props.activeCategory
+    return Array.isArray(cat) ? cat.includes(value) : cat === value
+  }
   if (filterType === 'pricing') return props.activePricing === value
   if (filterType === 'orderType') return props.activeOrderType === value
+  if (filterType === 'availability') return props.activeAvailability === value
   if (filterType === 'locationType') return props.activeLocationType === value
   if (filterType === 'storageType') return props.activeStorageType === value
   return false
@@ -622,7 +668,7 @@ const describeFilter = (filter: SavedMarketFilter): string => {
   if (fd.itemType) parts.push(fd.itemType === 'sell' ? 'Sell' : 'Buy')
   if (fd.commodity?.length) parts.push(`${fd.commodity.length} commodity`)
   if (fd.location?.length) parts.push(`${fd.location.length} location`)
-  if (fd.category) parts.push(fd.category)
+  if (fd.category?.length) parts.push(`${fd.category.length} category`)
   if (fd.orderType) parts.push(fd.orderType)
   return parts.join(', ') || 'All orders'
 }

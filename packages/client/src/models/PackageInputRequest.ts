@@ -2,8 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export type UpdateUserRequest = {
-  isLocked?: boolean
-  roles?: Array<string>
-  inactiveUntil?: string | null
+export type PackageInputRequest = {
+  commodityTicker: string
+  quantity: number
 }

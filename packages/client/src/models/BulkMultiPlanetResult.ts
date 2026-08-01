@@ -2,23 +2,23 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { BulkDetectionCategory } from './BulkDetectionCategory'
+import type { BulkFlowCategory } from './BulkFlowCategory'
 import type { LogisticsFlow } from './LogisticsFlow'
 export type BulkMultiPlanetResult = {
   planetLocationId: string
   created: Array<{
     flow: LogisticsFlow
-    category: BulkDetectionCategory
+    category: BulkFlowCategory
   }>
   skippedDuplicates: Array<{
     ticker: string
-    category: BulkDetectionCategory
+    category: BulkFlowCategory
   }>
   skippedCycles: Array<{
     ticker: string
-    category: BulkDetectionCategory
+    category: BulkFlowCategory
   }>
-  emptyCategories: Array<BulkDetectionCategory>
+  emptyCategories: Array<BulkFlowCategory>
   /**
    * Set when the planet wasn't found in fio_user_planets (not synced, or not owned by user)
    */

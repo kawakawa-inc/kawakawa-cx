@@ -11,4 +11,5 @@ export type UpdateBuyOrderRequest = {
   priceListCode?: string | null
   orderType?: OrderType
   targetDays?: number
+  isStanding?: boolean
 }

@@ -6,14 +6,20 @@ export type SavedFilterData = {
   itemType?: SavedFilterData.itemType
   commodity?: Array<string>
   location?: Array<string>
-  category?: string
+  category?: Array<string>
   orderType?: string
   pricing?: string
   userName?: Array<string>
+  availability?: SavedFilterData.availability
 }
 export namespace SavedFilterData {
   export enum itemType {
     SELL = 'sell',
     BUY = 'buy',
+  }
+  export enum availability {
+    AVAILABLE = 'available',
+    STANDING = 'standing',
+    ONE_TIME = 'one-time',
   }
 }

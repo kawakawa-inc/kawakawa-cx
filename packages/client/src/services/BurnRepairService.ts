@@ -29,9 +29,10 @@ export class BurnRepairService {
    * Sums across all users whose roles match the burnRepair.includedRoles setting.
    *
    * `excludedUserIds` is a CSV of user IDs to additionally exclude on top of
-   * the role + FIO-freshness filter. Used by the "Users included" planning
-   * dropdown so the corp view can be modeled as if specific members weren't
-   * around (e.g. summer-vacation gap planning).
+   * the role + activity filter (stale or on vacation). Used by the "Users
+   * included" planning dropdown so the corp view can be modeled as if
+   * specific members weren't around (e.g. planning around someone's actual
+   * vacation).
    * @returns BurnRepairCorpResponse Ok
    * @throws ApiError
    */

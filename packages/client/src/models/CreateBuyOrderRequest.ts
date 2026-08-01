@@ -17,4 +17,5 @@ export type CreateBuyOrderRequest = {
   sourceMode?: BuyOrderSourceMode
   demandSource?: DemandSource
   targetDays?: number
+  isStanding?: boolean
 }

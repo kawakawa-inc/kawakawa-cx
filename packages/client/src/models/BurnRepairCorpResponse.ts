@@ -13,9 +13,15 @@ export type BurnRepairCorpResponse = {
   materials: Array<BurnRepairCorpMaterial>
   includedUserCount: number
   /**
-   * Users with matching roles whose data is older than 30 days (excluded from aggregation)
+   * Users with matching roles who are generally inactive (no recent activity
+   * per `lastActiveAt`) — excluded from aggregation. Does not include members
+   * excluded for being on vacation; see `vacationUserCount`.
    */
   staleUserCount: number
+  /**
+   * Users with matching roles who are currently in vacation mode — excluded from aggregation.
+   */
+  vacationUserCount: number
   /**
    * Corp-wide on-hand inventory keyed by ticker — sum of FIO-reported quantity
    * across every storage owned by an included user. Powers `stock` /
@@ -38,10 +44,10 @@ export type BurnRepairCorpResponse = {
    */
   perUser: Array<BurnRepairCorpPerUserRow>
   /**
-   * Members who would otherwise contribute but were excluded — either by the
-   * FIO-staleness gate or by the requesting user's manual exclusion list.
-   * Surfaced so the UI can render a "N excluded" chip with a per-member
-   * breakdown tooltip.
+   * Members who would otherwise contribute but were excluded — by the
+   * activity gate (stale or on vacation) or by the requesting user's manual
+   * exclusion list. Surfaced so the UI can render a "N excluded" chip with a
+   * per-member breakdown tooltip.
    */
   excludedMembers: Array<ExcludedMember>
 }

@@ -461,7 +461,7 @@ const props = withDefaults(
     locationOptions: LocationFilterOption[]
     categoryOptions?: { title: string; value: string }[]
     activeChips: SearchChip[]
-    activeCategory?: string | null
+    activeCategory?: string | string[]
     currentFilterData?: SavedFilterData | null
     canPin?: boolean
     /** Override which filter types appear in the left panel. Defaults to Market types. */
@@ -496,7 +496,7 @@ const props = withDefaults(
       { key: 'availability', label: 'Availability', icon: 'mdi-package-variant' },
     ],
     showSaved: true,
-    activeCategory: null,
+    activeCategory: () => [],
     userOptions: () => [],
     pricingOptions: () => [],
     orderTypeOptions: () => [],
@@ -565,7 +565,10 @@ const isActive = (filterType: string, value: string): boolean => {
     return props.activeChips.some(c => c.type === 'user' && c.value === value)
   if (filterType === 'itemType')
     return props.activeChips.some(c => c.type === 'itemType' && c.value === value)
-  if (filterType === 'category') return props.activeCategory === value
+  if (filterType === 'category') {
+    const cat = props.activeCategory
+    return Array.isArray(cat) ? cat.includes(value) : cat === value
+  }
   if (filterType === 'pricing') return props.activePricing === value
   if (filterType === 'orderType') return props.activeOrderType === value
   if (filterType === 'availability') return props.activeAvailability === value
@@ -665,7 +668,7 @@ const describeFilter = (filter: SavedMarketFilter): string => {
   if (fd.itemType) parts.push(fd.itemType === 'sell' ? 'Sell' : 'Buy')
   if (fd.commodity?.length) parts.push(`${fd.commodity.length} commodity`)
   if (fd.location?.length) parts.push(`${fd.location.length} location`)
-  if (fd.category) parts.push(fd.category)
+  if (fd.category?.length) parts.push(`${fd.category.length} category`)
   if (fd.orderType) parts.push(fd.orderType)
   return parts.join(', ') || 'All orders'
 }

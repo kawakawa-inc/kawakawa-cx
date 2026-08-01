@@ -6,6 +6,31 @@ import * as marketService from '@kawakawa/services/market'
 import * as priceCalculator from '../services/price-calculator.js'
 import * as activityService from '@kawakawa/services/activity'
 
+/**
+ * Create a chainable mock that supports subquery patterns.
+ * Handles both subquery chains (db.select().from().where().as())
+ * and main query chains (db.select().from().innerJoin().leftJoin().where()).
+ */
+function createQueryChain(finalResult: unknown) {
+  const chain: Record<string, unknown> = {
+    from: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
+    leftJoin: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    as: vi.fn().mockReturnValue({
+      userId: 'userId',
+      fioUsername: 'fioUsername',
+    }),
+    then: vi
+      .fn()
+      .mockImplementation((cb: (value: unknown) => unknown) =>
+        Promise.resolve(finalResult).then(cb)
+      ),
+  }
+  Object.defineProperty(chain, Symbol.toStringTag, { value: 'Promise' })
+  return chain
+}
+
 vi.mock('../db/index.js', () => ({
   db: {
     select: vi.fn(),
@@ -15,6 +40,7 @@ vi.mock('../db/index.js', () => ({
     userId: 'userId',
     commodityTicker: 'commodityTicker',
     locationId: 'locationId',
+    storageType: 'storageType',
     price: 'price',
     currency: 'currency',
     priceListCode: 'priceListCode',
@@ -32,10 +58,17 @@ vi.mock('../db/index.js', () => ({
     currency: 'currency',
     priceListCode: 'priceListCode',
     orderType: 'orderType',
+    isStanding: 'isStanding',
   },
   users: {
     id: 'id',
     displayName: 'displayName',
+    username: 'username',
+  },
+  userSettings: {
+    userId: 'userId',
+    settingKey: 'settingKey',
+    value: 'value',
   },
 }))
 
@@ -64,19 +97,13 @@ vi.mock('@kawakawa/services/fio', () => ({
 
 describe('MarketController', () => {
   let controller: MarketController
-  let mockSelect: any
   const mockRequest = { user: { userId: 1, username: 'testuser', roles: ['member'] } }
 
   beforeEach(() => {
     vi.clearAllMocks()
     controller = new MarketController()
 
-    mockSelect = {
-      from: vi.fn().mockReturnThis(),
-      innerJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue([]),
-    }
-    vi.mocked(db.select).mockReturnValue(mockSelect)
+    vi.mocked(db.select).mockReturnValue(createQueryChain([]) as any)
     vi.mocked(permissionService.hasPermission).mockResolvedValue(true)
     vi.mocked(activityService.activeUserCondition).mockResolvedValue(undefined as any)
   })
@@ -91,8 +118,6 @@ describe('MarketController', () => {
     })
 
     it('should return empty array when no orders exist', async () => {
-      mockSelect.where.mockResolvedValueOnce([])
-
       const result = await controller.getMarketListings(mockRequest)
 
       expect(result).toEqual([])
@@ -111,7 +136,9 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller1',
+          displayName: 'Seller1',
+          username: 'seller1',
+          fioUsernameRaw: null,
         },
         {
           id: 2,
@@ -124,11 +151,13 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller2',
+          displayName: 'Seller2',
+          username: 'seller2',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -215,7 +244,9 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller1',
+          displayName: 'Seller1',
+          username: 'seller1',
+          fioUsernameRaw: null,
         },
         {
           id: 2,
@@ -228,11 +259,13 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller2',
+          displayName: 'Seller2',
+          username: 'seller2',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -275,7 +308,9 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller1',
+          displayName: 'Seller1',
+          username: 'seller1',
+          fioUsernameRaw: null,
         },
         {
           id: 2,
@@ -288,11 +323,13 @@ describe('MarketController', () => {
           orderType: 'partner',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller2',
+          displayName: 'Seller2',
+          username: 'seller2',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -335,11 +372,13 @@ describe('MarketController', () => {
           orderType: 'partner', // partner type but own order
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'TestUser',
+          displayName: 'TestUser',
+          username: 'testuser',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -377,11 +416,13 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller1',
+          displayName: 'Seller1',
+          username: 'seller1',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -446,11 +487,13 @@ describe('MarketController', () => {
           orderType: 'internal',
           limitMode: 'none',
           limitQuantity: null,
-          sellerName: 'Seller1',
+          displayName: 'Seller1',
+          username: 'seller1',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
         new Map([
@@ -473,6 +516,182 @@ describe('MarketController', () => {
 
       expect(priceCalculator.calculateEffectivePriceBatch).not.toHaveBeenCalled()
     })
+
+    it('should coalesce FIO username over display name for seller', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          price: '100.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          limitMode: 'none',
+          limitQuantity: null,
+          displayName: 'Display Name',
+          username: 'loginname',
+          fioUsernameRaw: '"PrUnName"',
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
+        new Map([
+          [
+            1,
+            {
+              fioQuantity: 500,
+              availableQuantity: 500,
+              reservedQuantity: 0,
+              fulfilledQuantity: 0,
+              remainingQuantity: 500,
+              activeReservationCount: 0,
+              fioUploadedAt: null,
+            },
+          ],
+        ])
+      )
+
+      const result = await controller.getMarketListings(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].sellerName).toBe('PrUnName')
+    })
+
+    it('should fall back to display name when no FIO username', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          price: '100.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          limitMode: 'none',
+          limitQuantity: null,
+          displayName: 'Display Name',
+          username: 'loginname',
+          fioUsernameRaw: null,
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
+        new Map([
+          [
+            1,
+            {
+              fioQuantity: 500,
+              availableQuantity: 500,
+              reservedQuantity: 0,
+              fulfilledQuantity: 0,
+              remainingQuantity: 500,
+              activeReservationCount: 0,
+              fioUploadedAt: null,
+            },
+          ],
+        ])
+      )
+
+      const result = await controller.getMarketListings(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].sellerName).toBe('Display Name')
+    })
+
+    it('should fall back to username when no FIO username or display name', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          price: '100.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          limitMode: 'none',
+          limitQuantity: null,
+          displayName: null as unknown as string,
+          username: 'loginname',
+          fioUsernameRaw: null,
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
+        new Map([
+          [
+            1,
+            {
+              fioQuantity: 500,
+              availableQuantity: 500,
+              reservedQuantity: 0,
+              fulfilledQuantity: 0,
+              remainingQuantity: 500,
+              activeReservationCount: 0,
+              fioUploadedAt: null,
+            },
+          ],
+        ])
+      )
+
+      const result = await controller.getMarketListings(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].sellerName).toBe('loginname')
+    })
+
+    it('should ignore empty FIO username and fall back to display name', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          price: '100.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          limitMode: 'none',
+          limitQuantity: null,
+          displayName: 'Display Name',
+          username: 'loginname',
+          fioUsernameRaw: '""',
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.enrichSellOrdersWithQuantities).mockResolvedValueOnce(
+        new Map([
+          [
+            1,
+            {
+              fioQuantity: 500,
+              availableQuantity: 500,
+              reservedQuantity: 0,
+              fulfilledQuantity: 0,
+              remainingQuantity: 500,
+              activeReservationCount: 0,
+              fioUploadedAt: null,
+            },
+          ],
+        ])
+      )
+
+      const result = await controller.getMarketListings(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].sellerName).toBe('Display Name')
+    })
   })
 
   describe('getMarketBuyRequests', () => {
@@ -485,8 +704,6 @@ describe('MarketController', () => {
     })
 
     it('should return empty array when no orders exist', async () => {
-      mockSelect.where.mockResolvedValueOnce([])
-
       const result = await controller.getMarketBuyRequests(mockRequest)
 
       expect(result).toEqual([])
@@ -504,7 +721,10 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: 'KAWA',
           orderType: 'internal',
-          buyerName: 'Buyer1',
+          isStanding: false,
+          displayName: 'Buyer1',
+          username: 'buyer1',
+          fioUsernameRaw: null,
         },
         {
           id: 2,
@@ -516,11 +736,14 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: null,
           orderType: 'internal',
-          buyerName: 'Buyer2',
+          isStanding: false,
+          displayName: 'Buyer2',
+          username: 'buyer2',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 
@@ -576,11 +799,14 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: null,
           orderType: 'internal',
-          buyerName: 'Buyer1',
+          isStanding: false,
+          displayName: 'Buyer1',
+          username: 'buyer1',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(
         new Map([[1, { count: 2, quantity: 30, fulfilledQuantity: 10 }]])
@@ -606,7 +832,10 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: null,
           orderType: 'internal',
-          buyerName: 'Buyer1',
+          isStanding: false,
+          displayName: 'Buyer1',
+          username: 'buyer1',
+          fioUsernameRaw: null,
         },
         {
           id: 2,
@@ -618,11 +847,14 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: null,
           orderType: 'internal',
-          buyerName: 'Buyer2',
+          isStanding: false,
+          displayName: 'Buyer2',
+          username: 'buyer2',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 
@@ -645,17 +877,78 @@ describe('MarketController', () => {
           currency: 'CIS',
           priceListCode: null,
           orderType: 'internal',
-          buyerName: 'Buyer1',
+          isStanding: false,
+          displayName: 'Buyer1',
+          username: 'buyer1',
+          fioUsernameRaw: null,
         },
       ]
 
-      mockSelect.where.mockResolvedValueOnce(mockOrders)
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
 
       vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
 
       await controller.getMarketBuyRequests(mockRequest)
 
       expect(priceCalculator.calculateEffectivePriceBatch).not.toHaveBeenCalled()
+    })
+
+    it('should coalesce FIO username over display name for buyer', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          quantity: 100,
+          price: '50.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          isStanding: false,
+          displayName: 'Display Name',
+          username: 'loginname',
+          fioUsernameRaw: '"PrUnName"',
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
+
+      const result = await controller.getMarketBuyRequests(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].buyerName).toBe('PrUnName')
+    })
+
+    it('should fall back to display name when no FIO username for buyer', async () => {
+      const mockOrders = [
+        {
+          id: 1,
+          userId: 2,
+          commodityTicker: 'H2O',
+          locationId: 'BEN',
+          quantity: 100,
+          price: '50.00',
+          currency: 'CIS',
+          priceListCode: null,
+          orderType: 'internal',
+          isStanding: false,
+          displayName: 'Display Name',
+          username: 'loginname',
+          fioUsernameRaw: null,
+        },
+      ]
+
+      vi.mocked(db.select).mockReturnValue(createQueryChain(mockOrders) as any)
+
+      vi.mocked(marketService.getReservationStatsForBuyOrders).mockResolvedValueOnce(new Map())
+
+      const result = await controller.getMarketBuyRequests(mockRequest)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].buyerName).toBe('Display Name')
     })
   })
 })

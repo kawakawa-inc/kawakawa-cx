@@ -31,7 +31,7 @@ export class AuthenticationService {
       mediaType: 'application/json',
       errors: {
         401: `Invalid credentials`,
-        403: `Account is locked`,
+        403: `Account is inactive`,
       },
     })
   }

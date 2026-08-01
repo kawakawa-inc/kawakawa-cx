@@ -21,6 +21,7 @@ export type MarketBuyRequest = {
   pricingMode: PricingMode
   orderType: OrderType
   isOwn: boolean
+  isStanding: boolean
   jumpCount: number | null
   activeReservationCount: number
   reservedQuantity: number

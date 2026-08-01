@@ -5,12 +5,14 @@
 import type { Currency } from './Currency'
 import type { OrderType } from './OrderType'
 import type { PricingMode } from './PricingMode'
+import type { StorageType } from './StorageType'
 export type MarketListing = {
   id: number
   userId: number
   sellerName: string
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null
   price: number
   currency: Currency
   priceListCode: string | null

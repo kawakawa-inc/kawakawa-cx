@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ChangePasswordRequest } from '../models/ChangePasswordRequest'
+import type { SetInactiveUntilRequest } from '../models/SetInactiveUntilRequest'
 import type { UpdateProfileRequest } from '../models/UpdateProfileRequest'
 import type { UserProfile } from '../models/UserProfile'
 import type { CancelablePromise } from '../core/CancelablePromise'
@@ -63,6 +64,24 @@ export class AccountService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/account/password',
+      body: requestBody,
+      mediaType: 'application/json',
+    })
+  }
+  /**
+   * @returns any Ok
+   * @throws ApiError
+   */
+  public static setInactiveUntil({
+    requestBody,
+  }: {
+    requestBody: SetInactiveUntilRequest
+  }): CancelablePromise<{
+    inactiveUntil: string | null
+  }> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/account/inactive-until',
       body: requestBody,
       mediaType: 'application/json',
     })

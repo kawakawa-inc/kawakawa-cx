@@ -19,6 +19,7 @@ export type BuyOrderResponse = {
   sourceMode: BuyOrderSourceMode
   demandSource: DemandSource | null
   targetDays: number | null
+  isStanding: boolean
   activeReservationCount: number
   reservedQuantity: number
   fulfilledQuantity: number

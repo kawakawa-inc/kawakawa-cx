@@ -189,6 +189,15 @@
           history-key="market"
           placeholder="Search: COF, BEN, Buy, Sell..."
           class="flex-grow-1"
+          :extra-suggestion-types="filterSuggestionTypes"
+          :singular-types="['itemType', 'orderType', 'pricing', 'availability']"
+          :chip-icon-by-type="{
+            itemType: 'mdi-swap-horizontal',
+            orderType: 'mdi-eye-outline',
+            pricing: 'mdi-currency-usd',
+            availability: 'mdi-package-variant',
+            category: 'mdi-tag-outline',
+          }"
           @update:chips="onChipsUpdate"
         />
         <!-- Save filter icon -->
@@ -304,7 +313,7 @@
             v-if="getCommodityCategory(item.commodityTicker)"
             href="#"
             class="filter-link"
-            @click.stop.prevent="setFilter('category', getCommodityCategory(item.commodityTicker))"
+            @click.stop.prevent="setFilter('category', getCommodityCategory(item.commodityTicker)!)"
           >
             {{
               localizeMaterialCategory(
@@ -1271,7 +1280,7 @@ const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
   schema: {
     itemType: { type: 'string' },
     commodity: { type: 'array' },
-    category: { type: 'string' },
+    category: { type: 'array' },
     location: { type: 'array' },
     userName: { type: 'array' },
     orderType: { type: 'string' },
@@ -1279,6 +1288,83 @@ const { filters, hasActiveFilters, clearFilters, setFilter } = useUrlFilters({
     availability: { type: 'string' },
   },
 })
+
+// Guard to prevent circular sync when chips -> filters -> chips
+let isUpdatingFromFilters = false
+
+// Sync filters.value -> searchChips so the search bar reflects URL/panel state.
+// Guarded to avoid re-triggering when chips -> filters flows fire.
+const syncFiltersToChips = () => {
+  if (isUpdatingFromFilters || !tokenSearchRef.value) return
+  isUpdatingFromFilters = true
+  const chips: SearchChip[] = []
+
+  if (filters.value.itemType) {
+    chips.push({
+      type: 'itemType',
+      value: filters.value.itemType,
+      display: filters.value.itemType === 'buy' ? 'Buy' : 'Sell',
+    })
+  }
+  for (const ticker of filters.value.commodity) {
+    chips.push({
+      type: 'commodity',
+      value: ticker,
+      display: getCommodityDisplay(ticker),
+    })
+  }
+  for (const locId of filters.value.location) {
+    chips.push({
+      type: 'location',
+      value: locId,
+      display: getLocationDisplay(locId),
+    })
+  }
+  for (const name of filters.value.userName) {
+    chips.push({
+      type: 'user',
+      value: name,
+      display: name,
+    })
+  }
+
+  // Multi-select panel filters as chips
+  for (const cat of filters.value.category) {
+    const catName = localizeMaterialCategory(cat as CommodityCategory)
+    chips.push({ type: 'category', value: cat, display: catName })
+  }
+  if (filters.value.orderType) {
+    chips.push({
+      type: 'orderType',
+      value: filters.value.orderType,
+      display: filters.value.orderType,
+    })
+  }
+  if (filters.value.pricing) {
+    chips.push({
+      type: 'pricing',
+      value: filters.value.pricing,
+      display: filters.value.pricing === 'custom' ? 'Custom' : filters.value.pricing,
+    })
+  }
+  if (filters.value.availability) {
+    const labels: Record<string, string> = {
+      available: 'Available',
+      standing: 'Standing',
+      'one-time': 'One-time',
+    }
+    chips.push({
+      type: 'availability',
+      value: filters.value.availability,
+      display: labels[filters.value.availability] ?? filters.value.availability,
+    })
+  }
+
+  tokenSearchRef.value.setChips(chips)
+  isUpdatingFromFilters = false
+}
+
+watch(filters, syncFiltersToChips, { deep: true, immediate: true })
 // Get FIO age border class for responsive view
 const getFioBorderClass = (fioUploadedAt: string | null): string => {
   if (!fioUploadedAt) return 'fio-border-none'
@@ -1374,23 +1460,55 @@ const userFilterOptions = computed(() => {
   return Array.from(seen).sort()
 })
 
+// TokenSearchInput extra suggestion types for panel-only filters that now live as chips
+const filterSuggestionTypes = computed(() => [
+  {
+    type: 'category' as const,
+    typeLabel: 'Category',
+    color: 'teal',
+    options: categoryOptions.value.map(o => ({ value: o.value, display: o.title })),
+  },
+  {
+    type: 'orderType' as const,
+    typeLabel: 'Visibility',
+    color: 'brown',
+    options: visibilityOptions.map(o => ({ value: o.value, display: o.title })),
+  },
+  {
+    type: 'pricing' as const,
+    typeLabel: 'Pricing',
+    color: 'deep-orange',
+    options: pricingOptions.value.map(o => ({ value: o.value, display: o.title })),
+  },
+  {
+    type: 'availability' as const,
+    typeLabel: 'Availability',
+    color: 'cyan',
+    options: [
+      { value: 'available', display: 'Available' },
+      { value: 'standing', display: 'Standing' },
+      { value: 'one-time', display: 'One-time' },
+    ],
+  },
+])
+
 const onFilterMenuSelect = ({ filterType, key }: { filterType: string; key: string }) => {
-  const chipTypeMap: Record<string, SearchChip['type']> = {
-    commodity: 'commodity',
-    location: 'location',
-    user: 'user',
-    itemType: 'itemType',
-  }
-  const chipType = chipTypeMap[filterType]
-  if (chipType) {
-    if (searchChips.value.some(c => c.type === chipType && c.value === key)) {
-      tokenSearchRef.value?.removeChipByTypeValue(chipType, key)
-    } else {
-      const addKey = filterType === 'user' ? 'userName' : filterType
-      addFilterChip(addKey, key)
-    }
+  // All filter types go directly to filters.value (single source of truth)
+  if (filterType === 'itemType') {
+    filters.value.itemType = filters.value.itemType === key ? null : key
+  } else if (filterType === 'commodity') {
+    setFilter('commodity', key)
+  } else if (filterType === 'location') {
+    setFilter('location', key)
+  } else if (filterType === 'user') {
+    setFilter('userName', key)
   } else if (filterType === 'category') {
-    filters.value.category = filters.value.category === key ? null : key
+    const current = filters.value.category
+    if (current.includes(key)) {
+      filters.value.category = current.filter(c => c !== key)
+    } else {
+      filters.value.category = [...current, key]
+    }
   } else if (filterType === 'pricing') {
     filters.value.pricing = filters.value.pricing === key ? null : key
   } else if (filterType === 'orderType') {
@@ -1456,7 +1574,7 @@ const applyInvoiceToShoppingList = (invoicedQuantities: Record<string, number>) 
 
   // Remove chips for fulfilled items if they're currently in the filter
   for (const ticker of fulfilledTickers) {
-    const hasChip = searchChips.value.some(c => c.type === 'commodity' && c.value === ticker)
+    const hasChip = filters.value.commodity.includes(ticker)
     if (hasChip) {
       tokenSearchRef.value?.removeChipByTypeValue('commodity', ticker)
     }
@@ -1607,11 +1725,11 @@ const onFilterByList = (enabled: boolean) => {
     )
     for (const ticker of Object.keys(materials)) {
       if (fulfilledTickers.has(ticker)) continue
-      if (!searchChips.value.some(c => c.type === 'commodity' && c.value === ticker)) {
+      if (!filters.value.commodity.includes(ticker)) {
         addFilterChip('commodity', ticker)
       }
     }
-    if (!searchChips.value.some(c => c.type === 'itemType')) {
+    if (!filters.value.itemType) {
       addFilterChip('itemType', 'sell')
     }
   } else {
@@ -1624,8 +1742,8 @@ const onFilterByList = (enabled: boolean) => {
 
 // When an item is added/restored to the list while the filter is active, add its chip too
 const onShoppingListAdd = (ticker: string) => {
-  const filterActive = searchChips.value.some(c => c.type === 'commodity')
-  if (filterActive && !searchChips.value.some(c => c.type === 'commodity' && c.value === ticker)) {
+  const filterActive = filters.value.commodity.length > 0
+  if (filterActive && !filters.value.commodity.includes(ticker)) {
     addFilterChip('commodity', ticker)
   }
 }
@@ -1826,17 +1944,13 @@ watch(
 
       if (item.status === 'fulfilled') {
         // Remove chip for newly fulfilled items
-        const hasChip = searchChips.value.some(
-          c => c.type === 'commodity' && c.value === item.ticker
-        )
+        const hasChip = filters.value.commodity.includes(item.ticker)
         if (hasChip) {
           tokenSearchRef.value?.removeChipByTypeValue('commodity', item.ticker)
         }
       } else if (wasStatus === 'fulfilled') {
         // Add chip back for items that are no longer fulfilled
-        const hasChip = searchChips.value.some(
-          c => c.type === 'commodity' && c.value === item.ticker
-        )
+        const hasChip = filters.value.commodity.includes(item.ticker)
         if (!hasChip) {
           addFilterChip('commodity', item.ticker)
         }
@@ -1870,9 +1984,12 @@ const onShoppingListClear = () => {
 // Whether the TokenSearchInput has any chips
 const hasSearchChips = computed(() => searchChips.value.length > 0)
 
-// Handle chip updates from TokenSearchInput
+// Handle chip updates from TokenSearchInput (user typing/removing chips)
 const onChipsUpdate = (chips: SearchChip[]) => {
   searchChips.value = chips
+
+  // When chips were set programmatically from syncFiltersToChips, skip the reverse sync
+  if (isUpdatingFromFilters) return
 
   // Extract filter values from chips for URL sync
   const commodities: string[] = []
@@ -1904,6 +2021,24 @@ const onChipsUpdate = (chips: SearchChip[]) => {
           itemType = 'sell'
         }
         break
+      case 'category': {
+        const current = filters.value.category
+        if (current.includes(chip.value)) {
+          filters.value.category = current.filter(c => c !== chip.value)
+        } else {
+          filters.value.category = [...current, chip.value]
+        }
+        break
+      }
+      case 'orderType':
+        filters.value.orderType = chip.value
+        break
+      case 'pricing':
+        filters.value.pricing = chip.value
+        break
+      case 'availability':
+        filters.value.availability = chip.value
+        break
     }
   }
 
@@ -1912,6 +2047,11 @@ const onChipsUpdate = (chips: SearchChip[]) => {
   filters.value.location = locations
   filters.value.itemType = itemType
   filters.value.userName = userNames
+
+  // Reset singular chip types not present in the remaining chips
+  if (!chips.some(c => c.type === 'orderType')) filters.value.orderType = null
+  if (!chips.some(c => c.type === 'pricing')) filters.value.pricing = null
+  if (!chips.some(c => c.type === 'availability')) filters.value.availability = null
 
   // Clear saved filter ref if user is modifying chips manually
   onFilterModified()
@@ -1933,6 +2073,11 @@ const onChipsUpdate = (chips: SearchChip[]) => {
 // Clear shopping list state when filters are cleared
 const clearFiltersWithList = () => {
   clearFilters()
+  const query = { ...route.query }
+  if (query.filter) {
+    delete query.filter
+    router.replace({ query })
+  }
   tokenSearchRef.value?.clear()
   listQuantities.value = null
   listName.value = undefined
@@ -1958,20 +2103,19 @@ const pricingOptions = computed(() => {
 
 // hasActiveFilters, clearFilters, and setFilter are provided by useUrlFilters
 
-// Route chip-based filter clicks through the chip system instead of filters.value
+// Add a filter value directly to filters.value (handles both chip and panel filter types).
+// Search bar display is synced automatically via syncFiltersToChips watcher.
 const addFilterChip = (key: string, value: string) => {
-  if (key === 'location') {
-    tokenSearchRef.value?.addChip({ type: 'location', value, display: getLocationDisplay(value) })
-  } else if (key === 'commodity') {
-    tokenSearchRef.value?.addChip({ type: 'commodity', value, display: getCommodityDisplay(value) })
+  if (key === 'commodity') {
+    setFilter('commodity', value)
+  } else if (key === 'location') {
+    setFilter('location', value)
   } else if (key === 'itemType') {
-    tokenSearchRef.value?.addChip({
-      type: 'itemType',
-      value,
-      display: value === 'sell' ? 'Sell' : 'Buy',
-    })
+    filters.value.itemType = filters.value.itemType === value ? null : (value as 'sell' | 'buy')
   } else if (key === 'userName') {
-    tokenSearchRef.value?.addChip({ type: 'user', value, display: value })
+    setFilter('userName', value)
+  } else if (key === 'availability') {
+    filters.value.availability = filters.value.availability === value ? null : value
   } else {
     setFilter(key as 'category' | 'pricing' | 'orderType', value)
   }
@@ -1980,45 +2124,48 @@ const addFilterChip = (key: string, value: string) => {
 const filteredItems = computed(() => {
   let result = marketItems.value
 
-  // Chip-based filters (commodity, location, itemType, user — chips are source of truth)
-  const chipItemType = searchChips.value.find(c => c.type === 'itemType')?.value
-  if (chipItemType) {
-    result = result.filter(l => l.itemType === chipItemType)
-  }
-  const chipCommodities = searchChips.value.filter(c => c.type === 'commodity').map(c => c.value)
-  if (chipCommodities.length > 0) {
-    result = result.filter(l => chipCommodities.includes(l.commodityTicker))
-  }
-  const chipLocations = searchChips.value.filter(c => c.type === 'location').map(c => c.value)
-  if (chipLocations.length > 0) {
-    result = result.filter(l => chipLocations.includes(l.locationId))
-  }
-  const chipUsers = searchChips.value.filter(c => c.type === 'user').map(c => c.value)
-  if (chipUsers.length > 0) {
-    result = result.filter(l => chipUsers.includes(l.userName))
-  }
+  // All filters read from filters.value (single source of truth, synced with URL)
+  const {
+    itemType,
+    commodity,
+    location,
+    userName,
+    category,
+    orderType,
+    pricing,
+    availability: availFilter,
+  } = filters.value
 
-  // Panel-only filters (category, orderType, pricing — no chip types for these)
-  if (filters.value.category) {
-    result = result.filter(l => getCommodityCategory(l.commodityTicker) === filters.value.category)
+  if (itemType) {
+    result = result.filter(l => l.itemType === itemType)
   }
-  if (filters.value.orderType) {
-    result = result.filter(l => l.orderType === filters.value.orderType)
+  if (commodity.length > 0) {
+    result = result.filter(l => commodity.includes(l.commodityTicker))
   }
-  if (filters.value.pricing) {
-    if (filters.value.pricing === 'custom') {
+  if (location.length > 0) {
+    result = result.filter(l => location.includes(l.locationId))
+  }
+  if (userName.length > 0) {
+    result = result.filter(l => userName.includes(l.userName))
+  }
+  if (category.length > 0) {
+    result = result.filter(l => category.includes(getCommodityCategory(l.commodityTicker) ?? ''))
+  }
+  if (orderType) {
+    result = result.filter(l => l.orderType === orderType)
+  }
+  if (pricing) {
+    if (pricing === 'custom') {
       result = result.filter(l => l.pricingMode === 'fixed')
     } else {
-      result = result.filter(l => l.priceListCode === filters.value.pricing)
+      result = result.filter(l => l.priceListCode === pricing)
     }
   }
-
-  // Availability filter
-  if (filters.value.availability === 'available') {
+  if (availFilter === 'available') {
     result = result.filter(l => l.isStanding || l.remainingQuantity > 0)
-  } else if (filters.value.availability === 'standing') {
+  } else if (availFilter === 'standing') {
     result = result.filter(l => l.isStanding)
-  } else if (filters.value.availability === 'one-time') {
+  } else if (availFilter === 'one-time') {
     result = result.filter(l => !l.isStanding && l.remainingQuantity > 0)
   }
 
@@ -2027,7 +2174,7 @@ const filteredItems = computed(() => {
 
 // Compute which filtered commodities have no matching orders
 const notFoundCommodities = computed(() => {
-  const chipCommodities = searchChips.value.filter(c => c.type === 'commodity').map(c => c.value)
+  const chipCommodities = filters.value.commodity
   if (chipCommodities.length === 0) return []
 
   // Get all commodity tickers that appear in the filtered results
@@ -2360,8 +2507,8 @@ const removeSavedFilterChips = (filterData: SavedMarketFilter['filterData']) => 
   }
 
   // Clear panel-only filters that the saved filter set
-  if (filterData.category && filters.value.category === filterData.category) {
-    filters.value.category = null
+  if (filterData.category) {
+    filters.value.category = filters.value.category.filter(c => !filterData.category!.includes(c))
   }
   if (filterData.orderType && filters.value.orderType === filterData.orderType) {
     filters.value.orderType = null
@@ -2424,7 +2571,9 @@ const applyFilterData = (filterData: SavedMarketFilter['filterData']) => {
     })
   }
   // Apply panel-only fields
-  if (filterData.category) filters.value.category = filterData.category
+  if (filterData.category) {
+    filters.value.category = filterData.category
+  }
   if (filterData.orderType) filters.value.orderType = filterData.orderType
   if (filterData.pricing) filters.value.pricing = filterData.pricing
   if (filterData.availability) filters.value.availability = filterData.availability
@@ -2456,12 +2605,11 @@ const loadSavedFilterFromUrl = async (id: number) => {
 
 const getCurrentFilterData = (): SavedMarketFilter['filterData'] => {
   return {
-    itemType:
-      (searchChips.value.find(c => c.type === 'itemType')?.value as 'sell' | 'buy') || undefined,
-    commodity: searchChips.value.filter(c => c.type === 'commodity').map(c => c.value),
-    location: searchChips.value.filter(c => c.type === 'location').map(c => c.value),
-    userName: searchChips.value.filter(c => c.type === 'user').map(c => c.value),
-    category: filters.value.category ?? undefined,
+    itemType: (filters.value.itemType as 'sell' | 'buy') ?? undefined,
+    commodity: filters.value.commodity.length > 0 ? [...filters.value.commodity] : undefined,
+    location: filters.value.location.length > 0 ? [...filters.value.location] : undefined,
+    userName: filters.value.userName.length > 0 ? [...filters.value.userName] : undefined,
+    category: filters.value.category.length > 0 ? [...filters.value.category] : undefined,
     orderType: filters.value.orderType ?? undefined,
     pricing: filters.value.pricing ?? undefined,
     availability: (filters.value.availability as SavedFilterData['availability']) ?? undefined,

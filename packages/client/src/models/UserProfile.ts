@@ -9,4 +9,5 @@ export type UserProfile = {
   email: string | null
   roles: Array<Role>
   permissions: Array<string>
+  inactiveUntil: string | null
 }

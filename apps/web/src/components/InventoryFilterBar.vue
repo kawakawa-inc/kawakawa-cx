@@ -9,7 +9,7 @@
         :location-type-options="locationTypeOptions"
         :storage-type-options="storageTypeOptions"
         :active-chips="searchChips"
-        :active-category="activeCategory"
+        :active-category="activeCategory ?? undefined"
         :active-location-type="activeLocationType"
         :active-storage-type="activeStorageType"
         :show-saved="false"
@@ -57,7 +57,7 @@ const props = defineProps<{
   locationTypeOptions: string[]
   storageTypeOptions: string[]
   searchChips: SearchChip[]
-  activeCategory: string | null
+  activeCategory: string | string[] | null
   activeLocationType: string | null
   activeStorageType: string | null
   hasActiveFilters: boolean

@@ -196,6 +196,9 @@ export type SearchChipType =
   | 'storage'
   | 'priceList'
   | 'packageType'
+  | 'orderType'
+  | 'pricing'
+  | 'availability'
 
 export interface SearchChip {
   type: SearchChipType
@@ -253,6 +256,12 @@ const chipColor = (type: SearchChip['type'], value?: string): string => {
       return 'teal'
     case 'storage':
       return 'orange'
+    case 'orderType':
+      return 'brown'
+    case 'pricing':
+      return 'deep-orange'
+    case 'availability':
+      return 'cyan'
     default:
       // Check extra suggestion types for color
       return props.extraSuggestionTypes?.find(e => e.type === type)?.color ?? 'grey'
@@ -1265,7 +1274,7 @@ defineExpose({
   clear: clearAll,
   focus: focusInput,
   setChips: (newChips: SearchChip[]) => {
-    chips.value = newChips
+    chips.value = newChips.map(c => ({ ...c, color: c.color ?? chipColor(c.type, c.value) }))
     emitChanges()
   },
   addChip: (chip: SearchChip) => {

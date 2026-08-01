@@ -8,10 +8,12 @@ import type { DemandSource } from './DemandSource'
 import type { OrderType } from './OrderType'
 import type { PricingMode } from './PricingMode'
 import type { SellOrderLimitMode } from './SellOrderLimitMode'
+import type { StorageType } from './StorageType'
 export type SellOrderResponse = {
   id: number
   commodityTicker: string
   locationId: string
+  storageType: StorageType | null
   price: number
   currency: Currency
   priceListCode: string | null

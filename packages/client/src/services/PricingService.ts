@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateImportConfigRequest } from '../models/CreateImportConfigRequest'
+import type { CreatePackageRequest } from '../models/CreatePackageRequest'
+import type { CreatePickupLocationRequest } from '../models/CreatePickupLocationRequest'
 import type { CreatePriceAdjustmentRequest } from '../models/CreatePriceAdjustmentRequest'
 import type { CreatePriceListRequest } from '../models/CreatePriceListRequest'
 import type { CreatePriceRequest } from '../models/CreatePriceRequest'
@@ -16,6 +18,10 @@ import type { FioExchangeResponse } from '../models/FioExchangeResponse'
 import type { FioPriceField } from '../models/FioPriceField'
 import type { GoogleSheetsImportRequest } from '../models/GoogleSheetsImportRequest'
 import type { ImportConfigResponse } from '../models/ImportConfigResponse'
+import type { PackagePriceBreakdown } from '../models/PackagePriceBreakdown'
+import type { PackageResponse } from '../models/PackageResponse'
+import type { PackageType } from '../models/PackageType'
+import type { PickupLocationResponse } from '../models/PickupLocationResponse'
 import type { PivotImportRequest } from '../models/PivotImportRequest'
 import type { PivotImportResult } from '../models/PivotImportResult'
 import type { PriceAdjustmentResponse } from '../models/PriceAdjustmentResponse'
@@ -25,6 +31,8 @@ import type { PriceListResponse } from '../models/PriceListResponse'
 import type { SyncPricesRequest } from '../models/SyncPricesRequest'
 import type { SyncPricesResponse } from '../models/SyncPricesResponse'
 import type { UpdateImportConfigRequest } from '../models/UpdateImportConfigRequest'
+import type { UpdatePackageRequest } from '../models/UpdatePackageRequest'
+import type { UpdatePickupLocationRequest } from '../models/UpdatePickupLocationRequest'
 import type { UpdatePriceAdjustmentRequest } from '../models/UpdatePriceAdjustmentRequest'
 import type { UpdatePriceListRequest } from '../models/UpdatePriceListRequest'
 import type { UpdatePriceRequest } from '../models/UpdatePriceRequest'
@@ -1003,6 +1011,251 @@ export class PricingService {
       url: '/price-adjustments/{id}',
       path: {
         id: id,
+      },
+    })
+  }
+  /**
+   * List every location with a configured pickup fee.
+   * @returns PickupLocationResponse Ok
+   * @throws ApiError
+   */
+  public static listPickupLocations(): CancelablePromise<Array<PickupLocationResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/pickup-locations',
+    })
+  }
+  /**
+   * Set (or replace) the pickup fee for a location.
+   * @returns PickupLocationResponse Ok
+   * @throws ApiError
+   */
+  public static createPickupLocation({
+    requestBody,
+  }: {
+    requestBody: CreatePickupLocationRequest
+  }): CancelablePromise<PickupLocationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/pickup-locations',
+      body: requestBody,
+      mediaType: 'application/json',
+    })
+  }
+  /**
+   * Update an existing location's pickup fee.
+   * @returns PickupLocationResponse Ok
+   * @throws ApiError
+   */
+  public static updatePickupLocation({
+    locationId,
+    requestBody,
+  }: {
+    locationId: string
+    requestBody: UpdatePickupLocationRequest
+  }): CancelablePromise<PickupLocationResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/pickup-locations/{locationId}',
+      path: {
+        locationId: locationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    })
+  }
+  /**
+   * Remove a location's pickup fee (packages using it fall back to free/unset).
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePickupLocation({
+    locationId,
+  }: {
+    locationId: string
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/pickup-locations/{locationId}',
+      path: {
+        locationId: locationId,
+      },
+    })
+  }
+  /**
+   * List packages (bills of materials sold as a bundle, e.g. ships).
+   * @returns PackageResponse Ok
+   * @throws ApiError
+   */
+  public static listPackages({
+    type,
+    activeOnly,
+  }: {
+    /**
+     * Filter by package type ('ship' or 'building')
+     */
+    type?: PackageType
+    /**
+     * Only return active packages (default: true when omitted, pass false to include inactive)
+     */
+    activeOnly?: boolean
+  }): CancelablePromise<Array<PackageResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/packages',
+      query: {
+        type: type,
+        activeOnly: activeOnly,
+      },
+    })
+  }
+  /**
+   * Create a new package with its material lines.
+   * @returns PackageResponse Created
+   * @throws ApiError
+   */
+  public static createPackage({
+    requestBody,
+  }: {
+    requestBody: CreatePackageRequest
+  }): CancelablePromise<PackageResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/packages',
+      body: requestBody,
+      mediaType: 'application/json',
+    })
+  }
+  /**
+   * Compute price breakdowns for every active package against a price list,
+   * comparing the summed material cost to each package's listed sale price.
+   * @returns PackagePriceBreakdown Ok
+   * @throws ApiError
+   */
+  public static getAllPackagePrices({
+    priceListCode,
+    locationId,
+    version,
+    type,
+  }: {
+    /**
+     * The price list to price materials against
+     */
+    priceListCode: string
+    /**
+     * Location to price at (defaults to the version's default location)
+     */
+    locationId?: string
+    /**
+     * Price list version (defaults to the price list's current version)
+     */
+    version?: number
+    /**
+     * Filter by package type
+     */
+    type?: PackageType
+  }): CancelablePromise<Array<PackagePriceBreakdown>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/packages/price',
+      query: {
+        priceListCode: priceListCode,
+        locationId: locationId,
+        version: version,
+        type: type,
+      },
+    })
+  }
+  /**
+   * Get a single package with its material lines.
+   * @returns PackageResponse Ok
+   * @throws ApiError
+   */
+  public static getPackage({ id }: { id: number }): CancelablePromise<PackageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/packages/{id}',
+      path: {
+        id: id,
+      },
+    })
+  }
+  /**
+   * Update a package. When `inputs` is supplied, it fully replaces the
+   * existing material lines.
+   * @returns PackageResponse Ok
+   * @throws ApiError
+   */
+  public static updatePackage({
+    id,
+    requestBody,
+  }: {
+    id: number
+    requestBody: UpdatePackageRequest
+  }): CancelablePromise<PackageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/packages/{id}',
+      path: {
+        id: id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    })
+  }
+  /**
+   * Delete a package (and its material lines, via cascade).
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePackage({ id }: { id: number }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/packages/{id}',
+      path: {
+        id: id,
+      },
+    })
+  }
+  /**
+   * Compute the price breakdown for a single package against a price list,
+   * comparing the summed material cost to its listed sale price.
+   * @returns PackagePriceBreakdown Ok
+   * @throws ApiError
+   */
+  public static getPackagePrice({
+    id,
+    priceListCode,
+    locationId,
+    version,
+  }: {
+    /**
+     * The package ID
+     */
+    id: number
+    /**
+     * The price list to price materials against
+     */
+    priceListCode: string
+    /**
+     * Location to price at (defaults to the version's default location)
+     */
+    locationId?: string
+    /**
+     * Price list version (defaults to the price list's current version)
+     */
+    version?: number
+  }): CancelablePromise<PackagePriceBreakdown> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/packages/{id}/price',
+      path: {
+        id: id,
+      },
+      query: {
+        priceListCode: priceListCode,
+        locationId: locationId,
+        version: version,
       },
     })
   }

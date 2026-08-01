@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export type UpdateUserRequest = {
-  isLocked?: boolean
-  roles?: Array<string>
-  inactiveUntil?: string | null
+export enum SalesOrderStatus {
+  OPEN = 'open',
+  CLAIMED = 'claimed',
+  FULFILLED = 'fulfilled',
+  CANCELLED = 'cancelled',
 }

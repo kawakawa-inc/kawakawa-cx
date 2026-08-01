@@ -15,4 +15,10 @@ export type AdminUser = {
   fioSync: FioSyncInfo
   discord: DiscordInfo
   createdAt: string
+  lastActiveAt: string | null
+  inactiveUntil: string | null
+  activity: {
+    reason?: string
+    active: boolean
+  }
 }

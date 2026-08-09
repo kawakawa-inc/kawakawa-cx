@@ -6,12 +6,18 @@ import * as requestContext from '../utils/requestContext.js'
 import { clearTokenRefreshCache } from '../utils/tokenRefreshCache.js'
 import type { Request } from 'express'
 
-vi.mock('../utils/jwt.js', () => ({
-  verifyToken: vi.fn(),
-  generateToken: vi.fn(),
-  // Not mocked: exercise the real staleness check against injected exp values.
-  shouldRefreshToken: vi.fn(),
-}))
+vi.mock('../utils/jwt.js', async importOriginal => {
+  // Keep the real TokenVerificationError so `instanceof` checks in the
+  // middleware behave as they do in production.
+  const actual = await importOriginal<typeof import('../utils/jwt.js')>()
+  return {
+    ...actual,
+    verifyToken: vi.fn(),
+    generateToken: vi.fn(),
+    // Not mocked: exercise the real staleness check against injected exp values.
+    shouldRefreshToken: vi.fn(),
+  }
+})
 
 vi.mock('../utils/roleCache.js', () => ({
   getCachedRoles: vi.fn(),
@@ -20,6 +26,13 @@ vi.mock('../utils/roleCache.js', () => ({
 
 vi.mock('../utils/requestContext.js', () => ({
   setContextValue: vi.fn(),
+}))
+
+// Capture the diagnostic logging emitted on auth failures.
+// `vi.hoisted` is required because vi.mock factories are hoisted above consts.
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }))
+vi.mock('../utils/logger.js', () => ({
+  createLogger: () => ({ warn: mockWarn, info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }))
 
 // Track which table is being queried so we can return appropriate mock data
@@ -368,6 +381,51 @@ describe('expressAuthentication', () => {
         .map(([, value]) => value)
 
       expect(new Set(issued).size).toBe(2)
+    })
+
+    it('logs why a token was rejected, distinguishing the failure mode', async () => {
+      // Every 401 previously logged the same opaque string, which made the
+      // production login-loop impossible to diagnose from logs alone.
+      const { TokenVerificationError } = await import('../utils/jwt.js')
+      vi.mocked(jwtUtils.verifyToken).mockImplementation(() => {
+        throw new TokenVerificationError('expired', {
+          userId: 45,
+          version: 1,
+          expiredAgoSeconds: 3600,
+        })
+      })
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'Invalid or expired token'
+      )
+
+      expect(mockWarn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authFailure: 'expired',
+          claims: expect.objectContaining({ userId: 45, expiredAgoSeconds: 3600 }),
+        }),
+        'JWT rejected'
+      )
+    })
+
+    it('logs a tokenVersion mismatch with both versions', async () => {
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
+      mockUsersResult = [{ tokenVersion: 5, isLocked: false }]
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'Token has been invalidated'
+      )
+
+      expect(mockWarn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authFailure: 'version-mismatch',
+          presentedVersion: 0,
+          currentVersion: 5,
+        }),
+        'JWT rejected'
+      )
     })
   })
 

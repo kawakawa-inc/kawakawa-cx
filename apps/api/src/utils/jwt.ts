@@ -60,10 +60,88 @@ export const shouldRefreshToken = (
   return payload.exp - nowSeconds < REFRESH_BEFORE_EXPIRY_SECONDS
 }
 
+/**
+ * Why a token failed verification.
+ *
+ * `verifyToken` deliberately collapses every failure into one opaque message so
+ * callers can't leak specifics to clients. That also made production 401s
+ * undiagnosable — every one logged "Invalid or expired token" whether the token
+ * was expired, forged, or malformed. This type carries the distinction to the
+ * logs without widening what the client sees.
+ */
+export type TokenFailureReason = 'expired' | 'bad-signature' | 'malformed' | 'not-active-yet'
+
+/** Error thrown by `verifyToken`, annotated with diagnostics for logging only. */
+export class TokenVerificationError extends Error {
+  constructor(
+    readonly reason: TokenFailureReason,
+    /** Claims decoded WITHOUT verifying the signature — untrusted, logs only. */
+    readonly unverifiedClaims: UnverifiedClaims | null
+  ) {
+    super('Invalid or expired token')
+    this.name = 'TokenVerificationError'
+  }
+}
+
+/**
+ * Claims read from an unverified token. Never use these for authorisation —
+ * the signature has not been checked. Diagnostics only.
+ */
+export interface UnverifiedClaims {
+  userId?: number
+  /**
+   * Named `version` rather than `tokenVersion`: the shared log redactor scrubs
+   * any key containing "token", which would blank this out.
+   */
+  version?: number
+  issuedAt?: number
+  expiresAt?: number
+  /** Seconds since the token expired; negative means still in date. */
+  expiredAgoSeconds?: number
+  /** Total lifetime the token was minted with, in seconds. */
+  lifetimeSeconds?: number
+}
+
+/**
+ * Decode a token without verifying it, for logging. Returns null if the token
+ * isn't even parseable.
+ */
+function decodeUnverified(token: string, nowSeconds: number): UnverifiedClaims | null {
+  try {
+    const decoded = jwt.decode(token)
+    if (!decoded || typeof decoded !== 'object') return null
+    const claims = decoded as JwtPayload
+    return {
+      userId: claims.userId,
+      version: claims.tokenVersion,
+      issuedAt: claims.iat,
+      expiresAt: claims.exp,
+      ...(typeof claims.exp === 'number' ? { expiredAgoSeconds: nowSeconds - claims.exp } : {}),
+      ...(typeof claims.exp === 'number' && typeof claims.iat === 'number'
+        ? { lifetimeSeconds: claims.exp - claims.iat }
+        : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+function classify(error: unknown): TokenFailureReason {
+  if (error instanceof jwt.TokenExpiredError) return 'expired'
+  if (error instanceof jwt.NotBeforeError) return 'not-active-yet'
+  if (error instanceof jwt.JsonWebTokenError) {
+    // jsonwebtoken uses JsonWebTokenError for both signature and structural
+    // problems; the message is the only way to tell them apart.
+    return error.message === 'invalid signature' ? 'bad-signature' : 'malformed'
+  }
+  return 'malformed'
+}
+
 export const verifyToken = (token: string): JwtPayload => {
   try {
     return jwt.verify(token, JWT_SECRET) as JwtPayload
-  } catch {
-    throw new Error('Invalid or expired token')
+  } catch (error) {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    throw new TokenVerificationError(classify(error), decodeUnverified(token, nowSeconds))
   }
 }

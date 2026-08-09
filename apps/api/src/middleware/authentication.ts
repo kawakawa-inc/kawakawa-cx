@@ -1,11 +1,20 @@
 import { Request } from 'express'
 import { eq, and, inArray } from 'drizzle-orm'
-import { verifyToken, generateToken, shouldRefreshToken, type JwtPayload } from '../utils/jwt.js'
+import {
+  verifyToken,
+  generateToken,
+  shouldRefreshToken,
+  TokenVerificationError,
+  type JwtPayload,
+} from '../utils/jwt.js'
 import { getCachedRoles, setCachedRoles } from '../utils/roleCache.js'
 import { getRefreshedToken, setRefreshedToken } from '../utils/tokenRefreshCache.js'
 import { db, users, userRoles, rolePermissions } from '../db/index.js'
 import { setContextValue } from '../utils/requestContext.js'
 import { Unauthorized, Forbidden } from '../utils/errors.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger({ service: 'auth' })
 
 /**
  * Check if two role arrays have the same elements (order independent)
@@ -115,7 +124,23 @@ export async function expressAuthentication(
     let decoded: JwtPayload
     try {
       decoded = verifyToken(token)
-    } catch {
+    } catch (error) {
+      // Log *why* the token failed. The client still gets the same opaque
+      // message; without this every 401 was indistinguishable in the logs,
+      // which made production auth failures impossible to diagnose.
+      if (error instanceof TokenVerificationError) {
+        log.warn(
+          {
+            authFailure: error.reason,
+            claims: error.unverifiedClaims,
+            path: request.originalUrl,
+            method: request.method,
+          },
+          'JWT rejected'
+        )
+      } else {
+        log.warn({ authFailure: 'unknown', err: error }, 'JWT rejected')
+      }
       return Promise.reject(Unauthorized('Invalid or expired token'))
     }
 
@@ -123,6 +148,17 @@ export async function expressAuthentication(
     const authInfo = await getUserAuthInfo(decoded.userId)
 
     if (!authInfo || authInfo.tokenVersion !== (decoded.tokenVersion ?? 0)) {
+      log.warn(
+        {
+          authFailure: authInfo ? 'version-mismatch' : 'user-not-found',
+          userId: decoded.userId,
+          presentedVersion: decoded.tokenVersion ?? 0,
+          currentVersion: authInfo?.tokenVersion,
+          path: request.originalUrl,
+          method: request.method,
+        },
+        'JWT rejected'
+      )
       return Promise.reject(Unauthorized('Token has been invalidated. Please log in again.'))
     }
 
@@ -136,6 +172,15 @@ export async function expressAuthentication(
     // the proper "account locked" message. A 403 here would leave the user
     // sitting on a broken page with a dead token.
     if (authInfo.isLocked) {
+      log.warn(
+        {
+          authFailure: 'account-locked',
+          userId: decoded.userId,
+          path: request.originalUrl,
+          method: request.method,
+        },
+        'JWT rejected'
+      )
       return Promise.reject(Unauthorized('Account is locked. Please contact an administrator.'))
     }
 

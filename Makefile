@@ -1,6 +1,6 @@
 # Kawakawa CX - Development Commands
 
-.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web kill-sync-worker dev-bot dev-sync-worker bot-deploy start stop restart reload status logs search-logs
+.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web kill-sync-worker dev-bot dev-sync-worker bot-deploy start stop restart reload status logs search-logs logging-setup logging-status logging-recreate
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -166,6 +166,15 @@ status: ## Show status of dev services
 
 logs: ## Tail dev service logs (usage: make logs S=bot)
 	@tail -f .dev/logs/$(or $(S),*)*.log
+
+logging-setup: ## Provision OpenSearch logging (ingest pipeline, index template, field limit) - idempotent
+	pnpm --filter @kawakawa/api opensearch:setup
+
+logging-status: ## Show OpenSearch logging status (mapped fields vs limit, template, pipeline)
+	pnpm --filter @kawakawa/api opensearch:setup status
+
+logging-recreate: ## DESTRUCTIVE: drop and rebuild the log index from the template (deletes all logs)
+	CONFIRM=yes pnpm --filter @kawakawa/api opensearch:setup recreate
 
 search-logs: ## Search OpenSearch deploy logs (usage: make search-logs ENV=prod, add ERRORS=1, SEARCH="jwt", HOURS=2, COMPONENT=kawa-api)
 	pnpm --filter @kawakawa/api logs $(or $(ENV),dev) \

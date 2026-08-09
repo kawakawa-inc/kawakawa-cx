@@ -1,7 +1,10 @@
 # OpenSearch Logging
 
-Production logs are shipped by DigitalOcean's log forwarder into a single
-OpenSearch index, `logs-kawakawa-cx`.
+Production logs are shipped by DigitalOcean's log forwarder to
+`logs-kawakawa-cx`, which is a **write alias** over dated backing indices
+(`logs-kawakawa-cx-000001`, `-000002`, ...). The forwarder is unaware of this —
+writes to an alias with a designated write index land in the current backing
+index automatically.
 
 ## Quick reference
 
@@ -61,9 +64,20 @@ the forwarder recreates it with default settings: no `parse-log-json` pipeline
 1000-field cap. Running `make logging-setup` first, or using
 `make logging-recreate`, avoids that.
 
-Retention is handled separately by the `delete-after-30-days` ISM policy
-(`pnpm --filter @kawakawa/api opensearch:lifecycle`). `logging-recreate`
-re-attaches it, since a freshly created index is otherwise unmanaged.
+## Rollover and retention
+
+The `logs-rollover-30d` ISM policy rolls the alias onto a new backing index
+**daily or at 10 GB**, whichever comes first, and deletes indices **30 days**
+after creation. It auto-attaches to new backing indices via `ism_template`
+(priority 200, which must stay above the older `delete-after-30-days` policy at
+priority 100 or that one wins and no rollover happens).
+
+Rollover is the durable fix for the field-limit failure: every new backing index
+starts with a fresh mapping, so field count cannot creep to the ceiling and
+start silently rejecting log lines. Between that and logging bodies as strings,
+the mapping now sits at ~21 fields on a new index instead of 1000.
+
+Searching `logs-kawakawa-cx` transparently spans all backing indices.
 
 ## Watching for recurrence
 
@@ -71,8 +85,9 @@ re-attaches it, since a freshly created index is otherwise unmanaged.
 again, something is logging structured objects with unbounded keys — find it
 before it hits the cap, because past the cap the symptom is silent data loss.
 
-The long-term fix is a rollover policy (e.g. daily, or at 50 GB) with a write
-alias so the mapping resets periodically. Not yet configured.
+If `make logging-status` reports that `logs-kawakawa-cx` is a **concrete index**
+rather than an alias, rollover is not running — rebuild with
+`make logging-recreate`.
 
 ## Useful queries
 

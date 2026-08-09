@@ -296,6 +296,30 @@ describe('expressAuthentication', () => {
       expect(requestContext.setContextValue).not.toHaveBeenCalled()
       expect(jwtUtils.generateToken).not.toHaveBeenCalled()
     })
+
+    it('surfaces a database error instead of masking it as a 401', async () => {
+      // A blanket 401 here would log every active user out during a transient
+      // DB blip, because the client tears the session down on 401.
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockImplementation(() => {
+        throw new Error('connection terminated unexpectedly')
+      })
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'connection terminated unexpectedly'
+      )
+    })
+
+    it('still rejects a malformed token as 401', async () => {
+      vi.mocked(jwtUtils.verifyToken).mockImplementation(() => {
+        throw new Error('Invalid or expired token')
+      })
+
+      await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
+        'Invalid or expired token'
+      )
+    })
   })
 
   describe('unknown security type', () => {

@@ -4,7 +4,7 @@ import pinoHttp from 'pino-http'
 import type { Options as PinoHttpOptions } from 'pino-http'
 import { RegisterRoutes } from './generated/routes.js'
 import swaggerDocument from './generated/swagger.json' with { type: 'json' }
-import { requestContext, getContextValue } from './utils/requestContext.js'
+import { requestContextMiddleware, type ResponseWithBody } from './middleware/requestContext.js'
 import logger, { redactObject } from './utils/logger.js'
 
 const app = express()
@@ -12,9 +12,6 @@ const app = express()
 // Extended request/response types for body capture
 interface RequestWithBody extends Request {
   _reqBody?: unknown
-}
-interface ResponseWithBody extends Response {
-  _resBody?: unknown
 }
 
 // Parse body BEFORE logging so we can capture it
@@ -63,24 +60,9 @@ const httpLoggerOptions: PinoHttpOptions = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 app.use((pinoHttp as any)(httpLoggerOptions))
 
-// Wrap all requests in AsyncLocalStorage context + capture response body for logging
-app.use((_req: Request, res: Response, next: NextFunction) => {
-  requestContext.run(new Map(), () => {
-    // Intercept json() to capture body for logging and add refreshed token header
-    const originalJson = res.json.bind(res)
-    res.json = (body: unknown) => {
-      // Store body for logging (will be redacted by logger formatter)
-      ;(res as ResponseWithBody)._resBody = body
-      // Add refreshed token header if present
-      const refreshedToken = getContextValue<string>('refreshedToken')
-      if (refreshedToken) {
-        res.setHeader('X-Refreshed-Token', refreshedToken)
-      }
-      return originalJson(body)
-    }
-    next()
-  })
-})
+// Wrap all requests in AsyncLocalStorage context + capture response body for
+// logging + emit X-Refreshed-Token.
+app.use(requestContextMiddleware)
 
 // Swagger UI - at /docs since DigitalOcean routes /api/* here (stripping /api prefix)
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))

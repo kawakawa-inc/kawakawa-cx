@@ -1041,14 +1041,9 @@ interface UpdateReservationStatusRequest {
   notes?: string
 }
 
-// Helper to get JWT token from localStorage
-const getAuthToken = (): string | null => {
-  return getToken()
-}
-
 // Helper to create auth headers
 const getAuthHeaders = (): HeadersInit => {
-  const token = getAuthToken()
+  const token = getToken()
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -1154,8 +1149,13 @@ async function rawFetch(url: string, init: RequestInit): Promise<Response> {
   throw lastError
 }
 
-/** Authenticated fetch — adds Bearer token and Content-Type headers. */
-async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Authenticated fetch — adds Bearer token and Content-Type headers.
+ *
+ * Exported so services/views never hand-roll `Authorization` headers; doing so
+ * bypasses refreshed-token handling, retries, and centralized 401 handling.
+ */
+export async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return rawFetch(url, {
     ...init,
     headers: {
@@ -1165,17 +1165,9 @@ async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<
   })
 }
 
-/**
- * Authenticated fetch for use outside this module.
- *
- * Exported so services/views never hand-roll `Authorization` headers — doing
- * so bypasses refreshed-token handling, retries, and centralized 401 handling.
- */
-export { authenticatedFetch }
-
 /** Authenticated fetch for FormData — adds Bearer token but NOT Content-Type (browser sets it for multipart). */
 async function authenticatedFormFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const token = getAuthToken()
+  const token = getToken()
   return rawFetch(url, {
     ...init,
     headers: {

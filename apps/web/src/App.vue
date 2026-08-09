@@ -195,7 +195,7 @@ import { roleService } from './services/roleService'
 import { api } from './services/api'
 import { syncService, SYNC_EVENTS } from './services/syncService'
 import { onAuthFailure } from './services/authBus'
-import { getToken, clearCredentials } from './services/session'
+import { getToken, clearCredentials, rolesDifferFromCachedUser } from './services/session'
 import NotificationDropdown from './components/NotificationDropdown.vue'
 import DebugModal from './components/DebugModal.vue'
 
@@ -317,8 +317,16 @@ const validateSession = async () => {
   }
 }
 
-// Handle token refresh events - re-fetch user profile to update roles
-const handleTokenRefreshed = async () => {
+// Handle token refresh events - re-fetch user profile to update roles.
+//
+// Tokens are now re-issued routinely (sliding expiry), not just when roles
+// change, so this must not refetch on every refresh: each refetch can itself
+// return a refreshed token, re-firing this handler in a loop. Only act when the
+// roles encoded in the new token actually differ from what we have cached.
+const handleTokenRefreshed = async (event: Event) => {
+  const token = (event as CustomEvent<{ token?: string }>).detail?.token
+  if (token && !rolesDifferFromCachedUser(token)) return
+
   try {
     const user = await api.account.getProfile()
     userStore.setUser(user)

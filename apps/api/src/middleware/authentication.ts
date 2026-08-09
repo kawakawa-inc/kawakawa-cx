@@ -2,6 +2,7 @@ import { Request } from 'express'
 import { eq, and, inArray } from 'drizzle-orm'
 import { verifyToken, generateToken, shouldRefreshToken, type JwtPayload } from '../utils/jwt.js'
 import { getCachedRoles, setCachedRoles } from '../utils/roleCache.js'
+import { getRefreshedToken, setRefreshedToken } from '../utils/tokenRefreshCache.js'
 import { db, users, userRoles, rolePermissions } from '../db/index.js'
 import { setContextValue } from '../utils/requestContext.js'
 import { Unauthorized, Forbidden } from '../utils/errors.js'
@@ -156,8 +157,19 @@ export async function expressAuthentication(
     // The latter gives a sliding session: tokens are short-lived (24h) to
     // limit the damage of a leaked token, but anyone using the site at least
     // once a day is never forced to log back in.
+    //
+    // The replacement is memoised against the incoming token. A browser fires
+    // many requests in parallel, and minting a fresh token per request would
+    // hand the client a different successor on each response — the last one
+    // written to localStorage wins and every other in-flight request 401s,
+    // producing a login loop.
     if (rolesChanged || shouldRefreshToken(decoded)) {
-      setContextValue('refreshedToken', generateToken(payload))
+      let replacement = getRefreshedToken(token)
+      if (!replacement) {
+        replacement = generateToken(payload)
+        setRefreshedToken(token, replacement)
+      }
+      setContextValue('refreshedToken', replacement)
     }
 
     // Check scopes (required permissions) if specified

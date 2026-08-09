@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { handleAuthFailure, onAuthFailure } from './authBus'
-import { setToken, clearCredentials, getToken, JWT_STORAGE_KEY } from './session'
+import {
+  setToken,
+  clearCredentials,
+  getToken,
+  rolesDifferFromCachedUser,
+  JWT_STORAGE_KEY,
+} from './session'
 
 /**
  * Regression tests for the session-teardown logic.
@@ -98,5 +104,48 @@ describe('session', () => {
     // Leaving `user` behind would keep the router's role guards passing for a
     // session that no longer exists.
     expect(localStorage.getItem('user')).toBeNull()
+  })
+})
+
+describe('rolesDifferFromCachedUser', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  const tokenWithRoles = (roles: unknown) => {
+    const payload = btoa(JSON.stringify({ userId: 1, roles }))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+    return `header.${payload}.signature`
+  }
+
+  const cacheUser = (roles: { id: string }[]) =>
+    localStorage.setItem('user', JSON.stringify({ username: 'x', roles }))
+
+  it('is false when the token roles match the cached user', () => {
+    // The common case for a sliding refresh: nothing changed, so the app must
+    // NOT refetch the profile — each refetch can itself return a refreshed
+    // token and re-trigger the handler.
+    cacheUser([{ id: 'member' }, { id: 'lead' }])
+    expect(rolesDifferFromCachedUser(tokenWithRoles(['lead', 'member']))).toBe(false)
+  })
+
+  it('is true when a role was added', () => {
+    cacheUser([{ id: 'member' }])
+    expect(rolesDifferFromCachedUser(tokenWithRoles(['member', 'lead']))).toBe(true)
+  })
+
+  it('is true when a role was removed', () => {
+    cacheUser([{ id: 'member' }, { id: 'lead' }])
+    expect(rolesDifferFromCachedUser(tokenWithRoles(['member']))).toBe(true)
+  })
+
+  it('errs towards refetching when there is no cached user', () => {
+    expect(rolesDifferFromCachedUser(tokenWithRoles(['member']))).toBe(true)
+  })
+
+  it('errs towards refetching when the token is unreadable', () => {
+    cacheUser([{ id: 'member' }])
+    expect(rolesDifferFromCachedUser('not-a-jwt')).toBe(true)
   })
 })

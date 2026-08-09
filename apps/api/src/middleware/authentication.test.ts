@@ -3,6 +3,7 @@ import { expressAuthentication } from './authentication.js'
 import * as jwtUtils from '../utils/jwt.js'
 import * as roleCache from '../utils/roleCache.js'
 import * as requestContext from '../utils/requestContext.js'
+import { clearTokenRefreshCache } from '../utils/tokenRefreshCache.js'
 import type { Request } from 'express'
 
 vi.mock('../utils/jwt.js', () => ({
@@ -66,6 +67,7 @@ describe('expressAuthentication', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    clearTokenRefreshCache()
     mockRequest = {
       headers: {
         authorization: 'Bearer valid-token',
@@ -319,6 +321,53 @@ describe('expressAuthentication', () => {
       await expect(expressAuthentication(mockRequest as Request, 'jwt')).rejects.toThrow(
         'Invalid or expired token'
       )
+    })
+
+    it('issues ONE replacement token for concurrent requests with the same token', async () => {
+      // Regression: the browser fires many requests in parallel on page load.
+      // Minting a fresh token per request handed the client a different
+      // successor on each response; the last one written to localStorage won and
+      // every other in-flight request 401'd, producing a login loop.
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
+      vi.mocked(jwtUtils.shouldRefreshToken).mockReturnValue(true)
+
+      let counter = 0
+      vi.mocked(jwtUtils.generateToken).mockImplementation(() => `token-${++counter}`)
+
+      await Promise.all(
+        Array.from({ length: 10 }, () => expressAuthentication(mockRequest as Request, 'jwt'))
+      )
+
+      const issued = vi
+        .mocked(requestContext.setContextValue)
+        .mock.calls.filter(([key]) => key === 'refreshedToken')
+        .map(([, value]) => value)
+
+      expect(issued).toHaveLength(10)
+      expect(new Set(issued).size).toBe(1)
+      expect(jwtUtils.generateToken).toHaveBeenCalledTimes(1)
+    })
+
+    it('issues distinct replacements for different original tokens', async () => {
+      const payload = { userId: 1, username: 'testuser', roles: ['member'], tokenVersion: 0 }
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+      vi.mocked(roleCache.getCachedRoles).mockReturnValue(['member'])
+      vi.mocked(jwtUtils.shouldRefreshToken).mockReturnValue(true)
+
+      let counter = 0
+      vi.mocked(jwtUtils.generateToken).mockImplementation(() => `token-${++counter}`)
+
+      await expressAuthentication({ headers: { authorization: 'Bearer aaa' } } as Request, 'jwt')
+      await expressAuthentication({ headers: { authorization: 'Bearer bbb' } } as Request, 'jwt')
+
+      const issued = vi
+        .mocked(requestContext.setContextValue)
+        .mock.calls.filter(([key]) => key === 'refreshedToken')
+        .map(([, value]) => value)
+
+      expect(new Set(issued).size).toBe(2)
     })
   })
 

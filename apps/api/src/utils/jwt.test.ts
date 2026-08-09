@@ -4,9 +4,13 @@ import {
   generateToken,
   verifyToken,
   shouldRefreshToken,
+  TokenVerificationError,
   REFRESH_BEFORE_EXPIRY_SECONDS,
   type JwtPayload,
 } from './jwt.js'
+
+/** Matches the dev/test fallback in jwt.ts. */
+const SECRET = process.env.JWT_SECRET ?? 'fallback-secret-for-development-only'
 
 const basePayload: JwtPayload = {
   userId: 42,
@@ -87,5 +91,65 @@ describe('shouldRefreshToken', () => {
   it('does not refresh when exp is missing', () => {
     // A malformed payload must not trigger a refresh on every single request.
     expect(shouldRefreshToken(basePayload, 0)).toBe(false)
+  })
+})
+
+describe('verifyToken diagnostics', () => {
+  const now = () => Math.floor(Date.now() / 1000)
+
+  /**
+   * The client-facing message stays deliberately vague, but the thrown error
+   * carries the real reason so 401s are diagnosable in production. Before this,
+   * every failure logged the same string and was impossible to tell apart.
+   */
+  const expectFailure = (token: string, reason: string): TokenVerificationError => {
+    try {
+      verifyToken(token)
+      throw new Error('expected verifyToken to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(TokenVerificationError)
+      const failure = error as TokenVerificationError
+      expect(failure.reason).toBe(reason)
+      // Must not leak the reason to callers/clients.
+      expect(failure.message).toBe('Invalid or expired token')
+      return failure
+    }
+  }
+
+  it('classifies an expired token and reports how stale it is', () => {
+    const token = jwt.sign({ ...basePayload, iat: now() - 90_000, exp: now() - 3600 }, SECRET)
+    const failure = expectFailure(token, 'expired')
+
+    expect(failure.unverifiedClaims?.userId).toBe(42)
+    expect(failure.unverifiedClaims?.expiredAgoSeconds).toBeGreaterThan(3500)
+    expect(failure.unverifiedClaims?.lifetimeSeconds).toBeGreaterThan(0)
+  })
+
+  it('classifies a token signed with the wrong secret', () => {
+    const token = jwt.sign(basePayload, 'a-different-secret', { expiresIn: 3600 })
+    const failure = expectFailure(token, 'bad-signature')
+
+    // Claims are still readable (decode does not verify) — useful for spotting
+    // which user a forged token was aimed at.
+    expect(failure.unverifiedClaims?.userId).toBe(42)
+  })
+
+  it('classifies a structurally invalid token', () => {
+    const failure = expectFailure('not-a-jwt', 'malformed')
+    expect(failure.unverifiedClaims).toBeNull()
+  })
+
+  it('classifies a token that is not valid yet', () => {
+    const token = jwt.sign({ ...basePayload, nbf: now() + 9999 }, SECRET, { expiresIn: 99_999 })
+    expectFailure(token, 'not-active-yet')
+  })
+
+  it('exposes tokenVersion as `version` so the log redactor cannot scrub it', () => {
+    // The shared redactor blanks any key containing "token".
+    const token = jwt.sign({ ...basePayload, iat: now() - 10, exp: now() - 1 }, SECRET)
+    const failure = expectFailure(token, 'expired')
+
+    expect(failure.unverifiedClaims).toHaveProperty('version', 1)
+    expect(failure.unverifiedClaims).not.toHaveProperty('tokenVersion')
   })
 })

@@ -1073,6 +1073,13 @@ function tokenFromInit(init: RequestInit): string | null {
   return authorization.replace(/^Bearer\s+/i, '')
 }
 
+/** Return a copy of `init` with the Authorization header swapped for `token`. */
+function withBearerToken(init: RequestInit, token: string): RequestInit {
+  const headers = new Headers(init.headers as HeadersInit | undefined)
+  headers.set('Authorization', `Bearer ${token}`)
+  return { ...init, headers }
+}
+
 /**
  * Build the `?excludedUserIds=...` suffix shared by every corp endpoint that
  * supports the planning-exclusion feature. Returns an empty string when the
@@ -1105,6 +1112,7 @@ function sleep(ms: number): Promise<void> {
  */
 async function rawFetch(url: string, init: RequestInit): Promise<Response> {
   let lastError: unknown
+  let retriedWithNewerToken = false
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -1114,10 +1122,27 @@ async function rawFetch(url: string, init: RequestInit): Promise<Response> {
       handleRefreshedToken(response)
 
       // Centralized 401 handling — one place, not 60.
-      // Report the token that was actually sent so the subscriber can ignore
-      // a stale 401 for a token that has since been replaced.
       if (response.status === 401) {
-        handleAuthFailure(tokenFromInit(init))
+        const sentToken = tokenFromInit(init)
+        const storedToken = getToken()
+
+        // The token we sent is stale: another tab (or a just-completed login in
+        // this one) has already replaced it. Background tabs get no notification
+        // when localStorage changes underneath them, so they keep sending the
+        // token they captured at page load and 401 forever — which used to tear
+        // down a session that was actually fine. Retry once with the current
+        // token before concluding anything.
+        if (sentToken && storedToken && storedToken !== sentToken && !retriedWithNewerToken) {
+          retriedWithNewerToken = true
+          init = withBearerToken(init, storedToken)
+          // Don't spend a 5xx retry attempt on this — it's a different concern.
+          attempt--
+          continue
+        }
+
+        // Report the token that was actually sent so the subscriber can ignore
+        // a stale 401 for a token that has since been replaced.
+        handleAuthFailure(sentToken)
         throw new Error('Session expired. Please log in again.')
       }
 

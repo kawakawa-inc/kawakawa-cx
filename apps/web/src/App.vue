@@ -194,7 +194,8 @@ import { locationService } from './services/locationService'
 import { roleService } from './services/roleService'
 import { api } from './services/api'
 import { syncService, SYNC_EVENTS } from './services/syncService'
-import { onAuthFailure, handleAuthFailure } from './services/authBus'
+import { onAuthFailure } from './services/authBus'
+import { getToken, clearCredentials } from './services/session'
 import NotificationDropdown from './components/NotificationDropdown.vue'
 import DebugModal from './components/DebugModal.vue'
 
@@ -270,23 +271,33 @@ watch(isAdmin, newValue => {
 })
 
 const checkAuth = () => {
-  isAuthenticated.value = !!localStorage.getItem('jwt')
+  isAuthenticated.value = !!getToken()
 }
 
-const confirmLogout = () => {
-  logoutDialog.value = false
-  localStorage.removeItem('jwt')
-  handleAuthFailure()
+/**
+ * Tear down the local session: clear credentials and all user-scoped stores,
+ * stop background polling, and return to the login screen.
+ */
+const endSession = () => {
+  clearCredentials()
   userStore.clearUser()
   invoicesStore.clearAll()
   shoppingListStore.clearList()
   isAuthenticated.value = false
-  router.push('/login')
+  syncService.stopPolling()
+  if (router.currentRoute.value.path !== '/login') {
+    router.push('/login')
+  }
+}
+
+const confirmLogout = () => {
+  logoutDialog.value = false
+  endSession()
 }
 
 // Validate the session on startup - validates token with server
 const validateSession = async () => {
-  const token = localStorage.getItem('jwt')
+  const token = getToken()
   if (!token) return
 
   try {
@@ -300,14 +311,8 @@ const validateSession = async () => {
     // Only clear and redirect if the JWT in storage hasn't changed since
     // we started (prevents wiping a fresh token from a concurrent Discord
     // login callback in another tab or just-completed login flow).
-    const currentToken = localStorage.getItem('jwt')
-    if (currentToken === token) {
-      localStorage.removeItem('jwt')
-      userStore.clearUser()
-      invoicesStore.clearAll()
-      shoppingListStore.clearList()
-      isAuthenticated.value = false
-      router.push('/login')
+    if (getToken() === token) {
+      endSession()
     }
   }
 }
@@ -346,6 +351,40 @@ const refreshApp = () => {
   window.location.reload()
 }
 
+/**
+ * Kick off everything that requires a valid, verified session.
+ * Safe to call repeatedly — `startPolling` is idempotent.
+ */
+const startAuthenticatedSession = () => {
+  commodityService.prefetch().catch(err => console.error('Failed to prefetch commodities:', err))
+  locationService.prefetch().catch(err => console.error('Failed to load locations:', err))
+  locationService
+    .loadUserLocations()
+    .catch(err => console.error('Failed to load user locations:', err))
+  roleService.prefetch().catch(err => console.error('Failed to prefetch roles:', err))
+  // Fetch pending approvals count for admins
+  fetchPendingApprovalsCount()
+  // Fetch open sales order count for the queue badge
+  fetchOpenSalesOrderCount()
+  // Start sync service polling
+  syncService.startPolling()
+}
+
+// Drive background polling off the auth state rather than a one-shot check in
+// onMounted. Logging in happens *after* mount, so the previous code never
+// started polling for a session established in-page (only after a reload),
+// and a 401 stopped it permanently.
+watch(
+  () => isAuthenticated.value && isVerified.value,
+  active => {
+    if (active) {
+      startAuthenticatedSession()
+    } else {
+      syncService.stopPolling()
+    }
+  }
+)
+
 let unsubAuthFailure: (() => void) | null = null
 
 onMounted(async () => {
@@ -357,17 +396,18 @@ onMounted(async () => {
   window.addEventListener(SYNC_EVENTS.APP_VERSION_CHANGED, handleAppVersionChanged)
 
   // Listen for centralized auth failures (401 from any API call)
-  unsubAuthFailure = onAuthFailure(() => {
-    // Guard: if a fresh JWT has appeared in localStorage (e.g. from a
-    // Discord callback in another tab, or a just-completed login flow),
-    // don't wipe the session — the new token takes precedence.
-    if (localStorage.getItem('jwt')) return
+  unsubAuthFailure = onAuthFailure(({ token }) => {
+    // Guard: only tear down the session if the token that was rejected is
+    // still the one we hold. If it has already been replaced (e.g. by a
+    // Discord callback in another tab, or a just-completed login), this 401
+    // is stale and the newer token takes precedence.
+    //
+    // NOTE: this must compare token *values*. A previous version checked
+    // merely whether any token existed, which made this handler a no-op for
+    // the common expired-token case and left the app wedged until a reload.
+    if (token !== null && getToken() !== token) return
 
-    userStore.clearUser()
-    invoicesStore.clearAll()
-    shoppingListStore.clearList()
-    isAuthenticated.value = false
-    router.push('/login')
+    endSession()
   })
 
   router.afterEach(() => {
@@ -376,24 +416,10 @@ onMounted(async () => {
     if (isAuthenticated.value && isVerified.value) fetchOpenSalesOrderCount()
   })
 
-  // Validate session on startup (clears stale tokens)
+  // Validate session on startup (clears stale tokens). On success this flips
+  // isAuthenticated, which the watcher above picks up to prefetch reference
+  // data and start polling — so there is no explicit call here.
   await validateSession()
-
-  // Prefetch reference data if authenticated and verified
-  if (isAuthenticated.value && isVerified.value) {
-    commodityService.prefetch().catch(err => console.error('Failed to prefetch commodities:', err))
-    locationService.prefetch().catch(err => console.error('Failed to load locations:', err))
-    locationService
-      .loadUserLocations()
-      .catch(err => console.error('Failed to load user locations:', err))
-    roleService.prefetch().catch(err => console.error('Failed to prefetch roles:', err))
-    // Fetch pending approvals count for admins
-    fetchPendingApprovalsCount()
-    // Fetch open sales order count for the queue badge
-    fetchOpenSalesOrderCount()
-    // Start sync service polling
-    syncService.startPolling()
-  }
 })
 
 onUnmounted(() => {

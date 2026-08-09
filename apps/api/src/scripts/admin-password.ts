@@ -4,7 +4,7 @@
 // If no password is provided, a secure one will be generated
 
 import { db, users } from '../db/index.js'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import { createLogger } from '../utils/logger.js'
@@ -38,11 +38,14 @@ async function resetPassword(username: string, newPassword?: string) {
   const password = newPassword || generatePassword(20)
   const passwordHash = await bcrypt.hash(password, 12)
 
-  // Update the password
+  // Update the password and bump tokenVersion so existing JWTs stop working.
+  // Without this an admin-forced password reset leaves old sessions valid for
+  // the remainder of the 7-day token lifetime.
   await db
     .update(users)
     .set({
       passwordHash,
+      tokenVersion: sql<number>`${users.tokenVersion} + 1`,
       updatedAt: new Date(),
     })
     .where(eq(users.id, user.id))

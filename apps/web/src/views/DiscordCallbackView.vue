@@ -34,6 +34,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '../services/api'
+import { setToken } from '../services/session'
 import { useUserStore } from '../stores/user'
 import KawaLogo from '../components/KawaLogo.vue'
 import type { User } from '../types'
@@ -104,7 +105,7 @@ const handleCallback = async () => {
     switch (result.type) {
       case 'login': {
         // Successful login - store token and redirect
-        localStorage.setItem('jwt', result.token)
+        setToken(result.token)
         userStore.setUser(discordAuthUserToUser(result.user))
 
         const redirectTo = sessionStorage.getItem('discord_auth_redirect') || '/market'

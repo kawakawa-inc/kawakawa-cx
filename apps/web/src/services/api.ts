@@ -2,6 +2,7 @@
 import { mockApi, USE_MOCK_API } from './mockApi'
 import { fetchWithLogging } from './logService'
 import { handleAuthFailure } from './authBus'
+import { getToken, setToken, clearCredentials } from './session'
 import type {
   User,
   Currency,
@@ -1042,7 +1043,7 @@ interface UpdateReservationStatusRequest {
 
 // Helper to get JWT token from localStorage
 const getAuthToken = (): string | null => {
-  return localStorage.getItem('jwt')
+  return getToken()
 }
 
 // Helper to create auth headers
@@ -1058,10 +1059,23 @@ const getAuthHeaders = (): HeadersInit => {
 const handleRefreshedToken = (response: Response): void => {
   const refreshedToken = response.headers.get('X-Refreshed-Token')
   if (refreshedToken) {
-    localStorage.setItem('jwt', refreshedToken)
+    setToken(refreshedToken)
     // Dispatch event so app can update user state if needed
     window.dispatchEvent(new CustomEvent('token-refreshed', { detail: { token: refreshedToken } }))
   }
+}
+
+/**
+ * Extract the bearer token that was actually sent on a request, so a 401 can
+ * be attributed to a specific token. Comparing against `localStorage` at the
+ * time the 401 arrives is not sufficient — the token may have been replaced
+ * while the request was in flight.
+ */
+function tokenFromInit(init: RequestInit): string | null {
+  const headers = new Headers(init.headers as HeadersInit | undefined)
+  const authorization = headers.get('Authorization')
+  if (!authorization) return null
+  return authorization.replace(/^Bearer\s+/i, '')
 }
 
 /**
@@ -1104,9 +1118,11 @@ async function rawFetch(url: string, init: RequestInit): Promise<Response> {
       // Always check for refreshed token before anything else
       handleRefreshedToken(response)
 
-      // Centralized 401 handling — one place, not 60
+      // Centralized 401 handling — one place, not 60.
+      // Report the token that was actually sent so the subscriber can ignore
+      // a stale 401 for a token that has since been replaced.
       if (response.status === 401) {
-        handleAuthFailure()
+        handleAuthFailure(tokenFromInit(init))
         throw new Error('Session expired. Please log in again.')
       }
 
@@ -1148,6 +1164,14 @@ async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<
     },
   })
 }
+
+/**
+ * Authenticated fetch for use outside this module.
+ *
+ * Exported so services/views never hand-roll `Authorization` headers — doing
+ * so bypasses refreshed-token handling, retries, and centralized 401 handling.
+ */
+export { authenticatedFetch }
 
 /** Authenticated fetch for FormData — adds Bearer token but NOT Content-Type (browser sets it for multipart). */
 async function authenticatedFormFetch(url: string, init: RequestInit = {}): Promise<Response> {
@@ -1242,6 +1266,14 @@ const realApi = {
       }
       throw new Error(`Failed to change password: ${response.statusText}`)
     }
+
+    // Changing the password bumps the server-side tokenVersion, which
+    // invalidates the JWT we are currently holding. The server issues a
+    // replacement so the user stays logged in — store it immediately.
+    const data = (await response.json()) as { success: boolean; token?: string }
+    if (data.token) {
+      setToken(data.token)
+    }
   },
 
   deleteAccount: async (): Promise<void> => {
@@ -1257,8 +1289,7 @@ const realApi = {
     }
 
     // Clear local storage after successful deletion
-    localStorage.removeItem('jwt')
-    localStorage.removeItem('user')
+    clearCredentials()
   },
 
   setInactiveUntil: async (

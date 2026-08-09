@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AccountController } from './AccountController.js'
 import { db } from '../db/index.js'
 import * as passwordUtils from '../utils/password.js'
+import * as jwtUtils from '../utils/jwt.js'
 import * as permissionService from '../utils/permissionService.js'
 
 vi.mock('../utils/permissionService.js', () => ({
@@ -38,6 +39,10 @@ vi.mock('../utils/password.js', () => ({
   verifyPassword: vi.fn(),
 }))
 
+vi.mock('../utils/jwt.js', () => ({
+  generateToken: vi.fn(() => 'generated-token'),
+}))
+
 // Mock the userSettingsService (now used for FIO credentials)
 vi.mock('@kawakawa/services/user-settings', () => ({
   getFioCredentials: vi.fn(),
@@ -60,7 +65,13 @@ describe('AccountController', () => {
     }
     mockUpdate = {
       set: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue(undefined),
+      // `where` is awaited directly by most callers, but the password-change
+      // path chains `.returning()` to read back the bumped tokenVersion.
+      where: vi.fn(() => {
+        const promise: any = Promise.resolve(undefined)
+        promise.returning = vi.fn().mockResolvedValue([{ tokenVersion: 1 }])
+        return promise
+      }),
     }
     vi.mocked(db.select).mockReturnValue(mockSelect)
     vi.mocked(db.update).mockReturnValue(mockUpdate)
@@ -211,7 +222,15 @@ describe('AccountController', () => {
 
       const result = await controller.changePassword(body, request)
 
-      expect(result).toEqual({ success: true })
+      // A replacement token is returned so the caller's session survives the
+      // tokenVersion bump instead of silently 401ing on the next request.
+      expect(result).toEqual({ success: true, token: 'generated-token' })
+      expect(jwtUtils.generateToken).toHaveBeenCalledWith({
+        userId: 1,
+        username: 'testuser',
+        roles: [],
+        tokenVersion: 1,
+      })
       expect(passwordUtils.verifyPassword).toHaveBeenCalledWith('oldpass123', 'old-hash')
       expect(passwordUtils.hashPassword).toHaveBeenCalledWith('newpass456')
       expect(mockUpdate.set).toHaveBeenCalledWith({

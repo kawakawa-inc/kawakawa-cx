@@ -93,6 +93,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../services/api'
+import { clearCredentials } from '../services/session'
 
 const route = useRoute()
 
@@ -155,8 +156,10 @@ const handleReset = async () => {
       token: token.value,
       newPassword: newPassword.value,
     })
-    // Clear any existing session — the old JWT is now invalid
-    localStorage.removeItem('jwt')
+    // Clear any existing session — the old JWT is now invalid.
+    // Clear the cached user too, otherwise the router's role guards keep
+    // reading a stale profile for a session that no longer exists.
+    clearCredentials()
     success.value = true
   } catch (error) {
     console.error('Password reset error:', error)

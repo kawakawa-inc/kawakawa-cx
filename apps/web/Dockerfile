@@ -41,8 +41,9 @@ RUN pnpm turbo run build --filter=@kawakawa/web...
 # Production stage - nginx for static serving
 FROM nginx:alpine AS production
 
-# Copy custom nginx config for SPA routing
+# Copy custom nginx config for SPA routing + shared security headers
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/web/security-headers.conf /etc/nginx/security-headers.conf
 
 # Copy built static files
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html

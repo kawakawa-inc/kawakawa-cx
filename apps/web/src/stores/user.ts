@@ -3,16 +3,17 @@
 import { ref } from 'vue'
 import type { User } from '../types'
 import { useSettingsStore } from './settings'
+import { USER_STORAGE_KEY } from '../services/session'
 
 // Eagerly initialize from localStorage so computeds that depend on permissions
 // can track currentUser.value from the first evaluation
 function loadUserFromStorage(): User | null {
-  const stored = localStorage.getItem('user')
+  const stored = localStorage.getItem(USER_STORAGE_KEY)
   if (!stored) return null
   try {
     return JSON.parse(stored)
   } catch {
-    localStorage.removeItem('user')
+    localStorage.removeItem(USER_STORAGE_KEY)
     return null
   }
 }
@@ -25,7 +26,7 @@ export const useUserStore = () => {
   const setUser = (user: User) => {
     currentUser.value = user
     // Store in localStorage for persistence
-    localStorage.setItem('user', JSON.stringify(user))
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user))
     // Load settings for this user
     settingsStore.loadFromCache()
     settingsStore.loadSettings()
@@ -37,7 +38,7 @@ export const useUserStore = () => {
 
   const clearUser = () => {
     currentUser.value = null
-    localStorage.removeItem('user')
+    localStorage.removeItem(USER_STORAGE_KEY)
     // Clear settings cache
     settingsStore.clearSettings()
   }

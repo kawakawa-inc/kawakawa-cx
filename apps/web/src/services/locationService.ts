@@ -2,6 +2,7 @@
 
 import { ref } from 'vue'
 import type { Location, LocationDisplayMode } from '../types'
+import { authenticatedFetch } from './api'
 
 // Cache keys and TTL
 const CACHE_KEY = 'kawakawa:locations'
@@ -248,14 +249,7 @@ export const locationService = {
 
     // Fetch from API
     try {
-      const jwt = localStorage.getItem('jwt')
-      const headers: Record<string, string> = {}
-      if (jwt) {
-        headers['Authorization'] = `Bearer ${jwt}`
-      }
-      const response = await fetch('/api/fio/inventory/locations', {
-        headers,
-      })
+      const response = await authenticatedFetch('/api/fio/inventory/locations')
       if (!response.ok) {
         throw new Error('Failed to fetch user locations')
       }

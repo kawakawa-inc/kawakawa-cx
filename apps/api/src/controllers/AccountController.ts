@@ -3,7 +3,7 @@ import type { Role } from '@kawakawa/types'
 import { db, users, userRoles, roles } from '../db/index.js'
 import { eq, sql } from 'drizzle-orm'
 import { hashPassword, verifyPassword } from '../utils/password.js'
-import type { JwtPayload } from '../utils/jwt.js'
+import { generateToken, type JwtPayload } from '../utils/jwt.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
 
@@ -28,6 +28,16 @@ interface UpdateProfileRequest {
 interface ChangePasswordRequest {
   currentPassword: string
   newPassword: string
+}
+
+interface ChangePasswordResponse {
+  success: boolean
+  /**
+   * Replacement JWT. Changing the password bumps `tokenVersion`, which
+   * invalidates the caller's current token; this keeps the active session
+   * alive without forcing a re-login.
+   */
+  token: string
 }
 
 interface SetInactiveUntilRequest {
@@ -127,7 +137,7 @@ export class AccountController extends Controller {
   public async changePassword(
     @Body() body: ChangePasswordRequest,
     @Request() request: { user: JwtPayload }
-  ): Promise<{ success: boolean }> {
+  ): Promise<ChangePasswordResponse> {
     const userId = request.user.userId
 
     // Get current password hash
@@ -150,7 +160,7 @@ export class AccountController extends Controller {
 
     // Hash new password, update, and bump tokenVersion to invalidate existing sessions
     const newPasswordHash = await hashPassword(body.newPassword)
-    await db
+    const [updated] = await db
       .update(users)
       .set({
         passwordHash: newPasswordHash,
@@ -158,8 +168,20 @@ export class AccountController extends Controller {
         updatedAt: new Date(),
       })
       .where(eq(users.id, userId))
+      .returning({ tokenVersion: users.tokenVersion })
 
-    return { success: true }
+    // Bumping tokenVersion invalidates every existing JWT — including the one
+    // this request was made with. Issue a replacement for the current session
+    // so the user is not silently logged out of the tab they are using.
+    // Other devices/tabs still lose their session, which is the intent.
+    const token = generateToken({
+      userId,
+      username: request.user.username,
+      roles: request.user.roles,
+      tokenVersion: updated.tokenVersion,
+    })
+
+    return { success: true, token }
   }
 
   @Put('inactive-until')

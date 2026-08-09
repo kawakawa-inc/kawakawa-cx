@@ -99,6 +99,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../services/api'
 import { useUserStore } from '../stores/user'
+import { clearCredentials } from '../services/session'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -128,6 +129,9 @@ const registerRedirectUrl = computed(() => {
 })
 
 const logout = () => {
+  // Must drop the JWT too — clearing only the cached user left the API
+  // session alive, so "log out" here didn't actually log the user out.
+  clearCredentials()
   userStore.clearUser()
 }
 

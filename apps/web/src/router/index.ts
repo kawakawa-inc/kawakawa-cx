@@ -22,6 +22,7 @@ import SalesOrderQueueView from '../views/SalesOrderQueueView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 import MyBasesView from '../views/MyBasesView.vue'
 import CorpOverviewView from '../views/CorpOverviewView.vue'
+import { getToken, USER_STORAGE_KEY } from '../services/session'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -175,7 +176,7 @@ const router = createRouter({
 
 // Helper to check if user has a role
 const hasRole = (roleId: string): boolean => {
-  const userStr = localStorage.getItem('user')
+  const userStr = localStorage.getItem(USER_STORAGE_KEY)
   if (!userStr) return false
   try {
     const user = JSON.parse(userStr)
@@ -187,7 +188,7 @@ const hasRole = (roleId: string): boolean => {
 
 // Check if user is verified (has any role other than 'unverified')
 const isVerified = (): boolean => {
-  const userStr = localStorage.getItem('user')
+  const userStr = localStorage.getItem(USER_STORAGE_KEY)
   if (!userStr) return false
   try {
     const user = JSON.parse(userStr)
@@ -200,7 +201,7 @@ const isVerified = (): boolean => {
 
 // Navigation guard for authentication and authorization
 router.beforeEach((to, _from, next) => {
-  const jwt = localStorage.getItem('jwt')
+  const jwt = getToken()
 
   if (to.meta.requiresAuth && !jwt) {
     // Save the intended destination for post-login redirect

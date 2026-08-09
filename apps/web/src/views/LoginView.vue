@@ -82,6 +82,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '../services/api'
+import { setToken } from '../services/session'
 import { useUserStore } from '../stores/user'
 import DiscordIcon from '../components/DiscordIcon.vue'
 import KawaLogo from '../components/KawaLogo.vue'
@@ -107,7 +108,7 @@ const handleLogin = async () => {
 
     if (response.ok) {
       const data = await response.json()
-      localStorage.setItem('jwt', data.token)
+      setToken(data.token)
       userStore.setUser(data.user)
 
       // Redirect to the intended destination or default to /market

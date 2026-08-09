@@ -589,7 +589,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { api } from '../services/api'
+import { api, authenticatedFetch } from '../services/api'
 import { usePageState } from '../composables/usePageState'
 import { useSettingsStore } from '../stores/settings'
 import { locationService } from '../services/locationService'
@@ -890,9 +890,7 @@ function priceFor(planetId: string, ticker: string): number {
 async function loadLocations() {
   try {
     // Load all locations (stations + planets) for the "Prices From" picker
-    const response = await fetch('/api/locations', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('jwt')}` },
-    })
+    const response = await authenticatedFetch('/api/locations')
     if (response.ok) {
       const locations = await response.json()
       locationItems.value = locations.map((l: { naturalId: string; name: string }) => ({

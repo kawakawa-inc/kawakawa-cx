@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
 import { locationService } from './locationService'
 import { commodityService } from './commodityService'
-import { handleAuthFailure } from './authBus'
+import { authenticatedFetch } from './api'
 
 // Polling interval (60 seconds)
 export const POLL_INTERVAL = 60 * 1000
@@ -49,19 +49,13 @@ export const SYNC_EVENTS = {
 // Fetch sync state from API
 async function fetchSyncState(): Promise<SyncState | null> {
   try {
-    const token = localStorage.getItem('jwt')
-    const response = await fetch('/api/sync/state', {
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    })
+    // Goes through the shared wrapper so this poll gets the same refreshed-token
+    // handling and centralized 401 reporting as every other call. The wrapper
+    // throws on 401 after notifying App.vue, which stops polling as part of
+    // tearing the session down — so this must not call stopPolling() itself.
+    const response = await authenticatedFetch('/api/sync/state')
 
     if (!response.ok) {
-      if (response.status === 401) {
-        handleAuthFailure()
-        stopPolling()
-        return null
-      }
       throw new Error(`Failed to fetch sync state: ${response.statusText}`)
     }
 

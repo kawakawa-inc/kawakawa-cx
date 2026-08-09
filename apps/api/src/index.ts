@@ -6,6 +6,7 @@ import { RegisterRoutes } from './generated/routes.js'
 import swaggerDocument from './generated/swagger.json' with { type: 'json' }
 import { requestContextMiddleware, type ResponseWithBody } from './middleware/requestContext.js'
 import logger, { redactObject } from './utils/logger.js'
+import { stringifyForLog } from './utils/logBody.js'
 
 const app = express()
 
@@ -42,13 +43,20 @@ const httpLoggerOptions: PinoHttpOptions = {
   // Custom log messages that include status code
   customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
   customErrorMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
-  // Add custom properties including request/response bodies (redacted)
+  // Add custom properties including request/response bodies (redacted).
+  //
+  // Bodies are emitted as JSON *strings*, not objects. Logging them as objects
+  // made the log index create a mapping field for every key of every domain
+  // object it ever saw — resBody alone reached 441 fields and pushed the index
+  // past OpenSearch's 1000-field limit, after which any log line containing a
+  // new field was rejected outright. That silently dropped the auth diagnostics.
+  // A string keeps the body readable and full-text searchable as one field.
   customProps: (req, res) => {
     const props: Record<string, unknown> = {}
     const reqBody = (req as RequestWithBody)._reqBody
     const resBody = (res as ResponseWithBody)._resBody
-    if (reqBody !== undefined) props.reqBody = redactObject(reqBody)
-    if (resBody !== undefined) props.resBody = redactObject(resBody)
+    if (reqBody !== undefined) props.reqBody = stringifyForLog(redactObject(reqBody))
+    if (resBody !== undefined) props.resBody = stringifyForLog(redactObject(resBody))
     return props
   },
   // Customize serializers - use pino's request serializer, omit redundant res object

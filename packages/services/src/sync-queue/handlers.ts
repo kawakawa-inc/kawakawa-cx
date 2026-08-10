@@ -6,7 +6,9 @@
 
 import { db, syncJobs, users, notifications } from '@kawakawa/db'
 import { eq, and, inArray, ne } from 'drizzle-orm'
+import type { FioErrorCode } from '@kawakawa/types'
 import { FioClient } from '../fio/client.js'
+import { FioSyncFailure } from '../fio/fio-error.js'
 import { syncUserInventory } from '../fio/sync-user-inventory.js'
 import { syncUserCxos } from '../fio/sync-user-cxos.js'
 import { syncUserPlanetsList, syncSinglePlanet } from '../fio/sync-user-planets.js'
@@ -90,7 +92,8 @@ export async function onJobDone(job: SyncJob): Promise<void> {
 async function getFioCreds(userId: number): Promise<{ apiKey: string; username: string }> {
   const { fioUsername, fioApiKey } = await userSettingsService.getFioCredentials(userId)
   if (!fioUsername || !fioApiKey) {
-    throw new Error(`User ${userId} has no FIO credentials configured`)
+    // Non-retryable by classification — no amount of backoff conjures an API key.
+    throw new FioSyncFailure(`User ${userId} has no FIO credentials configured`, 'no_credentials')
   }
   return { apiKey: fioApiKey, username: fioUsername }
 }
@@ -157,7 +160,7 @@ async function handleUserInventory(job: SyncJob): Promise<void> {
     }
   }
   if (result.errors.length > 0) {
-    throw new Error(result.errors.join('; '))
+    throw new FioSyncFailure(result.errors.join('; '), result.errorCode ?? 'unknown')
   }
 
   // Notify frontend that inventory data has changed
@@ -216,16 +219,37 @@ async function handleCacheRecompute(job: SyncJob): Promise<void> {
   await computeBurnRepairCache(job.userId, { force: true })
 }
 
+/**
+ * Global catalog syncs.
+ *
+ * These previously ignored `result.errors` entirely, so a global sync that
+ * failed outright still recorded the job as 'done' — the queue reported
+ * healthy while the catalogs went stale. Throwing lets the worker retry and
+ * leaves a failed row behind to investigate.
+ */
+async function runGlobalSync(
+  name: string,
+  run: () => Promise<{ errors: string[]; errorCode?: FioErrorCode }>
+): Promise<void> {
+  const result = await run()
+  if (result.errors.length > 0) {
+    throw new FioSyncFailure(
+      `${name} sync failed: ${result.errors.join('; ')}`,
+      result.errorCode ?? 'unknown'
+    )
+  }
+}
+
 async function handleCommodities(): Promise<void> {
-  await syncCommodities()
+  await runGlobalSync('Commodities', syncCommodities)
 }
 
 async function handleLocations(): Promise<void> {
-  await syncLocations()
+  await runGlobalSync('Locations', syncLocations)
 }
 
 async function handleStations(): Promise<void> {
-  await syncStations()
+  await runGlobalSync('Stations', syncStations)
 }
 
 async function handleUserShips(job: SyncJob): Promise<void> {
@@ -233,6 +257,6 @@ async function handleUserShips(job: SyncJob): Promise<void> {
   const { apiKey, username } = await getFioCreds(job.userId)
   const result = await syncUserShips(job.userId, apiKey, username)
   if (result.errors.length > 0) {
-    throw new Error(result.errors.join('; '))
+    throw new FioSyncFailure(result.errors.join('; '), result.errorCode ?? 'unknown')
   }
 }

@@ -5,8 +5,10 @@ import type { FioGroupHubResponse } from './types.js'
 // Create mock functions at module scope
 const mockGetGroupHub = vi.fn()
 
-// Mock the FIO client module
-vi.mock('./client.js', () => ({
+// Mock the FIO client module. Only FioClient is stubbed — FioApiError must
+// stay real because error classification does `instanceof` checks against it.
+vi.mock('./client.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('./client.js')>()),
   FioClient: class MockFioClient {
     getGroupHub = mockGetGroupHub
   },

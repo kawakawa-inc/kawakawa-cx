@@ -3,6 +3,7 @@
 import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
 import { settingsService } from '../settings/index.js'
 import { notificationService } from '../notifications/notification-service.js'
+import { getFioSyncError } from './fio-sync-error.js'
 
 // Settings keys for data versions
 const DATA_VERSION_PREFIX = 'sync.dataVersion.'
@@ -18,15 +19,17 @@ const APP_VERSION = process.env.APP_VERSION || process.env.COMMIT_SHA || 'dev'
 export async function getSyncState(userId: number): Promise<SyncState> {
   settingsService.invalidateCache()
 
-  const [unreadCount, dataVersions] = await Promise.all([
+  const [unreadCount, dataVersions, fioError] = await Promise.all([
     notificationService.getUnreadCount(userId),
     getDataVersions(),
+    getFioSyncError(userId),
   ])
 
   return {
     unreadCount,
     appVersion: APP_VERSION,
     dataVersions,
+    fioError,
   }
 }
 

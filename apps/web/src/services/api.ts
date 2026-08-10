@@ -6,6 +6,7 @@ import { getToken, setToken, clearCredentials } from './session'
 import type {
   User,
   Currency,
+  FioSyncError,
   LocationDisplayMode,
   CommodityDisplayMode,
   Role,
@@ -108,6 +109,8 @@ interface ChangePasswordRequest {
 interface FioSyncInfo {
   fioUsername: string | null
   lastSyncedAt: string | null
+  /** Set when the member's most recent FIO sync failed (e.g. a revoked key). */
+  error: FioSyncError | null
 }
 
 interface DiscordInfo {
@@ -4787,6 +4790,11 @@ export const api = {
 // Export types for use in components
 export type {
   FioInventoryItem,
+  // Admin user types — exported so AdminView doesn't re-declare them and
+  // silently drift from what the API actually returns.
+  AdminUser,
+  FioSyncInfo,
+  DiscordInfo,
   SellOrderResponse,
   CreateSellOrderRequest,
   UpdateSellOrderRequest,

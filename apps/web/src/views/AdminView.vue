@@ -204,14 +204,31 @@
             <template #item.fioSync="{ item }">
               <div v-if="item.fioSync.fioUsername">
                 <div class="text-body-2">{{ item.fioSync.fioUsername }}</div>
-                <v-chip
-                  v-if="item.fioSync.lastSyncedAt"
-                  size="x-small"
-                  :color="getSyncStatusColor(item.fioSync.lastSyncedAt)"
-                >
-                  {{ formatRelativeTime(item.fioSync.lastSyncedAt) }}
-                </v-chip>
-                <span v-else class="text-caption text-medium-emphasis">Never synced</span>
+                <div class="d-flex align-center ga-1">
+                  <v-chip
+                    v-if="item.fioSync.lastSyncedAt"
+                    size="x-small"
+                    :color="getSyncStatusColor(item.fioSync.lastSyncedAt)"
+                  >
+                    {{ formatRelativeTime(item.fioSync.lastSyncedAt) }}
+                  </v-chip>
+                  <span v-else class="text-caption text-medium-emphasis">Never synced</span>
+                  <!--
+                    Flags members whose syncs are failing (usually a revoked
+                    API key) so admins can chase them without reading logs.
+                  -->
+                  <v-tooltip
+                    v-if="item.fioSync.error"
+                    location="top"
+                    :text="`${item.fioSync.error.title} — ${item.fioSync.error.detail}`"
+                  >
+                    <template #activator="{ props }">
+                      <v-icon v-bind="props" size="small" color="warning">
+                        mdi-alert-circle
+                      </v-icon>
+                    </template>
+                  </v-tooltip>
+                </div>
               </div>
               <span v-else class="text-caption text-medium-emphasis">Not configured</span>
             </template>
@@ -2589,37 +2606,11 @@ import type {
   CreatePriceAdjustmentRequest,
   UpdatePriceAdjustmentRequest,
   AdjustmentType,
+  AdminUser,
 } from '../services/api'
 import PriceListDialog from '../components/PriceListDialog.vue'
 import ImportConfigDialog from '../components/ImportConfigDialog.vue'
 import PriceVersionManager from '../components/PriceVersionManager.vue'
-
-interface FioSyncInfo {
-  fioUsername: string | null
-  lastSyncedAt: string | null
-}
-
-interface DiscordInfo {
-  connected: boolean
-  discordUsername: string | null
-  discordId: string | null
-  connectedAt: string | null
-}
-
-interface AdminUser {
-  id: number
-  username: string
-  email: string | null
-  displayName: string
-  isLocked: boolean
-  roles: Role[]
-  fioSync: FioSyncInfo
-  discord: DiscordInfo
-  createdAt: string
-  lastActiveAt: string | null
-  inactiveUntil: string | null
-  activity: { active: boolean; reason?: string }
-}
 
 interface PasswordResetLinkData {
   token: string

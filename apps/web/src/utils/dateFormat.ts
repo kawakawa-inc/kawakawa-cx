@@ -252,3 +252,20 @@ export function getFioAgeColor(dateString: string): string {
   if (hoursAgo < 72) return 'warning' // 1-3 days - getting stale
   return 'error' // More than 3 days - very stale
 }
+
+/**
+ * Colour + icon for a FIO upload timestamp, used by the FIO statistics
+ * panels. Thresholds are coarser than getFioAgeColor's because these mark
+ * "when did the game last upload" rather than "how fresh is this reading".
+ *
+ * @param dateString - The upload timestamp, or null if never uploaded
+ */
+export function getDataAgeInfo(dateString: string | null): { color: string; icon: string } {
+  if (!dateString) return { color: 'grey', icon: 'mdi-clock-outline' }
+
+  const hoursAgo = getAgeInHours(dateString)
+
+  if (hoursAgo < 24) return { color: 'success', icon: 'mdi-clock-check' }
+  if (hoursAgo < 48) return { color: 'warning', icon: 'mdi-clock-alert-outline' }
+  return { color: 'error', icon: 'mdi-clock-remove-outline' }
+}

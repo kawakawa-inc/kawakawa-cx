@@ -3,9 +3,11 @@
 // `SELECT ... FOR UPDATE SKIP LOCKED` is used so that if we ever scale to
 // multiple API instances, they won't race for the same job.
 
-import { db, syncJobs } from '@kawakawa/db'
-import { eq, isNull, sql } from 'drizzle-orm'
+import { db, syncJobs, notifications } from '@kawakawa/db'
+import { and, eq, sql } from 'drizzle-orm'
+import type { FioErrorCode } from '@kawakawa/types'
 import { createLogger } from '../utils/logger.js'
+import { classifyFioError, describeFioError, isRetryableFioError } from '../fio/fio-error.js'
 import { handleJob, onJobDone } from './handlers.js'
 import * as notificationService from '../notifications/notification-service.js'
 
@@ -132,8 +134,9 @@ async function tryProcessOne(): Promise<boolean> {
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
-    log.warn({ jobId: claimed.id, err: errMsg }, 'Job failed')
-    await handleFailure(claimed, errMsg)
+    const errCode = classifyFioError(err)
+    log.warn({ jobId: claimed.id, err: errMsg, errCode }, 'Job failed')
+    await handleFailure(claimed, errMsg, errCode)
   }
 
   return true
@@ -142,27 +145,33 @@ async function tryProcessOne(): Promise<boolean> {
 async function markDone(jobId: number): Promise<void> {
   await db
     .update(syncJobs)
-    .set({ status: 'done', finishedAt: new Date(), error: null })
+    .set({ status: 'done', finishedAt: new Date(), error: null, errorCode: null })
     .where(eq(syncJobs.id, jobId))
 }
 
-async function handleFailure(job: typeof syncJobs.$inferSelect, errMsg: string): Promise<void> {
-  const finalAttempt = job.attempts >= job.maxAttempts
+async function handleFailure(
+  job: typeof syncJobs.$inferSelect,
+  errMsg: string,
+  errCode: FioErrorCode
+): Promise<void> {
+  // Some failures are deterministic — a revoked API key or a missing one will
+  // fail identically on every attempt. Retrying those just delays the
+  // notification that tells the user to fix it, so give up immediately.
+  const retryable = isRetryableFioError(errCode)
+  const finalAttempt = !retryable || job.attempts >= job.maxAttempts
+
   if (finalAttempt) {
+    const finishedAt = new Date()
     await db
       .update(syncJobs)
-      .set({ status: 'failed', finishedAt: new Date(), error: errMsg })
+      .set({ status: 'failed', finishedAt, error: errMsg, errorCode: errCode })
       .where(eq(syncJobs.id, job.id))
 
-    if (job.userId && job.source === 'user') {
-      await notificationService.create(
-        job.userId,
-        'sync_failed',
-        'FIO sync failed',
-        `${describeJob(job)}: ${errMsg}`,
-        { jobId: job.id, jobType: job.jobType }
-      )
+    if (!retryable) {
+      log.info({ jobId: job.id, errCode }, 'Non-retryable failure, not scheduling a retry')
     }
+
+    await notifyFailure(job, errMsg, errCode, finishedAt)
     return
   }
 
@@ -174,10 +183,76 @@ async function handleFailure(job: typeof syncJobs.$inferSelect, errMsg: string):
       status: 'pending',
       startedAt: null,
       error: errMsg,
+      errorCode: errCode,
       nextAttemptAt: new Date(Date.now() + backoffMs),
     })
     .where(eq(syncJobs.id, job.id))
   log.info({ jobId: job.id, attempt: job.attempts, backoffMs }, 'Job scheduled for retry')
+}
+
+/**
+ * Notify the user that a sync failed.
+ *
+ * This fires for system-scheduled syncs too, not just user-requested ones.
+ * Auto-sync is exactly the case where the user isn't watching: previously a
+ * revoked API key failed silently every 15 minutes forever and the only
+ * evidence was a worker log line.
+ *
+ * The flip side is notification spam — a scheduled sync failing every 15
+ * minutes shouldn't produce 96 identical unread rows a day. So for *system*
+ * syncs we skip the notification when an unread one with the same error code
+ * already exists: the user has been told, and repeating it adds nothing until
+ * they read and clear it.
+ *
+ * User-requested syncs always notify, even if a duplicate is already unread.
+ * The user just pressed a button and is waiting on the result; the frontend
+ * also watches for this notification to stop its spinner, so suppressing it
+ * would hang the UI until its timeout.
+ */
+async function notifyFailure(
+  job: typeof syncJobs.$inferSelect,
+  errMsg: string,
+  errCode: FioErrorCode,
+  failedAt: Date
+): Promise<void> {
+  if (!job.userId) return
+
+  if (job.source === 'system') {
+    const [existing] = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.userId, job.userId),
+          eq(notifications.type, 'sync_failed'),
+          eq(notifications.isRead, false),
+          sql`${notifications.data}->>'errorCode' = ${errCode}`
+        )
+      )
+      .limit(1)
+
+    if (existing) {
+      log.debug(
+        { jobId: job.id, userId: job.userId, errCode },
+        'Unread sync_failed notification already exists, skipping'
+      )
+      return
+    }
+  }
+
+  const described = describeFioError({
+    code: errCode,
+    jobType: job.jobType,
+    rawMessage: errMsg,
+    failedAt,
+  })
+
+  await notificationService.create(job.userId, 'sync_failed', described.title, described.detail, {
+    jobId: job.id,
+    jobType: job.jobType,
+    errorCode: errCode,
+    userActionable: described.userActionable,
+  })
 }
 
 function describeJob(job: typeof syncJobs.$inferSelect): string {
@@ -203,5 +278,14 @@ function describeJob(job: typeof syncJobs.$inferSelect): string {
   }
 }
 
-// Unused import helper to silence lint when isNull not consumed
-void isNull
+/**
+ * Internals exposed for unit tests only.
+ *
+ * The retry/notify policy is the part most worth testing and the hardest to
+ * reach through the public surface, which is an infinite polling loop.
+ * Not exported from the package barrel.
+ */
+export const __testing = {
+  handleFailure,
+  classify: classifyFioError,
+}

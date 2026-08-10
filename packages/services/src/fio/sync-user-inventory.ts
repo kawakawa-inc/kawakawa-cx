@@ -3,6 +3,7 @@
 import { eq } from 'drizzle-orm'
 import { db, fioInventory, fioUserStorage, fioLocations, fioCommodities } from '@kawakawa/db'
 import { FioClient } from './client.js'
+import { classifyFioError } from './fio-error.js'
 import type { FioGroupHubResponse, FioGroupHubStorage } from './types.js'
 import type { SyncResult } from './sync-types.js'
 import { createLogger } from '../utils/logger.js'
@@ -159,6 +160,7 @@ export async function syncUserInventory(
       } catch (error) {
         const errorMsg = `Failed to insert storage at ${locationId}: ${error instanceof Error ? error.message : 'Unknown error'}`
         result.errors.push(errorMsg)
+        result.errorCode ??= 'data'
         log.error({ locationId, err: error }, 'Failed to insert storage')
         return
       }
@@ -190,6 +192,7 @@ export async function syncUserInventory(
         } catch (error) {
           const errorMsg = `Failed to insert ${item.MaterialTicker} at ${locationId}: ${error instanceof Error ? error.message : 'Unknown error'}`
           result.errors.push(errorMsg)
+          result.errorCode ??= 'data'
           log.error(
             { ticker: item.MaterialTicker, locationId, err: error },
             'Failed to insert inventory item'
@@ -292,6 +295,9 @@ export async function syncUserInventory(
   } catch (error) {
     const errorMsg = `Failed to sync inventory for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`
     result.errors.push(errorMsg)
+    // Overwrite any earlier per-item 'data' code: a throw out here means the
+    // whole fetch failed, which is the more useful classification.
+    result.errorCode = classifyFioError(error)
     log.error({ userId, err: error }, 'Failed to sync user inventory')
     return result
   }

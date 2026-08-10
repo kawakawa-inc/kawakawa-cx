@@ -1,6 +1,7 @@
 // Sync stations from FIO commodity exchanges endpoint
 import { db, fioLocations } from '@kawakawa/db'
 import { fioClient } from './client.js'
+import { classifyFioError } from './fio-error.js'
 import type { SyncResult } from './sync-types.js'
 import { createLogger } from '../utils/logger.js'
 import { syncService } from '../sync-state/sync-service.js'
@@ -88,6 +89,7 @@ export async function syncStations(): Promise<SyncResult> {
   } catch (error) {
     const errorMsg = `Failed to sync stations: ${error instanceof Error ? error.message : 'Unknown error'}`
     result.errors.push(errorMsg)
+    result.errorCode = classifyFioError(error)
     log.error({ err: error }, 'Failed to sync stations')
     return result
   }

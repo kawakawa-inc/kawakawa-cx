@@ -9,6 +9,7 @@ import {
   fioPlanetProduction,
 } from '@kawakawa/db'
 import { FioClient } from './client.js'
+import { classifyFioError } from './fio-error.js'
 import type {
   FioRainPlanet,
   FioSiteResponse,
@@ -290,6 +291,7 @@ export async function syncUserPlanets(
   } catch (error) {
     const errorMsg = `Failed to sync planets for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`
     result.errors.push(errorMsg)
+    result.errorCode = classifyFioError(error)
     log.error({ userId, err: error }, 'Failed to sync user planets')
     return result
   }

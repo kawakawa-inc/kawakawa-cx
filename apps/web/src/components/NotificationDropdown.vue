@@ -399,6 +399,14 @@ function getNotificationIcon(type: NotificationType): string {
       return 'mdi-account-check'
     case 'user_rejected':
       return 'mdi-account-remove'
+    case 'sync_queued':
+      return 'mdi-sync'
+    case 'sync_completed':
+      return 'mdi-cloud-check'
+    case 'sync_failed':
+      return 'mdi-cloud-alert'
+    case 'fio_data_stale':
+      return 'mdi-clock-alert-outline'
     default:
       return 'mdi-bell'
   }
@@ -413,6 +421,7 @@ function getNotificationColor(type: NotificationType): string {
     case 'reservation_fulfilled':
     case 'user_approved':
     case 'user_auto_approved':
+    case 'sync_completed':
       return 'success'
     case 'reservation_rejected':
     case 'reservation_cancelled':
@@ -421,7 +430,14 @@ function getNotificationColor(type: NotificationType): string {
     case 'user_rejected':
       return 'error'
     case 'user_needs_approval':
+    case 'fio_data_stale':
       return 'warning'
+    // FIO failures the user can fix (bad API key) are warnings, not errors —
+    // 'error' reads as "the app broke" when the action is "update your key".
+    case 'sync_failed':
+      return 'warning'
+    case 'sync_queued':
+      return 'info'
     default:
       return 'grey'
   }

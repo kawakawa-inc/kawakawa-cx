@@ -26,6 +26,7 @@ describe('SyncController', () => {
         locations: 1704844800000,
         commodities: 1704844800000,
       },
+      fioError: null,
     }
 
     it('should return sync state with unread count and data versions', async () => {
@@ -42,12 +43,36 @@ describe('SyncController', () => {
         unreadCount: 0,
         appVersion: 'abc123',
         dataVersions: {},
+        fioError: null,
       }
       vi.mocked(syncService.getSyncState).mockResolvedValue(emptyState)
 
       const result = await controller.getSyncState(mockRequest)
 
       expect(result.unreadCount).toBe(0)
+    })
+
+    it('should pass through the FIO error so the UI can surface it', async () => {
+      const failedState: SyncState = {
+        unreadCount: 1,
+        appVersion: 'abc123',
+        dataVersions: {},
+        fioError: {
+          code: 'invalid_credentials',
+          title: 'FIO rejected your API key',
+          detail: 'Issue a new key and save it in Account → FIO.',
+          userActionable: true,
+          jobType: 'user-inventory',
+          rawMessage: 'FIO API request failed (HTTP 401): no details',
+          failedAt: '2026-01-01T00:00:00.000Z',
+        },
+      }
+      vi.mocked(syncService.getSyncState).mockResolvedValue(failedState)
+
+      const result = await controller.getSyncState(mockRequest)
+
+      expect(result.fioError?.code).toBe('invalid_credentials')
+      expect(result.fioError?.userActionable).toBe(true)
     })
   })
 })

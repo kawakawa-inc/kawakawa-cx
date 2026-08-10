@@ -9,6 +9,7 @@
       :fio-configured="fioConfigured"
       :syncing="syncing"
       :stats="fioStats"
+      :fio-error="fioError"
       @sync="syncInventory"
     />
 
@@ -74,20 +75,17 @@
               <router-link to="/account?tab=fio">Configure FIO</router-link>
               to get started.
             </template>
+            <template v-else-if="fioError"> {{ fioError.title }} — {{ fioError.detail }} </template>
             <template v-else> Sync your FIO inventory to see your items here </template>
           </p>
-          <v-btn
-            v-if="!hasActiveFilters && fioConfigured"
-            color="primary"
-            class="mt-4"
-            :disabled="syncing"
-            @click="syncInventory"
-          >
-            <template #prepend>
-              <v-icon :class="{ 'spin-icon': syncing }">mdi-sync</v-icon>
-            </template>
-            FIO Sync
-          </v-btn>
+          <div v-if="!hasActiveFilters && fioConfigured" class="mt-4">
+            <FioSyncButton
+              :fio-configured="fioConfigured"
+              :syncing="syncing"
+              :error="fioError"
+              @sync="syncInventory"
+            />
+          </div>
           <v-btn
             v-if="!hasActiveFilters && !fioConfigured"
             color="primary"
@@ -164,9 +162,10 @@ import { useSettingsStore } from '../stores/settings'
 import { useSnackbar, useDisplayHelpers, useUrlFilters, useUrlState } from '../composables'
 import { usePageState } from '../composables/usePageState'
 import { useDebug } from '../composables/useDebug'
-import { syncService } from '../services/syncService'
+import { syncService, fioError } from '../services/syncService'
 import type { SearchChip } from '../components/TokenSearchInput.vue'
 import InventorySyncCard from '../components/InventorySyncCard.vue'
+import FioSyncButton from '../components/FioSyncButton.vue'
 import InventoryFilterBar from '../components/InventoryFilterBar.vue'
 import InventoryTable from '../components/InventoryTable.vue'
 import OrderDialog from '../components/OrderDialog.vue'
@@ -483,8 +482,12 @@ const watchForSyncCompletion = (jobId: number) => {
       stopSyncWatch()
       syncing.value = false
 
+      // Refresh the shared sync state either way so the FIO error banner
+      // appears (or clears) immediately rather than on the next 60s poll.
+      syncService.refreshSyncState()
+
       if (match.type === 'sync_failed') {
-        showSnackbar(match.message ?? 'FIO sync failed', 'error')
+        showSnackbar(match.title ?? 'FIO sync failed', 'error')
       } else {
         showSnackbar('FIO sync complete')
         loadInventory()
@@ -635,18 +638,3 @@ onUnmounted(() => {
   stopSyncWatch()
 })
 </script>
-
-<style scoped>
-.spin-icon {
-  animation: spin-icon 1s linear infinite;
-}
-
-@keyframes spin-icon {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

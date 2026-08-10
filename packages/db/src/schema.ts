@@ -1079,6 +1079,14 @@ export const syncJobs = pgTable(
     startedAt: timestamp('started_at'),
     finishedAt: timestamp('finished_at'),
     error: text('error'),
+    /**
+     * Machine-readable classification of `error`, so the UI can render a
+     * user-friendly message instead of a raw FIO string. Values are the
+     * `FioErrorCode` union from @kawakawa/types; stored as text rather than a
+     * pg enum so adding a code doesn't need a migration. Null on success and
+     * on rows written before this column existed.
+     */
+    errorCode: text('error_code'),
   },
   table => ({
     // Worker's "next job" query — highest priority, oldest ready-to-run pending job.
@@ -1091,6 +1099,14 @@ export const syncJobs = pgTable(
     userStatusIdx: index('sync_jobs_user_status_idx').on(table.userId, table.status, table.jobType),
     // Children of a given parent (for completion tracking + cache-recompute fanout).
     parentIdx: index('sync_jobs_parent_idx').on(table.parentJobId),
+    // "Latest terminal job per type for this user" — powers the FIO error
+    // surfaced in the sync-state poll. Without this the lookup seq-scans a
+    // table that only ever grows.
+    userRecentIdx: index('sync_jobs_user_recent_idx').on(
+      table.userId,
+      table.jobType,
+      table.finishedAt
+    ),
     parentFk: foreignKey({
       columns: [table.parentJobId],
       foreignColumns: [table.id],

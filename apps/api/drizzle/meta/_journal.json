@@ -232,6 +232,13 @@
       "when": 1785135694098,
       "tag": "0032_cultured_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786314690740,
+      "tag": "0033_fuzzy_ultragirl",
+      "breakpoints": true
     }
   ]
 }

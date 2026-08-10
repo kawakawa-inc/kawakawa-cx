@@ -13,6 +13,24 @@ export class FioApiError extends Error {
     super(message)
     this.name = 'FioApiError'
   }
+
+  /**
+   * Build an error from a non-OK response.
+   *
+   * FIO returns an empty `statusText` for several failure modes (401 in
+   * particular), which used to produce the useless message
+   * "FIO API request failed: ". The status code is always included so the
+   * message stays diagnosable even when the body and statusText are empty.
+   */
+  static async fromResponse(response: Response): Promise<FioApiError> {
+    const body = await response.text().catch(() => '')
+    const reason = response.statusText || body.slice(0, 200).trim() || 'no details'
+    return new FioApiError(
+      `FIO API request failed (HTTP ${response.status}): ${reason}`,
+      response.status,
+      body
+    )
+  }
 }
 
 export class FioClient {
@@ -54,11 +72,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return await response.text()
@@ -96,11 +110,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -176,11 +186,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return await response.text()
@@ -212,11 +218,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return await response.text()
@@ -247,11 +249,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -292,11 +290,7 @@ export class FioClient {
       }
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -327,11 +321,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -369,11 +359,7 @@ export class FioClient {
       })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -404,11 +390,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -442,11 +424,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -480,11 +458,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -518,11 +492,7 @@ export class FioClient {
       const response = await fetch(url.toString(), { headers })
 
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
 
       return (await response.json()) as T
@@ -605,11 +575,7 @@ export class FioClient {
     try {
       const response = await fetch(url.toString(), { headers })
       if (!response.ok) {
-        throw new FioApiError(
-          `FIO API request failed: ${response.statusText}`,
-          response.status,
-          await response.text()
-        )
+        throw await FioApiError.fromResponse(response)
       }
       return (await response.json()) as T
     } catch (error) {

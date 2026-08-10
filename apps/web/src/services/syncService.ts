@@ -1,7 +1,7 @@
 // Sync service - handles polling for sync state and cache invalidation
 
-import { ref } from 'vue'
-import type { SyncState, DataVersions, SyncDataKey } from '@kawakawa/types'
+import { ref, readonly } from 'vue'
+import type { SyncState, DataVersions, SyncDataKey, FioSyncError } from '@kawakawa/types'
 import { locationService } from './locationService'
 import { commodityService } from './commodityService'
 import { authenticatedFetch } from './api'
@@ -35,6 +35,18 @@ export const pollHealth = ref<{ lastSuccessAt: number | null; lastFailed: boolea
 // Whether a manually-triggered retry is currently in flight
 export const retrying = ref(false)
 
+/**
+ * The current user's most recent FIO sync failure, or null when their last
+ * sync succeeded.
+ *
+ * Exposed as a reactive singleton rather than fetched per-component: every
+ * FIO surface (sync buttons, stats panels) needs the same answer, and it
+ * already rides along on the sync-state poll that runs app-wide. Read-only so
+ * only the poll can write it — components must not fake an error state.
+ */
+const fioErrorState = ref<FioSyncError | null>(null)
+export const fioError = readonly(fioErrorState)
+
 // Debounce window for manual retries — ignore clicks within this window
 const RETRY_DEBOUNCE_MS = 5 * 1000
 let lastManualRetryAt = 0
@@ -44,6 +56,8 @@ export const SYNC_EVENTS = {
   UNREAD_COUNT_CHANGED: 'sync:unread-count-changed',
   DATA_UPDATED: 'sync:data-updated',
   APP_VERSION_CHANGED: 'sync:app-version-changed',
+  /** Fired when a FIO error appears or clears (not on every poll). */
+  FIO_ERROR_CHANGED: 'sync:fio-error-changed',
 } as const
 
 // Fetch sync state from API
@@ -78,6 +92,19 @@ async function processSyncState(newState: SyncState): Promise<void> {
           count: newState.unreadCount,
           previousCount: oldState?.unreadCount ?? 0,
         },
+      })
+    )
+  }
+
+  // Surface FIO sync failures. Only emit when the code actually changes, so a
+  // persistent error doesn't re-trigger a toast on every 60s poll.
+  const previousCode = fioErrorState.value?.code ?? null
+  const newCode = newState.fioError?.code ?? null
+  fioErrorState.value = newState.fioError ?? null
+  if (previousCode !== newCode) {
+    window.dispatchEvent(
+      new CustomEvent(SYNC_EVENTS.FIO_ERROR_CHANGED, {
+        detail: { error: newState.fioError ?? null, previousCode },
       })
     )
   }
@@ -233,11 +260,19 @@ export function getBuildVersion(): string {
   return BUILD_VERSION
 }
 
-// Force refresh sync state (useful after login)
+/**
+ * Force refresh sync state (useful after login, or right after a sync
+ * finishes so the FIO error banner reflects the new outcome immediately
+ * instead of up to a poll interval later).
+ *
+ * Routes through processSyncState so cache invalidation and the FIO error
+ * state stay consistent with the regular poll — an earlier version assigned
+ * currentSyncState directly and silently skipped both.
+ */
 export async function refreshSyncState(): Promise<SyncState | null> {
   const state = await fetchSyncState()
   if (state) {
-    currentSyncState = state
+    await processSyncState(state)
   }
   return state
 }
@@ -256,6 +291,7 @@ export function getSyncDebugInfo() {
           unreadCount: currentSyncState.unreadCount,
           appVersion: currentSyncState.appVersion,
           dataVersions: { ...currentSyncState.dataVersions },
+          fioError: currentSyncState.fioError,
         }
       : null,
   }
@@ -265,6 +301,7 @@ export const syncService = {
   startPolling,
   stopPolling,
   getSyncState,
+  fioError,
   getUnreadCount,
   getDataVersions,
   hasAppUpdate,

@@ -1,5 +1,11 @@
 // FIO service exports
 export * from './client.js'
+export {
+  FioSyncFailure,
+  classifyFioError,
+  describeFioError,
+  isRetryableFioError,
+} from './fio-error.js'
 export * from './types.js'
 export * from './csv-parser.js'
 export * from './sync-types.js'

@@ -845,15 +845,15 @@
                 <div class="text-subtitle-1 font-weight-bold mb-3">Sync Actions</div>
 
                 <div class="d-flex ga-2 flex-wrap mb-4">
-                  <v-btn
-                    color="primary"
-                    :loading="syncing"
-                    :disabled="syncing || clearing || !settingsStore.hasFioCredentials.value"
-                    @click="syncFio"
-                  >
-                    <v-icon start>mdi-cloud-download</v-icon>
-                    Sync Now
-                  </v-btn>
+                  <FioSyncButton
+                    :fio-configured="settingsStore.hasFioCredentials.value"
+                    :syncing="syncing"
+                    :disabled="clearing"
+                    :error="fioError"
+                    label="Sync Now"
+                    icon="mdi-cloud-download"
+                    @sync="syncFio"
+                  />
                   <v-btn
                     color="error"
                     variant="outlined"
@@ -879,59 +879,15 @@
                 <!-- FIO Statistics -->
                 <v-divider class="my-4" />
 
-                <div class="text-subtitle-1 font-weight-bold mb-3">Statistics</div>
-
-                <div class="d-flex flex-wrap ga-6 mb-4 justify-center">
-                  <div class="text-center">
-                    <div class="text-h5 font-weight-bold">{{ fioStats.totalItems }}</div>
-                    <div class="text-caption text-medium-emphasis">Items</div>
-                  </div>
-                  <div class="text-center">
-                    <div class="text-h5 font-weight-bold">
-                      {{ formatNumber(fioStats.totalQuantity) }}
-                    </div>
-                    <div class="text-caption text-medium-emphasis">Quantity</div>
-                  </div>
-                  <div class="text-center">
-                    <div class="text-h5 font-weight-bold">{{ fioStats.uniqueCommodities }}</div>
-                    <div class="text-caption text-medium-emphasis">Commodities</div>
-                  </div>
-                  <div class="text-center">
-                    <div class="text-h5 font-weight-bold">{{ fioStats.storageLocations }}</div>
-                    <div class="text-caption text-medium-emphasis">Locations</div>
-                  </div>
+                <div class="text-subtitle-1 font-weight-bold mb-3">
+                  {{ fioError ? 'Sync Problem' : 'Statistics' }}
                 </div>
 
-                <div class="d-flex flex-wrap ga-4 justify-center">
-                  <div class="d-flex align-center">
-                    <v-icon
-                      class="mr-2"
-                      size="small"
-                      :color="getDataAgeInfo(fioStats.oldestFioUploadTime).color"
-                    >
-                      {{ getDataAgeInfo(fioStats.oldestFioUploadTime).icon }}
-                    </v-icon>
-                    <div>
-                      <div class="text-body-2">
-                        Oldest: {{ formatDateTime(fioStats.oldestFioUploadTime) }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="d-flex align-center">
-                    <v-icon
-                      class="mr-2"
-                      size="small"
-                      :color="getDataAgeInfo(fioStats.newestFioUploadTime).color"
-                    >
-                      {{ getDataAgeInfo(fioStats.newestFioUploadTime).icon }}
-                    </v-icon>
-                    <div>
-                      <div class="text-body-2">
-                        Newest: {{ formatDateTime(fioStats.newestFioUploadTime) }}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <!--
+                  Already on the FIO settings page, so the panel's
+                  "Fix FIO settings" link would just reload this view.
+                -->
+                <FioStatsPanel :stats="fioStats" :error="fioError" :show-fix-action="false" />
               </v-card-text>
             </v-card>
           </v-tabs-window-item>
@@ -1232,12 +1188,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUrlTab } from '../composables'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
 import DiscordIcon from '../components/DiscordIcon.vue'
+import FioStatsPanel from '../components/FioStatsPanel.vue'
+import FioSyncButton from '../components/FioSyncButton.vue'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 import { CURRENCIES } from '../types'
 import type { LocationDisplayMode, CommodityDisplayMode, CommodityIconStyle, Role } from '../types'
@@ -1245,6 +1203,7 @@ import type { DiscordConnectionStatus, MessageVisibility } from '@kawakawa/types
 import { api } from '../services/api'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
+import { syncService, fioError } from '../services/syncService'
 
 const route = useRoute()
 const router = useRouter()
@@ -1589,32 +1548,6 @@ const showSnackbar = (message: string, color: 'success' | 'error' = 'success') =
   }
 }
 
-const formatNumber = (num: number): string => {
-  return num.toLocaleString()
-}
-
-const formatDateTime = (dateStr: string | null): string => {
-  if (!dateStr) return 'Never'
-  const date = new Date(dateStr)
-  return date.toLocaleString()
-}
-
-const getDataAgeInfo = (dateStr: string | null): { color: string; icon: string } => {
-  if (!dateStr) return { color: 'grey', icon: 'mdi-clock-outline' }
-
-  const date = new Date(dateStr)
-  const now = new Date()
-  const hoursAgo = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
-
-  if (hoursAgo < 24) {
-    return { color: 'success', icon: 'mdi-clock-check' }
-  } else if (hoursAgo < 48) {
-    return { color: 'warning', icon: 'mdi-clock-alert-outline' }
-  } else {
-    return { color: 'error', icon: 'mdi-clock-remove-outline' }
-  }
-}
-
 const loadFioStats = async () => {
   try {
     loadingFio.value = true
@@ -1743,6 +1676,10 @@ onMounted(async () => {
   }
 })
 
+onUnmounted(() => {
+  stopSyncWatch()
+})
+
 // Compute effective datetime format value for saving
 const getDatetimeFormatValue = (): string => {
   if (datetimeFormatSelection.value === 'custom') {
@@ -1843,16 +1780,72 @@ const saveFioApiKey = async () => {
   }
 }
 
+/**
+ * Poll for the enqueued job's completion notification so the button keeps
+ * spinning for the real sync duration rather than just the (near-instant)
+ * enqueue call, and so the error panel updates as soon as it finishes.
+ */
+let syncWatchTimer: ReturnType<typeof setInterval> | null = null
+
+const stopSyncWatch = () => {
+  if (syncWatchTimer) {
+    clearInterval(syncWatchTimer)
+    syncWatchTimer = null
+  }
+}
+
+const watchForSyncCompletion = (jobId: number) => {
+  stopSyncWatch()
+
+  const startedAt = Date.now()
+  const MAX_WAIT_MS = 3 * 60 * 1000 // safety net in case the notification is missed
+  const POLL_MS = 4 * 1000
+
+  syncWatchTimer = setInterval(async () => {
+    if (Date.now() - startedAt > MAX_WAIT_MS) {
+      stopSyncWatch()
+      syncing.value = false
+      return
+    }
+
+    try {
+      const recent = await api.notifications.list(20, 0, true)
+      const match = recent.find(
+        n =>
+          (n.type === 'sync_completed' || n.type === 'sync_failed') &&
+          (n.data as { jobId?: number } | null)?.jobId === jobId
+      )
+      if (!match) return
+
+      stopSyncWatch()
+      syncing.value = false
+
+      // Refresh shared sync state so the FIO error panel reflects this run
+      // immediately instead of on the next 60s poll.
+      syncService.refreshSyncState()
+
+      if (match.type === 'sync_failed') {
+        showSnackbar(match.title ?? 'FIO sync failed', 'error')
+      } else {
+        showSnackbar('FIO sync complete')
+        loadFioStats()
+      }
+    } catch (error) {
+      console.error('Failed to check sync status', error)
+    }
+  }, POLL_MS)
+}
+
 const syncFio = async () => {
   try {
     syncing.value = true
-    await api.fioSync.startAll()
+    const { jobIds } = await api.fioSync.startAll()
     showSnackbar('FIO sync queued — you’ll be notified when it finishes')
+    watchForSyncCompletion(jobIds.inventory)
   } catch (error) {
     console.error('Failed to enqueue FIO sync', error)
     const errorMessage = error instanceof Error ? error.message : 'Failed to enqueue FIO sync'
     showSnackbar(errorMessage, 'error')
-  } finally {
     syncing.value = false
   }
 }

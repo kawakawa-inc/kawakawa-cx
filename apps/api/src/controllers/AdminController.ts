@@ -13,7 +13,7 @@ import {
   Query,
   SuccessResponse,
 } from 'tsoa'
-import type { Role } from '@kawakawa/types'
+import type { Role, FioSyncError } from '@kawakawa/types'
 import {
   db,
   users,
@@ -36,10 +36,16 @@ import { enqueueUserFullSync } from '@kawakawa/services/sync-queue'
 import { notificationService } from '@kawakawa/services/notifications'
 import * as userSettingsService from '@kawakawa/services/user-settings'
 import { isUserActive } from '@kawakawa/services/activity'
+import { getFioSyncErrorsForUsers } from '@kawakawa/services/sync-state'
 
 interface FioSyncInfo {
   fioUsername: string | null
   lastSyncedAt: Date | null
+  /**
+   * The member's current FIO sync failure, if their last sync failed.
+   * Lets admins spot revoked API keys without digging through worker logs.
+   */
+  error: FioSyncError | null
 }
 
 interface DiscordInfo {
@@ -217,6 +223,9 @@ export class AdminController extends Controller {
       .limit(pageSize)
       .offset(offset)
 
+    // One batched lookup for the whole page rather than a query per row.
+    const fioErrors = await getFioSyncErrorsForUsers(userList.map(u => u.id))
+
     // Transform results to AdminUser format
     const usersWithDetails: AdminUser[] = await Promise.all(
       userList.map(async user => {
@@ -256,6 +265,7 @@ export class AdminController extends Controller {
           fioSync: {
             fioUsername,
             lastSyncedAt: user.lastSyncedAt || null,
+            error: fioErrors.get(user.id) ?? null,
           },
           discord: {
             connected: !!user.discordId,
@@ -359,6 +369,9 @@ export class AdminController extends Controller {
       .where(eq(userRoles.roleId, 'unverified'))
       .orderBy(desc(users.createdAt))
 
+    // One batched lookup for the whole list rather than a query per row.
+    const fioErrors = await getFioSyncErrorsForUsers(userList.map(u => u.id))
+
     // Transform results to AdminUser format
     return Promise.all(
       userList.map(async user => {
@@ -398,6 +411,7 @@ export class AdminController extends Controller {
           fioSync: {
             fioUsername,
             lastSyncedAt: user.lastSyncedAt || null,
+            error: fioErrors.get(user.id) ?? null,
           },
           discord: {
             connected: !!user.discordId,
@@ -573,10 +587,13 @@ export class AdminController extends Controller {
       }
     }
 
-    const activity = await isUserActive({
-      inactiveUntil: user.inactiveUntil,
-      lastActiveAt: user.lastActiveAt,
-    })
+    const [activity, fioErrors] = await Promise.all([
+      isUserActive({
+        inactiveUntil: user.inactiveUntil,
+        lastActiveAt: user.lastActiveAt,
+      }),
+      getFioSyncErrorsForUsers([user.id]),
+    ])
 
     return {
       id: user.id,
@@ -589,6 +606,7 @@ export class AdminController extends Controller {
       fioSync: {
         fioUsername,
         lastSyncedAt: user.lastSyncedAt || null,
+        error: fioErrors.get(user.id) ?? null,
       },
       discord: {
         connected: !!user.discordId,

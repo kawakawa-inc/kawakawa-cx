@@ -16,6 +16,7 @@
 import { eq, inArray, sql } from 'drizzle-orm'
 import { db, fioUserShips, fioUserShipFlights, fioUserShipRepairMaterials } from '@kawakawa/db'
 import { FioClient } from './client.js'
+import { classifyFioError } from './fio-error.js'
 import type {
   FioShip,
   FioShipFuelStore,
@@ -406,6 +407,7 @@ export async function syncUserShips(
   } catch (error) {
     const errorMsg = `Failed to sync ships for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`
     result.errors.push(errorMsg)
+    result.errorCode = classifyFioError(error)
     log.error({ userId, err: error }, 'Failed to sync user ships')
     return result
   }

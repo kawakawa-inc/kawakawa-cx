@@ -528,6 +528,47 @@ export type SyncDataKey =
 /** Data versions - timestamps (ms) of last modification */
 export type DataVersions = Partial<Record<SyncDataKey, number>>
 
+/**
+ * Classification of a failed FIO sync.
+ *
+ * The code is what the UI switches on; the raw error string from FIO is only
+ * ever shown as secondary detail. `unknown` is the catch-all for anything we
+ * haven't taught the classifier about yet.
+ */
+export type FioErrorCode =
+  | 'no_credentials' // user hasn't configured a FIO username/API key
+  | 'invalid_credentials' // FIO rejected the key (401/403) — user must re-issue it
+  | 'not_found' // FIO has no record of the username (404)
+  | 'rate_limited' // FIO throttled us (429)
+  | 'fio_unavailable' // FIO returned 5xx
+  | 'network' // couldn't reach FIO at all
+  | 'data' // we reached FIO but couldn't store what it returned
+  | 'unknown'
+
+/** Error codes the user can fix themselves — retrying without action is pointless. */
+export const FIO_USER_ACTIONABLE_ERROR_CODES: readonly FioErrorCode[] = [
+  'no_credentials',
+  'invalid_credentials',
+  'not_found',
+] as const
+
+/** A user-facing description of the most recent failed FIO sync. */
+export interface FioSyncError {
+  code: FioErrorCode
+  /** Short, user-friendly summary. Safe to render as-is. */
+  title: string
+  /** What the user should do about it. Safe to render as-is. */
+  detail: string
+  /** Whether the user can resolve this themselves (drives "Fix it" links). */
+  userActionable: boolean
+  /** Which job failed, e.g. 'user-inventory'. */
+  jobType: string
+  /** Raw error text from the failed job — diagnostic detail, may be technical. */
+  rawMessage: string | null
+  /** ISO timestamp of when the job finished failing. */
+  failedAt: string
+}
+
 /** Sync state returned by the polling endpoint */
 export interface SyncState {
   /** Unread notification count */
@@ -536,6 +577,11 @@ export interface SyncState {
   appVersion: string
   /** Data version timestamps for cache invalidation */
   dataVersions: DataVersions
+  /**
+   * The user's most recent FIO sync failure, or null when the last sync
+   * succeeded. Cleared automatically once a later sync succeeds.
+   */
+  fioError: FioSyncError | null
 }
 
 // ==================== ORDER RESERVATIONS ====================

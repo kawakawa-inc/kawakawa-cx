@@ -4,6 +4,7 @@ import { db, users, userRoles, roles } from '../db/index.js'
 import { eq, sql } from 'drizzle-orm'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken, type JwtPayload } from '../utils/jwt.js'
+import { issueAuthCookie, revokeAuthCookie } from '../utils/authCookie.js'
 import { BadRequest, NotFound } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
 
@@ -171,15 +172,17 @@ export class AccountController extends Controller {
       .returning({ tokenVersion: users.tokenVersion })
 
     // Bumping tokenVersion invalidates every existing JWT — including the one
-    // this request was made with. Issue a replacement for the current session
-    // so the user is not silently logged out of the tab they are using.
-    // Other devices/tabs still lose their session, which is the intent.
+    // this request was made with. Issue a replacement so the user is not
+    // silently logged out. Delivered as a `Set-Cookie`, so every tab in this
+    // browser adopts it; other devices still lose their session, as intended.
     const token = generateToken({
       userId,
       username: request.user.username,
       roles: request.user.roles,
       tokenVersion: updated.tokenVersion,
     })
+
+    issueAuthCookie(token)
 
     return { success: true, token }
   }
@@ -237,6 +240,12 @@ export class AccountController extends Controller {
     // - userDiscordProfiles
     // - settings.changedByUserId will be set to null
     await db.delete(users).where(eq(users.id, userId))
+
+    // Revoke the session cookies. The user row is gone so authentication would
+    // fail regardless, but leaving the cookies in place means the browser keeps
+    // presenting a credential for an account that no longer exists — and the
+    // readable presence flag would keep the SPA's router guards passing.
+    revokeAuthCookie()
 
     return { success: true }
   }

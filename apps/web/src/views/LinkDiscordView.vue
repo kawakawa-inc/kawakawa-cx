@@ -69,7 +69,8 @@
                   variant="text"
                   block
                   class="mt-2"
-                  to="/login?redirect=/link-discord"
+                  :loading="loggingOut"
+                  :disabled="linking || loggingOut"
                   @click="logout"
                 >
                   Login as Different User
@@ -96,12 +97,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../services/api'
 import { useUserStore } from '../stores/user'
-import { clearCredentials } from '../services/session'
+import { clearCachedUser, markSessionDead } from '../services/session'
 
 const route = useRoute()
+const router = useRouter()
 const userStore = useUserStore()
 
 const validating = ref(true)
@@ -111,28 +113,57 @@ const errorMessage = ref('')
 const tokenError = ref('')
 const discordUsername = ref('')
 const linking = ref(false)
+const loggingOut = ref(false)
 
 const token = computed(() => route.query.token as string | undefined)
 const user = computed(() => userStore.getUser())
 const isLoggedIn = computed(() => !!user.value)
 const currentUsername = computed(() => user.value?.displayName || user.value?.username || '')
 
-// Build login redirect URL that preserves the token
-const loginRedirectUrl = computed(() => {
-  const redirect = `/link-discord?token=${token.value}`
-  return `/login?redirect=${encodeURIComponent(redirect)}`
-})
+// Every route away from this page has to carry the link token back, or the user
+// returns to a "No link token provided" dead end.
+const returnPath = computed(() => `/link-discord?token=${token.value}`)
 
-const registerRedirectUrl = computed(() => {
-  const redirect = `/link-discord?token=${token.value}`
-  return `/register?redirect=${encodeURIComponent(redirect)}`
-})
+const loginRedirectUrl = computed(() => `/login?redirect=${encodeURIComponent(returnPath.value)}`)
 
-const logout = () => {
-  // Must drop the JWT too — clearing only the cached user left the API
-  // session alive, so "log out" here didn't actually log the user out.
-  clearCredentials()
-  userStore.clearUser()
+const registerRedirectUrl = computed(
+  () => `/register?redirect=${encodeURIComponent(returnPath.value)}`
+)
+
+/**
+ * Sign out so the user can link Discord to a different account.
+ *
+ * Awaits the round-trip and navigates afterwards rather than letting a `to=`
+ * binding race it: the login screen must not appear while the old session is
+ * still live, or the user signs in as themselves again and the button looks
+ * broken.
+ *
+ * A failed revoke is surfaced rather than swallowed. Local state is torn down
+ * either way — the user must never be stuck in a signed-in-looking UI — but the
+ * session stays valid server-side for up to the cookie's lifetime, which the
+ * user needs to know before handing the machine to someone else.
+ */
+const logout = async () => {
+  loggingOut.value = true
+  try {
+    // Revoke server-side: the session cookie is httpOnly, so clearing local
+    // state alone would leave the API session alive and the user logged in.
+    const { revoked } = await api.auth.logout()
+    clearCachedUser()
+    markSessionDead()
+    userStore.clearUser()
+
+    // The previous `to="/login?redirect=/link-discord"` dropped the token.
+    await router.push({
+      path: '/login',
+      query: {
+        redirect: returnPath.value,
+        ...(revoked ? {} : { reason: 'logout-failed' }),
+      },
+    })
+  } finally {
+    loggingOut.value = false
+  }
 }
 
 onMounted(async () => {

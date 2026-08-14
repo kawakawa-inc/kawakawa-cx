@@ -94,8 +94,20 @@ export async function bumpDataVersions(
   return versions
 }
 
+/**
+ * The build version this process is running.
+ *
+ * Exposed separately from `getSyncState` so it can be served without a session —
+ * see `SyncController.getVersion` for why an expired tab must still be able to
+ * learn that its bundle is stale.
+ */
+export function getAppVersion(): string {
+  return APP_VERSION
+}
+
 export const syncService = {
   getSyncState,
+  getAppVersion,
   getDataVersions,
   getDataVersion,
   bumpDataVersion,

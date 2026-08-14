@@ -1,3 +1,14 @@
+# DigitalOcean App Platform app spec for prod (kawakawa.cx).
+#
+# Reference: https://docs.digitalocean.com/products/app-platform/reference/app-spec
+#
+# Bindable variables (`${APP_URL}`, `${kawa-db.DATABASE_URL}` and friends) are
+# resolved by the platform at runtime and are documented separately:
+# https://docs.digitalocean.com/products/app-platform/how-to/use-environment-variables/#use-bindable-variables
+#
+# Prefer a bindable variable over a hardcoded value wherever one exists — a
+# literal is a second copy that has to be kept in step by hand, and config drift
+# here fails quietly rather than loudly.
 alerts:
   - rule: DEPLOYMENT_FAILED
   - rule: DOMAIN_FAILED
@@ -103,6 +114,19 @@ services:
       - key: PORT
         scope: RUN_TIME
         value: '3000'
+      # Public origin of the app, used by the CSRF origin check
+      # (apps/api/src/middleware/csrf.ts).
+      #
+      # `${APP_URL}` is a DigitalOcean bindable variable resolving to the PRIMARY
+      # domain in http(s) form, injected at runtime. Deliberately not hardcoded to
+      # https://kawakawa.cx: a literal would be a second copy of the domain that
+      # must be kept in step with `domains` above, and if it ever drifted the CSRF
+      # check would silently fall back to the weaker Host comparison rather than
+      # failing loudly.
+      # https://docs.digitalocean.com/products/app-platform/how-to/use-environment-variables/#app-wide-variables
+      - key: APP_ORIGIN
+        scope: RUN_TIME
+        value: ${APP_URL}
     http_port: 3000
     image:
       registry: ghcr.io

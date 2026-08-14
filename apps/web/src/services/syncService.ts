@@ -60,6 +60,56 @@ export const SYNC_EVENTS = {
   FIO_ERROR_CHANGED: 'sync:fio-error-changed',
 } as const
 
+/**
+ * Reload the page when the deployed build no longer matches this bundle.
+ *
+ * A tab left open across a deploy runs stale JS indefinitely. That is how a
+ * three-week-old bundle stayed alive long enough to keep clearing credentials on
+ * every 401 — the fixes for that bug shipped repeatedly and never reached the
+ * tabs that needed them, because a fix has to be loaded to run.
+ *
+ * Deliberately uses the *unauthenticated* `/api/sync/version`: the authenticated
+ * poll 401s before it can report a version, and the tab most in need of eviction
+ * is precisely the one whose session has lapsed.
+ *
+ * Callers must not tie this to the poll alone. A stale tab's first 401 tears the
+ * session down and stops polling, so a poll-only trigger gets exactly one
+ * attempt, racing its own teardown — lose that race (offline, slow response) and
+ * the tab stays stale forever, which is the failure this exists to eliminate.
+ * A stale tab whose session is still *valid* never triggers it at all, because
+ * its polls succeed. `App.vue` therefore also calls this on mount and on every
+ * return to visibility: the moments a stale tab is most likely to be revived.
+ *
+ * Guarded by `hasReloadedForVersion` so a version that somehow never matches
+ * cannot produce a reload loop.
+ */
+let hasReloadedForVersion = false
+
+export async function evictIfStale(): Promise<void> {
+  if (BUILD_VERSION === 'dev' || hasReloadedForVersion) return
+
+  try {
+    const response = await fetch('/api/sync/version')
+    if (!response.ok) return
+    const { appVersion } = (await response.json()) as { appVersion: string }
+    if (!appVersion || appVersion === BUILD_VERSION) return
+
+    hasReloadedForVersion = true
+    // Log before reloading: if the new bundle still reports the old version (an
+    // intermediary serving stale index.html despite the no-cache header) this is
+    // the only trace that the guard fired and the tab is now stuck stale.
+    console.warn('Build version mismatch — reloading', {
+      bundle: BUILD_VERSION,
+      deployed: appVersion,
+    })
+    // `reload()` revalidates index.html, which is served no-cache, so the new
+    // bundle is picked up rather than the cached one.
+    window.location.reload()
+  } catch {
+    // Offline or API down — try again on the next poll.
+  }
+}
+
 // Fetch sync state from API
 async function fetchSyncState(): Promise<SyncState | null> {
   try {
@@ -76,6 +126,10 @@ async function fetchSyncState(): Promise<SyncState | null> {
     return await response.json()
   } catch (error) {
     console.error('Failed to fetch sync state:', error)
+    // The poll failed, possibly because this bundle is stale (its session
+    // handling may predate the current API contract). Check the version
+    // endpoint, which needs no session, and self-evict if we are outdated.
+    void evictIfStale()
     return null
   }
 }
@@ -309,5 +363,6 @@ export const syncService = {
   refreshSyncState,
   getSyncDebugInfo,
   retryPoll,
+  evictIfStale,
   EVENTS: SYNC_EVENTS,
 }

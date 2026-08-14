@@ -1424,6 +1424,14 @@ const sortedLocationOptions = computed(() => {
 })
 
 // FIO-specific state
+//
+// `fioUsername` is a local editing buffer rather than a direct binding to the
+// store, because it saves on blur instead of on every keystroke. It therefore
+// has to be re-seeded whenever the store's value arrives or changes — see the
+// watcher below. Seeding it only once in onMounted was a data-loss bug:
+// `setUser()` kicks off `loadSettings()` without awaiting it, so onMounted read
+// the store before the fetch resolved, left the field blank, and then tabbing
+// through the empty field blurred it and saved "" over the real username.
 const fioUsername = ref('')
 const fioApiKey = ref('')
 const showFioApiKey = ref(false)
@@ -1756,8 +1764,27 @@ const autoSaveNumberFormat = async () => {
   }
 }
 
+// Keep the local editing buffer in step with the store.
+//
+// Settings load asynchronously (`setUser()` fires `loadSettings()` without
+// awaiting), so the value is usually not there yet when this view mounts.
+// Without this the field stayed blank and blurring it saved "" over the user's
+// real FIO username — silent data loss just from tabbing through the tab.
+watch(
+  () => settingsStore.fioUsername.value,
+  stored => {
+    fioUsername.value = stored || ''
+  }
+)
+
 // Auto-save FIO username
 const saveFioUsername = async () => {
+  // Guard against saving a blank over a stored value before settings arrive.
+  // The watcher above normally prevents this, but a blur racing the initial
+  // load would otherwise still wipe it, and the cost of being wrong is the
+  // user silently losing their FIO link.
+  if (!fioUsername.value && !settingsStore.isLoaded.value) return
+
   try {
     await settingsStore.updateSettings({ 'fio.username': fioUsername.value })
   } catch (error) {
@@ -2033,8 +2060,10 @@ const deleteAccount = async () => {
   try {
     deletingAccount.value = true
     await api.account.deleteAccount()
-    // Account deleted - redirect to login with message
-    router.push({ path: '/login', query: { message: 'account_deleted' } })
+    // `reason`, not `message`: LoginView only reads `reason`, so the previous
+    // `message: 'account_deleted'` was silently dropped and the user landed on a
+    // bare login form with no confirmation their account was gone.
+    router.push({ path: '/login', query: { reason: 'account-deleted' } })
   } catch (error) {
     console.error('Failed to delete account', error)
     const errorMessage = error instanceof Error ? error.message : 'Failed to delete account'

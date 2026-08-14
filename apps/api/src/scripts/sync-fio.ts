@@ -1,7 +1,11 @@
 #!/usr/bin/env tsx
 // CLI script that enqueues FIO syncs through the queue.
-// The actual work is done by the worker loop inside the API process;
-// this script just populates the queue.
+//
+// The actual work is done by the @kawakawa/sync-worker daemon, in a *separate
+// process*. This script only populates the queue and returns immediately, so
+// anything that depends on the synced data must wait for the queue to drain —
+// see `pnpm fio:wait` (scripts/wait-for-sync.ts), which the Makefile reset
+// targets run straight after this one.
 //
 // Note: prices sync still runs directly — it's not part of the queue
 // (read-heavy, doesn't compete with per-user syncs for rate limits).
@@ -10,6 +14,10 @@
 //   pnpm fio:sync                     # enqueue all (commodities, locations, stations, users)
 //   pnpm fio:sync commodities         # just commodities
 //   pnpm fio:sync prices [field]      # run prices sync inline (no queue)
+//
+// 'all' deliberately excludes prices: it runs inline and needs commodities to
+// already be in the database, which in 'all' mode are only queued. Run it as
+// its own step after `fio:wait` (the `fio-sync` Makefile target does this).
 
 import { syncFioExchangePrices, type FioPriceField } from '@kawakawa/services/fio'
 import { db, users, client } from '../db/index.js'
@@ -51,7 +59,12 @@ async function main() {
       log.info({ jobId: id }, 'Enqueued stations')
     }
 
-    if (syncType === 'prices' || syncType === 'all') {
+    // Prices runs inline while commodities is merely *enqueued*, so in 'all'
+    // mode against a fresh database prices used to run first and always fail
+    // with "No commodities found in database". Skip it there and let the
+    // follow-up `fio:wait` + an explicit `fio:sync:prices` handle it, rather
+    // than emitting a guaranteed error that trains people to ignore the log.
+    if (syncType === 'prices') {
       // Prices sync is run inline — it's heavy and has its own rate story.
       const priceFieldArg = args[1]
       const priceField: FioPriceField =
@@ -65,6 +78,7 @@ async function main() {
         log.info({ totalUpdated: pricesResult.totalUpdated }, 'Prices sync completed')
       } else {
         log.error({ errors: pricesResult.errors }, 'Prices sync failed')
+        process.exitCode = 1
       }
     }
 

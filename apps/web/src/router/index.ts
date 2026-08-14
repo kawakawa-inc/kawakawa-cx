@@ -22,7 +22,7 @@ import SalesOrderQueueView from '../views/SalesOrderQueueView.vue'
 import LogisticsView from '../views/LogisticsView.vue'
 import MyBasesView from '../views/MyBasesView.vue'
 import CorpOverviewView from '../views/CorpOverviewView.vue'
-import { getToken, USER_STORAGE_KEY } from '../services/session'
+import { hasSession, cachedUserRoles } from '../services/session'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -174,36 +174,20 @@ const router = createRouter({
   ],
 })
 
-// Helper to check if user has a role
-const hasRole = (roleId: string): boolean => {
-  const userStr = localStorage.getItem(USER_STORAGE_KEY)
-  if (!userStr) return false
-  try {
-    const user = JSON.parse(userStr)
-    return user.roles?.some((r: { id: string }) => r.id === roleId) ?? false
-  } catch {
-    return false
-  }
-}
+// Helper to check if user has a role.
+//
+// Reads the cached user blob, not the JWT: the session is an httpOnly cookie and
+// is not readable from JS. These are presentation decisions only — every
+// protected endpoint re-checks roles and permissions server-side, so a tampered
+// cache changes which screen renders, never what the user may actually do.
+const hasRole = (roleId: string): boolean => cachedUserRoles().includes(roleId)
 
 // Check if user is verified (has any role other than 'unverified')
-const isVerified = (): boolean => {
-  const userStr = localStorage.getItem(USER_STORAGE_KEY)
-  if (!userStr) return false
-  try {
-    const user = JSON.parse(userStr)
-    // User is verified if they have any role that isn't 'unverified'
-    return user.roles?.some((r: { id: string }) => r.id !== 'unverified') ?? false
-  } catch {
-    return false
-  }
-}
+const isVerified = (): boolean => cachedUserRoles().some(id => id !== 'unverified')
 
 // Navigation guard for authentication and authorization
 router.beforeEach((to, _from, next) => {
-  const jwt = getToken()
-
-  if (to.meta.requiresAuth && !jwt) {
+  if (to.meta.requiresAuth && !hasSession()) {
     // Save the intended destination for post-login redirect
     const redirectPath = to.fullPath !== '/login' ? to.fullPath : '/market'
     next({

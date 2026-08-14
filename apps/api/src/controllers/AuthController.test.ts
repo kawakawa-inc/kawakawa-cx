@@ -77,6 +77,15 @@ vi.mock('@kawakawa/services/notifications', () => ({
   notificationService: { create: vi.fn() },
 }))
 
+const { mockIssueAuthCookie, mockRevokeAuthCookie } = vi.hoisted(() => ({
+  mockIssueAuthCookie: vi.fn(),
+  mockRevokeAuthCookie: vi.fn(),
+}))
+vi.mock('../utils/authCookie.js', () => ({
+  issueAuthCookie: mockIssueAuthCookie,
+  revokeAuthCookie: mockRevokeAuthCookie,
+}))
+
 import { AuthController } from './AuthController.js'
 
 // Helper to build the tx mock used inside db.transaction callback
@@ -141,6 +150,25 @@ describe('AuthController - Discord Linking', () => {
     mockDbTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = createTxMock({ updateReturning: [] })
       return cb(tx)
+    })
+  })
+
+  /**
+   * Logout must be a server round-trip now that the session cookie is httpOnly:
+   * JS cannot delete it. It is also deliberately unauthenticated and idempotent,
+   * so logging out with an already-dead session still clears the cookie rather
+   * than 401ing and leaving it in place.
+   */
+  describe('logout', () => {
+    it('revokes the session cookie', async () => {
+      const result = await controller.logout()
+
+      expect(mockRevokeAuthCookie).toHaveBeenCalledTimes(1)
+      expect(result.message).toBe('Logged out')
+    })
+
+    it('succeeds when called without a valid session', async () => {
+      await expect(controller.logout()).resolves.toMatchObject({ message: 'Logged out' })
     })
   })
 

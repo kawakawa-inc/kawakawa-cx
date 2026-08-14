@@ -18,6 +18,7 @@ import { eq, desc } from 'drizzle-orm'
 import { BadRequest } from '../utils/errors.js'
 import { discordService } from '../services/discordService.js'
 import { generateToken } from '../utils/jwt.js'
+import { issueAuthCookie } from '../utils/authCookie.js'
 import { getPermissions } from '../utils/permissionService.js'
 import { createLogger } from '../utils/logger.js'
 import crypto from 'crypto'
@@ -435,6 +436,10 @@ export class DiscordAuthController extends Controller {
       roles: roleIds,
       tokenVersion: user.tokenVersion,
     })
+
+    // Both Discord login paths (existing-profile callback and post-registration
+    // link) funnel through here, so issuing the cookie once covers both.
+    issueAuthCookie(token)
 
     return {
       token,

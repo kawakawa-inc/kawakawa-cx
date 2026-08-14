@@ -93,6 +93,64 @@ describe('expressAuthentication', () => {
     mockPermissionsWhere.mockResolvedValue([])
   })
 
+  /**
+   * The session normally arrives in an httpOnly cookie. The Bearer header is
+   * retained as a fallback so bundles loaded before the cookie migration are not
+   * force-logged-out by the deploy — which is the exact failure this migration
+   * exists to prevent.
+   */
+  describe('token source', () => {
+    const payload = {
+      userId: 1,
+      username: 'testuser',
+      roles: ['member'],
+      tokenVersion: 0,
+    }
+
+    beforeEach(() => {
+      vi.mocked(jwtUtils.verifyToken).mockReturnValue(payload)
+    })
+
+    it('authenticates from the session cookie', async () => {
+      const req = {
+        headers: {},
+        cookies: { kawa_session: 'cookie-token' },
+      } as unknown as Request
+
+      const result = await expressAuthentication(req, 'jwt')
+
+      expect(jwtUtils.verifyToken).toHaveBeenCalledWith('cookie-token')
+      expect(result).toMatchObject({ userId: 1 })
+    })
+
+    it('prefers the cookie over the Authorization header', async () => {
+      const req = {
+        headers: { authorization: 'Bearer header-token' },
+        cookies: { kawa_session: 'cookie-token' },
+      } as unknown as Request
+
+      await expressAuthentication(req, 'jwt')
+
+      expect(jwtUtils.verifyToken).toHaveBeenCalledWith('cookie-token')
+    })
+
+    it('still accepts the Authorization header for pre-migration clients', async () => {
+      const req = {
+        headers: { authorization: 'Bearer header-token' },
+      } as unknown as Request
+
+      await expressAuthentication(req, 'jwt')
+
+      expect(jwtUtils.verifyToken).toHaveBeenCalledWith('header-token')
+    })
+
+    it('rejects when neither cookie nor header is present', async () => {
+      const req = { headers: {}, cookies: {} } as unknown as Request
+
+      await expect(expressAuthentication(req, 'jwt')).rejects.toThrow('No token provided')
+    })
+  })
+
   describe('jwt authentication', () => {
     it('should reject when no token is provided', async () => {
       mockRequest.headers = {}

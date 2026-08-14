@@ -1,8 +1,8 @@
 // API service that switches between mock and real backend
 import { mockApi, USE_MOCK_API } from './mockApi'
 import { fetchWithLogging } from './logService'
-import { handleAuthFailure } from './authBus'
-import { getToken, setToken, clearCredentials } from './session'
+import { handleAuthFailure, ROLES_CHANGED_EVENT } from './authBus'
+import { clearCachedUser, markSessionDead } from './session'
 import type {
   User,
   Currency,
@@ -1044,43 +1044,14 @@ interface UpdateReservationStatusRequest {
   notes?: string
 }
 
-// Helper to create auth headers
-const getAuthHeaders = (): HeadersInit => {
-  const token = getToken()
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }
-}
-
-// Check for refreshed token header and update stored token
-const handleRefreshedToken = (response: Response): void => {
-  const refreshedToken = response.headers.get('X-Refreshed-Token')
-  if (refreshedToken) {
-    setToken(refreshedToken)
-    // Dispatch event so app can update user state if needed
-    window.dispatchEvent(new CustomEvent('token-refreshed', { detail: { token: refreshedToken } }))
-  }
-}
-
 /**
- * Extract the bearer token that was actually sent on a request, so a 401 can
- * be attributed to a specific token. Comparing against `localStorage` at the
- * time the 401 arrives is not sufficient — the token may have been replaced
- * while the request was in flight.
+ * Standard JSON headers.
+ *
+ * No `Authorization`: the session travels in an httpOnly cookie the browser
+ * attaches automatically (see `services/session.ts`).
  */
-function tokenFromInit(init: RequestInit): string | null {
-  const headers = new Headers(init.headers as HeadersInit | undefined)
-  const authorization = headers.get('Authorization')
-  if (!authorization) return null
-  return authorization.replace(/^Bearer\s+/i, '')
-}
-
-/** Return a copy of `init` with the Authorization header swapped for `token`. */
-function withBearerToken(init: RequestInit, token: string): RequestInit {
-  const headers = new Headers(init.headers as HeadersInit | undefined)
-  headers.set('Authorization', `Bearer ${token}`)
-  return { ...init, headers }
+const JSON_HEADERS: HeadersInit = {
+  'Content-Type': 'application/json',
 }
 
 /**
@@ -1105,47 +1076,34 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Centralized fetch wrapper that handles:
- * - Auth headers (JWT from localStorage)
- * - Refreshed token detection (X-Refreshed-Token header)
- * - 401 → centralized auth failure (clears token, notifies App.vue)
+ * - 401 → centralized auth failure (notifies App.vue)
  * - Network errors and 5xx → exponential backoff retry
  *
- * Use `authenticatedFetch` for endpoints that require a JWT.
- * Use `rawFetch` for unauthenticated endpoints (login, register, etc.).
+ * Credentials are not handled here at all: the session is an httpOnly cookie
+ * attached by the browser. `fetch` defaults to `credentials: 'same-origin'`, and
+ * the SPA and API share an origin, so cookies are sent without configuration.
+ *
+ * This is markedly simpler than the localStorage version, which needed to
+ * capture the token sent on each request, compare it against storage on a 401,
+ * and retry with a newer value — all to work around tabs disagreeing about the
+ * current credential. The cookie jar is shared, so there is nothing to reconcile.
  */
 async function rawFetch(url: string, init: RequestInit): Promise<Response> {
   let lastError: unknown
-  let retriedWithNewerToken = false
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await fetchWithLogging(url, init)
 
-      // Always check for refreshed token before anything else
-      handleRefreshedToken(response)
+      // The server re-issued the session with different roles. The cookie is
+      // already updated by the browser; the cached user blob needs refreshing.
+      if (response.headers.get('X-Roles-Changed')) {
+        window.dispatchEvent(new CustomEvent(ROLES_CHANGED_EVENT))
+      }
 
       // Centralized 401 handling — one place, not 60.
       if (response.status === 401) {
-        const sentToken = tokenFromInit(init)
-        const storedToken = getToken()
-
-        // The token we sent is stale: another tab (or a just-completed login in
-        // this one) has already replaced it. Background tabs get no notification
-        // when localStorage changes underneath them, so they keep sending the
-        // token they captured at page load and 401 forever — which used to tear
-        // down a session that was actually fine. Retry once with the current
-        // token before concluding anything.
-        if (sentToken && storedToken && storedToken !== sentToken && !retriedWithNewerToken) {
-          retriedWithNewerToken = true
-          init = withBearerToken(init, storedToken)
-          // Don't spend a 5xx retry attempt on this — it's a different concern.
-          attempt--
-          continue
-        }
-
-        // Report the token that was actually sent so the subscriber can ignore
-        // a stale 401 for a token that has since been replaced.
-        handleAuthFailure(sentToken)
+        handleAuthFailure()
         throw new Error('Session expired. Please log in again.')
       }
 
@@ -1178,28 +1136,20 @@ async function rawFetch(url: string, init: RequestInit): Promise<Response> {
 }
 
 /**
- * Authenticated fetch — adds Bearer token and Content-Type headers.
+ * Authenticated fetch — adds JSON headers and centralized retry/401 handling.
  *
- * Exported so services/views never hand-roll `Authorization` headers; doing so
- * bypasses refreshed-token handling, retries, and centralized 401 handling.
+ * Authentication itself needs nothing here: the session is an httpOnly cookie the
+ * browser attaches. Exported so services/views route through the shared retry and
+ * 401 handling rather than calling `fetch` directly.
+ *
+ * For `FormData` bodies call `rawFetch` directly — Content-Type must be left
+ * unset so the browser can generate the multipart boundary.
  */
 export async function authenticatedFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return rawFetch(url, {
     ...init,
     headers: {
-      ...getAuthHeaders(),
-      ...(init.headers || {}),
-    },
-  })
-}
-
-/** Authenticated fetch for FormData — adds Bearer token but NOT Content-Type (browser sets it for multipart). */
-async function authenticatedFormFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const token = getToken()
-  return rawFetch(url, {
-    ...init,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...JSON_HEADERS,
       ...(init.headers || {}),
     },
   })
@@ -1256,6 +1206,25 @@ const realApi = {
     })
   },
 
+  /**
+   * End the session server-side.
+   *
+   * The session cookie is httpOnly, so JS cannot delete it — logout has to be a
+   * round-trip. Returns whether the server actually revoked the session so the
+   * caller can tell the user when it did not: local teardown always proceeds (the
+   * user must never be stuck in a signed-in-looking UI), but on failure the
+   * session stays valid for up to the cookie's 24h lifetime. That is worth
+   * surfacing for a *deliberate* logout on a shared machine.
+   */
+  logout: async (): Promise<{ revoked: boolean }> => {
+    try {
+      const response = await fetchWithLogging('/api/auth/logout', { method: 'POST' })
+      return { revoked: response.ok }
+    } catch {
+      return { revoked: false }
+    }
+  },
+
   register: async (request: RegisterRequest): Promise<Response> => {
     return fetchWithLogging('/api/auth/register', {
       method: 'POST',
@@ -1287,13 +1256,11 @@ const realApi = {
       throw new Error(`Failed to change password: ${response.statusText}`)
     }
 
-    // Changing the password bumps the server-side tokenVersion, which
-    // invalidates the JWT we are currently holding. The server issues a
-    // replacement so the user stays logged in — store it immediately.
-    const data = (await response.json()) as { success: boolean; token?: string }
-    if (data.token) {
-      setToken(data.token)
-    }
+    // Changing the password bumps the server-side tokenVersion, invalidating the
+    // session we are holding. The server issues a replacement as a `Set-Cookie`
+    // on this response, so the browser adopts it with no work here — and every
+    // other open tab picks it up too, instead of being silently invalidated.
+    await response.json()
   },
 
   deleteAccount: async (): Promise<void> => {
@@ -1308,8 +1275,11 @@ const realApi = {
       throw new Error(`Failed to delete account: ${response.statusText}`)
     }
 
-    // Clear local storage after successful deletion
-    clearCredentials()
+    // Drop cached UI state. Both cookies are cleared server-side by the DELETE
+    // response (see AccountController.deleteAccount), so this only marks the
+    // local tab so guards react before the next navigation.
+    clearCachedUser()
+    markSessionDead()
   },
 
   setInactiveUntil: async (
@@ -2385,7 +2355,7 @@ const realApi = {
     const params = opts?.all ? '?all=true' : ''
     const response = await fetchWithLogging(
       `/api/reservations/sell-order/${sellOrderId}${params}`,
-      { method: 'GET', headers: getAuthHeaders() }
+      { method: 'GET', headers: JSON_HEADERS }
     )
 
     if (!response.ok) {
@@ -2809,7 +2779,7 @@ const realApi = {
     const response = await fetchWithLogging('/api/price-lists', {
       method: 'POST',
       headers: {
-        ...getAuthHeaders(),
+        ...JSON_HEADERS,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
@@ -2836,7 +2806,7 @@ const realApi = {
     const response = await fetchWithLogging(`/api/price-lists/${encodeURIComponent(code)}`, {
       method: 'PUT',
       headers: {
-        ...getAuthHeaders(),
+        ...JSON_HEADERS,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
@@ -2901,7 +2871,7 @@ const realApi = {
       {
         method: 'POST',
         headers: {
-          ...getAuthHeaders(),
+          ...JSON_HEADERS,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
@@ -3213,7 +3183,7 @@ const realApi = {
     const response = await fetchWithLogging('/api/import-configs', {
       method: 'POST',
       headers: {
-        ...getAuthHeaders(),
+        ...JSON_HEADERS,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
@@ -3237,7 +3207,7 @@ const realApi = {
     const response = await fetchWithLogging(`/api/import-configs/${id}`, {
       method: 'PUT',
       headers: {
-        ...getAuthHeaders(),
+        ...JSON_HEADERS,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
@@ -3308,7 +3278,7 @@ const realApi = {
       formData.append('version', String(version))
     }
 
-    const response = await authenticatedFormFetch(`/api/import-configs/${id}/sync/upload`, {
+    const response = await rawFetch(`/api/import-configs/${id}/sync/upload`, {
       method: 'POST',
       body: formData,
     })
@@ -3385,7 +3355,7 @@ const realApi = {
 
   getUserSettings: async (): Promise<UserSettingsResponse> => {
     const response = await fetchWithLogging('/api/user-settings', {
-      headers: getAuthHeaders(),
+      headers: JSON_HEADERS,
     })
 
     if (!response.ok) {
@@ -4384,7 +4354,7 @@ const realApi = {
   getBurnRepairCorp: async (excludedUserIds?: number[]): Promise<BurnRepairCorpResponse> => {
     const response = await fetchWithLogging(
       `/api/burn-repair/corp${corpQueryString(excludedUserIds)}`,
-      { method: 'GET', headers: getAuthHeaders() }
+      { method: 'GET', headers: JSON_HEADERS }
     )
 
     if (!response.ok) throw new Error(`Failed to get corp burn/repair: ${response.statusText}`)
@@ -4396,7 +4366,7 @@ const realApi = {
   ): Promise<BurnRepairCorpBuildingsResponse> => {
     const response = await fetchWithLogging(
       `/api/burn-repair/corp/buildings${corpQueryString(excludedUserIds)}`,
-      { method: 'GET', headers: getAuthHeaders() }
+      { method: 'GET', headers: JSON_HEADERS }
     )
 
     if (!response.ok) throw new Error(`Failed to get corp buildings: ${response.statusText}`)
@@ -4408,7 +4378,7 @@ const realApi = {
   ): Promise<BurnRepairCorpWorkforceResponse> => {
     const response = await fetchWithLogging(
       `/api/burn-repair/corp/workforce${corpQueryString(excludedUserIds)}`,
-      { method: 'GET', headers: getAuthHeaders() }
+      { method: 'GET', headers: JSON_HEADERS }
     )
 
     if (!response.ok) throw new Error(`Failed to get corp workforce: ${response.statusText}`)
@@ -4421,7 +4391,7 @@ const realApi = {
   ): Promise<BurnRepairCorpMaterialBreakdown> => {
     const response = await fetchWithLogging(
       `/api/burn-repair/corp/material/${encodeURIComponent(ticker)}${corpQueryString(excludedUserIds)}`,
-      { method: 'GET', headers: getAuthHeaders() }
+      { method: 'GET', headers: JSON_HEADERS }
     )
 
     if (!response.ok) throw new Error(`Failed to get material breakdown: ${response.statusText}`)
@@ -4445,6 +4415,7 @@ export const api = {
     register: (request: RegisterRequest) => {
       return USE_MOCK_API ? mockApi.register(request) : realApi.register(request)
     },
+    logout: () => realApi.logout(),
     resetPassword: (request: ResetPasswordRequest) => realApi.resetPassword(request),
     validateResetToken: (token: string) => realApi.validateResetToken(token),
     checkUsernameAvailability: (username: string) => realApi.checkUsernameAvailability(username),

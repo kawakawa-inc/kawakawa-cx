@@ -18,6 +18,10 @@
               <v-alert type="success" class="mb-4">
                 Your password has been reset successfully!
               </v-alert>
+              <v-alert v-if="logoutFailed" type="warning" class="mb-4">
+                We couldn't reach the server to clear your old session. Your new password is in
+                effect, but this browser may still show you as signed in until you reload.
+              </v-alert>
               <v-btn color="primary" block to="/login"> Go to Login </v-btn>
             </template>
 
@@ -93,7 +97,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../services/api'
-import { clearCredentials } from '../services/session'
+import { clearCachedUser, markSessionDead } from '../services/session'
 
 const route = useRoute()
 
@@ -104,6 +108,7 @@ const loading = ref(false)
 const validating = ref(true)
 const success = ref(false)
 const errorMessage = ref('')
+const logoutFailed = ref(false)
 const tokenError = ref('')
 const username = ref('')
 
@@ -156,10 +161,17 @@ const handleReset = async () => {
       token: token.value,
       newPassword: newPassword.value,
     })
-    // Clear any existing session — the old JWT is now invalid.
-    // Clear the cached user too, otherwise the router's role guards keep
-    // reading a stale profile for a session that no longer exists.
-    clearCredentials()
+    // The reset bumped tokenVersion, so any existing session is already dead
+    // server-side. Revoke the cookie and drop cached state so the guards don't
+    // keep reading a stale profile.
+    const { revoked } = await api.auth.logout()
+    clearCachedUser()
+    markSessionDead()
+    // A failed revoke leaves a stale cookie in the jar. It authenticates nothing
+    // — tokenVersion moved — so this is cosmetic rather than a security problem,
+    // but a lingering cookie makes the router guards render a signed-in shell
+    // that immediately 401s. Say so instead of showing an unqualified success.
+    logoutFailed.value = !revoked
     success.value = true
   } catch (error) {
     console.error('Password reset error:', error)

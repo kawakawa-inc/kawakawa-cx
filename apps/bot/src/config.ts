@@ -42,6 +42,14 @@ export async function getConfig(): Promise<BotConfig> {
 /**
  * Get the web application URL for generating links.
  * Reads from app.webUrl setting, falls back to default for development.
+ *
+ * Returned **without** a trailing slash, so callers can safely append a path.
+ * `app.webUrl` is admin-editable free text and was in fact stored as
+ * `http://localhost:5173/`, which produced `//link-discord?token=...`. That does
+ * not match the `/link-discord` route, so it fell through to the catch-all and
+ * redirected to /market — carrying the query string along, which made it look
+ * like a routing bug rather than a malformed link. Normalising here rather than
+ * at each call site because the next person to build a URL will not know.
  */
 export async function getWebUrl(): Promise<string> {
   if (cachedWebUrl) {
@@ -49,7 +57,8 @@ export async function getWebUrl(): Promise<string> {
   }
 
   const settings = await settingsService.getAll('app.')
-  cachedWebUrl = settings['app.webUrl'] || DEFAULT_WEB_URL
+  const configured = settings['app.webUrl']?.trim() || DEFAULT_WEB_URL
+  cachedWebUrl = configured.replace(/\/+$/, '')
 
   return cachedWebUrl
 }

@@ -1,10 +1,12 @@
 import express, { json, urlencoded, Request, Response, NextFunction } from 'express'
+import cookieParser from 'cookie-parser'
 import swaggerUi from 'swagger-ui-express'
 import pinoHttp from 'pino-http'
 import type { Options as PinoHttpOptions } from 'pino-http'
 import { RegisterRoutes } from './generated/routes.js'
 import swaggerDocument from './generated/swagger.json' with { type: 'json' }
 import { requestContextMiddleware, type ResponseWithBody } from './middleware/requestContext.js'
+import { csrfProtection, warnIfCsrfMisconfigured } from './middleware/csrf.js'
 import logger, { redactObject } from './utils/logger.js'
 import { stringifyForLog } from './utils/logBody.js'
 
@@ -18,6 +20,11 @@ interface RequestWithBody extends Request {
 // Parse body BEFORE logging so we can capture it
 app.use(json())
 app.use(urlencoded({ extended: true }))
+
+// Parse cookies before anything reads the session cookie (auth middleware,
+// CSRF check). The session JWT lives in an httpOnly cookie — see
+// utils/authCookie.ts for why it is no longer held in localStorage.
+app.use(cookieParser())
 
 // Capture request body immediately after parsing (before any processing)
 app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -72,6 +79,11 @@ app.use((pinoHttp as any)(httpLoggerOptions))
 // logging + emit X-Refreshed-Token.
 app.use(requestContextMiddleware)
 
+// Reject cross-origin state-changing requests. Required now that the session
+// travels in a cookie the browser attaches automatically; a Bearer header could
+// not be forged cross-site, a cookie can be ridden. See middleware/csrf.ts.
+app.use(csrfProtection)
+
 // Swagger UI - at /docs since DigitalOcean routes /api/* here (stripping /api prefix)
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
 
@@ -109,6 +121,9 @@ if (
 ) {
   logger.fatal('JWT_SECRET environment variable is not set — authentication will fail')
 }
+
+// Surface a missing APP_ORIGIN, which silently weakens the CSRF origin check.
+warnIfCsrfMisconfigured()
 
 app.listen(port, () => {
   logger.info({ port }, 'API server started')

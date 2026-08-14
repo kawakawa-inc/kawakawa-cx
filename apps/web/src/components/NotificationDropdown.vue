@@ -10,7 +10,13 @@
     <template #activator="{ props: menuProps }">
       <v-tooltip location="bottom">
         <template #activator="{ props: tooltipProps }">
-          <v-btn v-bind="{ ...menuProps, ...tooltipProps }" icon size="small" class="mx-1">
+          <v-btn
+            v-bind="{ ...menuProps, ...tooltipProps }"
+            icon
+            size="small"
+            class="mx-1"
+            :aria-label="unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'"
+          >
             <v-badge
               v-if="unreadCount > 0"
               :content="unreadCount > 99 ? '99+' : unreadCount"

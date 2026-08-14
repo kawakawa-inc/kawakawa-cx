@@ -1,27 +1,130 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page, APIRequestContext, request } from '@playwright/test'
+
+/**
+ * These specs drifted badly against the UI and were 10/11 failing before this
+ * rewrite. Four things had changed underneath them:
+ *
+ *  - "Profile Name" was renamed to "Username" on login, register and account.
+ *  - Registration now always assigns the `unverified` role, and `/account`
+ *    carries `requiresVerified` — so a freshly-registered user is bounced to
+ *    /pending and can never reach the account page. Every account-page test
+ *    needs an admin approval step first.
+ *  - The account page became tabbed (General / Security / Interface / Market /
+ *    Notifications / FIO / Discord / Danger Zone), so fields that used to sit
+ *    on one flat page now need their tab opened first.
+ *  - Display name, email and the FIO fields auto-save on blur; the old
+ *    "Save Changes" button no longer exists.
+ *
+ * Nav items are icon-only but now carry `aria-label`, so they are addressable
+ * by role. Prefer `getByRole` over CSS/icon-class selectors: it asserts the
+ * control is reachable by assistive tech at the same time, so the accessibility
+ * gap that made the original specs unwritable cannot come back unnoticed.
+ */
 
 const testPassword = 'TestPassword123!'
 
-// Helper function to register a new user and return the username
+/** Seeded admin from `make db-reset-mock` (apps/api/src/scripts/mock-data.sql). */
+const ADMIN = { username: 'admin', password: 'password123' }
+
+/**
+ * Approve a pending user, via the API rather than the admin UI.
+ *
+ * Registration only ever grants `unverified`, and `/account` requires a
+ * verified role — so without this the account tests cannot reach the page at
+ * all. Done over HTTP deliberately: driving the admin screens would make every
+ * account test depend on the admin UI too, so an unrelated change there would
+ * fail a dozen specs that are not about administration.
+ *
+ * Requires the mock data to be loaded (`make db-reset-mock`).
+ */
+async function approveUser(username: string): Promise<void> {
+  const ctx: APIRequestContext = await request.newContext({
+    baseURL: 'http://localhost:5173',
+    // The CSRF middleware rejects cookie-authenticated mutations that carry no
+    // Origin (apps/api/src/middleware/csrf.ts). Browsers always send one;
+    // Playwright's API context does not, so set it explicitly rather than
+    // weakening the check. This is the header a real browser would send.
+    extraHTTPHeaders: { Origin: 'http://localhost:5173' },
+  })
+  try {
+    const login = await ctx.post('/api/auth/login', { data: ADMIN })
+    if (!login.ok()) {
+      throw new Error(
+        `Admin login failed (${login.status()}). Is the mock data loaded? Run \`make db-reset-mock\`.`
+      )
+    }
+
+    const pending = await ctx.get('/api/admin/pending-approvals')
+    const users = (await pending.json()) as { id: number; username: string }[]
+    const user = users.find(u => u.username === username)
+    if (!user) throw new Error(`No pending approval found for ${username}`)
+
+    const approve = await ctx.post(`/api/admin/users/${user.id}/approve`, {
+      data: { roleId: 'member' },
+    })
+    if (!approve.ok()) {
+      throw new Error(`Approve failed for ${username} (${approve.status()})`)
+    }
+  } finally {
+    await ctx.dispose()
+  }
+}
+
+/** Register a fresh user and return the username. Leaves the browser on /login. */
 async function registerUser(page: Page): Promise<string> {
-  const username = `testuser${Date.now()}`
+  const username = `testuser${Date.now()}${Math.floor(Math.random() * 1000)}`
   await page.goto('/register')
-  await page.getByLabel('Profile Name').fill(username)
+  await page.getByLabel('Username').fill(username)
   await page.getByLabel('Password', { exact: true }).fill(testPassword)
   await page.getByLabel('Confirm Password').fill(testPassword)
-  await page.getByRole('button', { name: 'Register' }).click()
-  await expect(page.locator('.v-alert')).toContainText('Registration successful', { timeout: 1000 })
-  await expect(page).toHaveURL('/login', { timeout: 3000 })
+  await page.getByRole('button', { name: 'Register', exact: true }).click()
+  await expect(page.locator('.v-alert')).toContainText('Registration successful')
+  await expect(page).toHaveURL('/login', { timeout: 5000 })
   return username
 }
 
-// Helper function to login with given credentials
-async function login(page: Page, username: string, password: string): Promise<void> {
+/**
+ * Log in and wait for the post-login redirect.
+ *
+ * A brand-new account has only the `unverified` role, which the router sends to
+ * /pending rather than /market — so callers say which they expect instead of
+ * this helper assuming the verified path.
+ */
+async function login(
+  page: Page,
+  username: string,
+  password: string,
+  expectedPath: string | RegExp = /\/(market|pending)/
+): Promise<void> {
   await page.goto('/login')
-  await page.getByLabel('Profile Name').fill(username)
+  await page.getByLabel('Username').fill(username)
   await page.getByLabel('Password').fill(password)
   await page.getByRole('button', { name: 'Login' }).click()
-  await expect(page).toHaveURL('/market')
+  await expect(page).toHaveURL(expectedPath)
+}
+
+/**
+ * Register, approve, and log in — the shortest path to a user who can actually
+ * open /account. Returns the username.
+ */
+async function registerApprovedUser(page: Page): Promise<string> {
+  const username = await registerUser(page)
+  await approveUser(username)
+  await login(page, username, testPassword, '/market')
+  return username
+}
+
+/**
+ * Open a tab on the account page.
+ *
+ * Tabs carry visible text (unlike the nav icons), so they are addressable by
+ * role. Waits for the tab to report selected, because Vuetify mounts the panel
+ * asynchronously and filling a field too early silently targets a hidden input.
+ */
+async function openAccountTab(page: Page, name: string): Promise<void> {
+  const tab = page.getByRole('tab', { name })
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
 
 test.describe('User Management Flow', () => {
@@ -29,190 +132,151 @@ test.describe('User Management Flow', () => {
     const username = `testuser${Date.now()}`
     await page.goto('/register')
 
-    // Fill registration form
-    await page.getByLabel('Profile Name').fill(username)
+    await page.getByLabel('Username').fill(username)
     await page.getByLabel('Password', { exact: true }).fill(testPassword)
     await page.getByLabel('Confirm Password').fill(testPassword)
 
-    // Submit registration
-    await page.getByRole('button', { name: 'Register' }).click()
+    await page.getByRole('button', { name: 'Register', exact: true }).click()
 
-    // Should show success message (wait for it with longer timeout since it redirects after 2s)
-    await expect(page.locator('.v-alert')).toContainText('Registration successful', {
-      timeout: 1000,
-    })
+    await expect(page.locator('.v-alert')).toContainText('Registration successful')
 
-    // Should redirect to login page after successful registration
-    await expect(page).toHaveURL('/login', { timeout: 3000 })
+    // The view redirects on a 2s timer.
+    await expect(page).toHaveURL('/login', { timeout: 5000 })
   })
 
   test('should login with registered credentials', async ({ page }) => {
     const username = await registerUser(page)
 
     await page.goto('/login')
-
-    // Fill login form
-    await page.getByLabel('Profile Name').fill(username)
+    await page.getByLabel('Username').fill(username)
     await page.getByLabel('Password').fill(testPassword)
-
-    // Submit login
     await page.getByRole('button', { name: 'Login' }).click()
 
-    // Should redirect to market page after successful login
-    await expect(page).toHaveURL('/market')
-
-    // Navbar should be visible with Account link
-    await expect(page.getByRole('link', { name: 'Account' })).toBeVisible()
+    // Registration only grants `unverified`, so login lands on /pending rather
+    // than /market until an administrator approves the account.
+    await expect(page).toHaveURL('/pending')
+    await expect(page.getByText('Registration Pending')).toBeVisible()
   })
 
   test('should view user profile', async ({ page }) => {
-    const username = await registerUser(page)
-    await login(page, username, testPassword)
+    const username = await registerApprovedUser(page)
 
-    // Navigate to account page
-    await page.getByRole('link', { name: 'Account' }).click()
+    // Navigate via the navbar rather than page.goto, so this also covers the
+    // nav link being reachable by its accessible name.
+    await page.getByRole('banner').getByRole('link', { name: 'Account' }).click()
     await expect(page).toHaveURL('/account')
 
-    // Verify profile information is loaded
-    await expect(page.getByLabel('Profile Name')).toHaveValue(username)
+    await expect(page.getByLabel('Username')).toHaveValue(username)
     await expect(page.getByLabel('Display Name')).toHaveValue(username)
 
-    // Verify roles are displayed (should be "Applicant" for new user)
-    const rolesField = page.getByLabel('Roles')
-    await expect(rolesField).toBeVisible()
+    // Roles render as chips, not a labelled field.
+    await expect(page.locator('.v-chip').filter({ hasText: 'Member' })).toBeVisible()
   })
 
   test('should update profile settings', async ({ page }) => {
-    const username = await registerUser(page)
-    await login(page, username, testPassword)
-
-    // Navigate to account page
+    const username = await registerApprovedUser(page)
     await page.goto('/account')
 
-    // Wait for profile to load
-    await expect(page.getByLabel('Profile Name')).toBeVisible()
+    await expect(page.getByLabel('Display Name')).toHaveValue(username)
 
-    // Update display name
+    // Display name auto-saves on blur — there is no Save button any more.
     const newDisplayName = `${username} Updated`
     await page.getByLabel('Display Name').fill(newDisplayName)
+    await page.getByLabel('Display Name').blur()
 
-    // Update FIO username
+    // FIO settings moved to their own tab and also save on blur.
+    await openAccountTab(page, 'FIO')
     await page.getByLabel('FIO Username').fill('fio_testuser')
+    await page.getByLabel('FIO Username').blur()
 
-    // Update preferred currency
-    // Click the v-select field (not the label, which is blocked by v-field__input)
-    await page.locator('.v-select:has-text("Preferred Currency")').click()
-    await page.locator('.v-list-item').filter({ hasText: 'ICA' }).click()
-
-    // Save changes
-    await page.getByRole('button', { name: 'Save Changes' }).click()
-
-    // Should show success message
-    await expect(page.locator('.v-snackbar')).toContainText('Profile updated successfully')
-
-    // Reload page and verify changes persisted
+    // Reload and confirm both round-tripped to the server.
     await page.reload()
     await expect(page.getByLabel('Display Name')).toHaveValue(newDisplayName)
+    await openAccountTab(page, 'FIO')
     await expect(page.getByLabel('FIO Username')).toHaveValue('fio_testuser')
   })
 
   test('should change password successfully', async ({ page }) => {
-    const username = await registerUser(page)
-    await login(page, username, testPassword)
-
-    // Navigate to account page
+    const username = await registerApprovedUser(page)
     await page.goto('/account')
+    await openAccountTab(page, 'Security')
 
     const newPassword = 'NewTestPassword456!'
 
-    // Fill password change form
     await page.getByLabel('Current Password').fill(testPassword)
     await page.getByLabel('New Password', { exact: true }).fill(newPassword)
     await page.getByLabel('Confirm New Password').fill(newPassword)
-
-    // Submit password change
     await page.getByRole('button', { name: 'Update Password' }).click()
 
-    // Should show success message
     await expect(page.locator('.v-snackbar')).toContainText('Password updated successfully')
 
-    // Password fields should be cleared
     await expect(page.getByLabel('Current Password')).toHaveValue('')
     await expect(page.getByLabel('New Password', { exact: true })).toHaveValue('')
     await expect(page.getByLabel('Confirm New Password')).toHaveValue('')
 
-    // Logout
-    await page.getByRole('button', { name: 'Logout' }).click()
-    await expect(page).toHaveURL('/login')
-
-    // Login with new password
-    await page.getByLabel('Profile Name').fill(username)
-    await page.getByLabel('Password').fill(newPassword)
-    await page.getByRole('button', { name: 'Login' }).click()
-
-    // Should successfully login
-    await expect(page).toHaveURL('/market')
+    // Changing the password bumps tokenVersion, so the session is already dead;
+    // go straight to /login rather than driving the logout dialog.
+    await login(page, username, newPassword, '/market')
   })
 
   test('should show error for wrong current password', async ({ page }) => {
-    const username = await registerUser(page)
-    const newPassword = 'NewTestPassword456!'
-
-    // Login and change password first
-    await login(page, username, testPassword)
+    const username = await registerApprovedUser(page)
     await page.goto('/account')
-    await page.getByLabel('Current Password').fill(testPassword)
-    await page.getByLabel('New Password', { exact: true }).fill(newPassword)
-    await page.getByLabel('Confirm New Password').fill(newPassword)
-    await page.getByRole('button', { name: 'Update Password' }).click()
-    await expect(page.locator('.v-snackbar')).toContainText('Password updated successfully')
+    await openAccountTab(page, 'Security')
 
-    // Now try to change password with wrong current password
     await page.getByLabel('Current Password').fill('WrongPassword123!')
     await page.getByLabel('New Password', { exact: true }).fill('AnotherPassword789!')
     await page.getByLabel('Confirm New Password').fill('AnotherPassword789!')
     await page.getByRole('button', { name: 'Update Password' }).click()
 
-    // Should show error message
     await expect(page.locator('.v-snackbar')).toContainText('Current password is incorrect')
   })
 
   test('should show error for mismatched passwords', async ({ page }) => {
-    const username = await registerUser(page)
-    await login(page, username, testPassword)
-
-    // Navigate to account page
+    const username = await registerApprovedUser(page)
     await page.goto('/account')
+    await openAccountTab(page, 'Security')
 
-    // Try to change password with mismatched new passwords
     await page.getByLabel('Current Password').fill(testPassword)
     await page.getByLabel('New Password', { exact: true }).fill('AnotherPassword789!')
     await page.getByLabel('Confirm New Password').fill('DifferentPassword789!')
-
     await page.getByRole('button', { name: 'Update Password' }).click()
 
-    // Should show error message
     await expect(page.locator('.v-snackbar')).toContainText('New passwords do not match')
   })
 
   test('should show error for short password', async ({ page }) => {
-    const username = await registerUser(page)
-    await login(page, username, testPassword)
-
-    // Navigate to account page
+    const username = await registerApprovedUser(page)
     await page.goto('/account')
+    await openAccountTab(page, 'Security')
 
-    // Try to change password to a short password
     await page.getByLabel('Current Password').fill(testPassword)
     await page.getByLabel('New Password', { exact: true }).fill('short')
     await page.getByLabel('Confirm New Password').fill('short')
-
     await page.getByRole('button', { name: 'Update Password' }).click()
 
-    // Should show error message
     await expect(page.locator('.v-snackbar')).toContainText(
       'Password must be at least 8 characters'
     )
+  })
+
+  test('should log out through the confirmation dialog', async ({ page }) => {
+    await registerApprovedUser(page)
+
+    // Covered because logout now revokes an httpOnly cookie server-side — a
+    // round-trip that cannot be verified from local state.
+    //
+    // Both the navbar button and the dialog's confirm button are named
+    // "Logout", so each click is scoped to its own landmark rather than
+    // relying on an ambiguous page-wide match.
+    await page.getByRole('banner').getByRole('button', { name: 'Logout' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Logout' }).click()
+
+    await expect(page).toHaveURL('/login')
+
+    // The session really is gone, not just the local UI state.
+    await page.goto('/account')
+    await expect(page).toHaveURL(/\/login/)
   })
 })
 
@@ -220,50 +284,29 @@ test.describe('Authentication Error Cases', () => {
   test('should show error for invalid login credentials', async ({ page }) => {
     await page.goto('/login')
 
-    // Try to login with invalid credentials
-    await page.getByLabel('Profile Name').fill('nonexistentuser')
+    await page.getByLabel('Username').fill('nonexistentuser')
     await page.getByLabel('Password').fill('wrongpassword')
-
     await page.getByRole('button', { name: 'Login' }).click()
 
-    // Should show error message in v-alert (could be "Account not found" or "Invalid credentials")
-    const alert = page.locator('.v-alert')
-    await expect(alert).toBeVisible()
-    await expect(alert.locator('text=/Account not found|Invalid credentials/')).toBeVisible()
+    await expect(page.locator('.v-alert')).toContainText(/Account not found|Invalid credentials/)
   })
 
   test('should show error for duplicate username registration', async ({ page }) => {
-    // First, register a new user
-    const duplicateTestUsername = `duplicate${Date.now()}`
-    await page.goto('/register')
-    await page.getByLabel('Profile Name').fill(duplicateTestUsername)
-    await page.getByLabel('Password', { exact: true }).fill('TestPassword123!')
-    await page.getByLabel('Confirm Password').fill('TestPassword123!')
-    await page.getByRole('button', { name: 'Register' }).click()
+    const username = await registerUser(page)
 
-    // Wait for success and redirect
-    await expect(page.locator('.v-alert')).toContainText('Registration successful', {
-      timeout: 1000,
-    })
-    await expect(page).toHaveURL('/login', { timeout: 3000 })
-
-    // Now try to register again with the same username
     await page.goto('/register')
-    await page.getByLabel('Profile Name').fill(duplicateTestUsername)
+    await page.getByLabel('Username').fill(username)
     await page.getByLabel('Password', { exact: true }).fill('AnotherPassword123!')
     await page.getByLabel('Confirm Password').fill('AnotherPassword123!')
-    await page.getByRole('button', { name: 'Register' }).click()
+    await page.getByRole('button', { name: 'Register', exact: true }).click()
 
-    // Should show error message about duplicate username in v-alert
     await expect(page.locator('.v-alert')).toContainText('already taken')
   })
 
   test('should redirect to login when accessing protected route without auth', async ({ page }) => {
-    // Clear any existing auth
     await page.context().clearCookies()
     await page.goto('/account')
 
-    // Should redirect to login
     await expect(page).toHaveURL(/\/login/)
   })
 })

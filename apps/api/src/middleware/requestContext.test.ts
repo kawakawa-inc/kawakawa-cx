@@ -115,6 +115,121 @@ describe('requestContextMiddleware', () => {
     expect(captured).toEqual({ ok: true })
   })
 
+  /**
+   * The sliding renewal must land in the cookie jar, not just a header. This is
+   * what makes a stale tab recover on its own: the jar is shared across tabs and
+   * updated by the browser, with no cooperation from the page's JavaScript.
+   */
+  it('re-issues the session as a Set-Cookie on renewal', async () => {
+    await withServer(
+      app => {
+        issueToken(app)
+        app.get('/thing', (_req, res) => {
+          res.status(200).json({ ok: true })
+        })
+      },
+      async base => {
+        const res = await fetch(`${base}/thing`)
+        const cookies = res.headers.getSetCookie()
+
+        const session = cookies.find(c => c.startsWith('kawa_session='))
+        expect(session).toContain('refreshed-abc')
+        expect(session).toContain('HttpOnly')
+        // See `authCookie.ts` for why Strict is safe despite the OAuth flow.
+        expect(session).toContain('SameSite=Strict')
+
+        // The readable presence flag rides along so guards can see the session.
+        expect(cookies.some(c => c.startsWith('kawa_session_present='))).toBe(true)
+      }
+    )
+  })
+
+  it('sets the session cookie on a 204 that never calls json()', async () => {
+    await withServer(
+      app => {
+        issueToken(app)
+        app.delete('/thing', (_req, res) => {
+          res.status(204).end()
+        })
+      },
+      async base => {
+        const res = await fetch(`${base}/thing`, { method: 'DELETE' })
+        expect(res.headers.getSetCookie().some(c => c.startsWith('kawa_session='))).toBe(true)
+      }
+    )
+  })
+
+  it('clears both cookies when logout is requested', async () => {
+    await withServer(
+      app => {
+        app.use((_req, _res, next) => {
+          setContextValue('clearAuthCookie', true)
+          next()
+        })
+        app.post('/logout', (_req, res) => {
+          res.status(200).json({ ok: true })
+        })
+      },
+      async base => {
+        const res = await fetch(`${base}/logout`, { method: 'POST' })
+        const cookies = res.headers.getSetCookie()
+        expect(cookies.some(c => c.startsWith('kawa_session='))).toBe(true)
+        expect(cookies.some(c => c.startsWith('kawa_session_present='))).toBe(true)
+        // Cleared cookies are expressed as an immediate expiry.
+        expect(cookies.every(c => /Expires=Thu, 01 Jan 1970/.test(c))).toBe(true)
+      }
+    )
+  })
+
+  /**
+   * `DELETE /account` does both in one request: the auth middleware slides the
+   * token past the refresh threshold, then the controller revokes the cookie.
+   * Emitting both pairs left the outcome to the browser's last-wins ordering,
+   * which is one reorder away from handing a deleted user a fresh 24h session.
+   */
+  it('lets revocation win when a request both refreshes and revokes', async () => {
+    await withServer(
+      app => {
+        issueToken(app)
+        app.delete('/account', (_req, res) => {
+          setContextValue('clearAuthCookie', true)
+          res.status(204).end()
+        })
+      },
+      async base => {
+        const res = await fetch(`${base}/account`, { method: 'DELETE' })
+        const cookies = res.headers.getSetCookie()
+
+        // Exactly one Set-Cookie per cookie — no contradictory pair.
+        expect(cookies).toHaveLength(2)
+        expect(cookies.every(c => /Expires=Thu, 01 Jan 1970/.test(c))).toBe(true)
+        expect(cookies.some(c => c.includes('refreshed-abc'))).toBe(false)
+
+        // The legacy header is still emitted for pre-cookie bundles; harmless
+        // here because the user row is gone.
+        expect(res.headers.get('x-refreshed-token')).toBe('refreshed-abc')
+      }
+    )
+  })
+
+  it('signals role drift with X-Roles-Changed', async () => {
+    await withServer(
+      app => {
+        app.use((_req, _res, next) => {
+          setContextValue('rolesChanged', true)
+          next()
+        })
+        app.get('/thing', (_req, res) => {
+          res.status(200).json({ ok: true })
+        })
+      },
+      async base => {
+        const res = await fetch(`${base}/thing`)
+        expect(res.headers.get('x-roles-changed')).toBe('1')
+      }
+    )
+  })
+
   it('isolates context between concurrent requests', async () => {
     await withServer(
       app => {

@@ -21,7 +21,13 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
-        changeOrigin: true,
+        // `changeOrigin` is deliberately NOT set. It rewrites the Host header to
+        // the proxy target, so the API would see `localhost:3000` while the
+        // browser sent `Origin: http://localhost:5173` — and the CSRF check
+        // (middleware/csrf.ts), which compares the two, would 403 every mutation
+        // in local dev. Preserving the browser's Host makes them agree with no
+        // per-developer configuration. The target is a plain Express server on
+        // localhost, not a virtual host, so it has no use for the rewrite.
         rewrite: path => path.replace(/^\/api/, ''),
       },
     },

@@ -221,7 +221,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '../services/api'
-import { setToken } from '../services/session'
+import { markSessionLive } from '../services/session'
 import { useUserStore } from '../stores/user'
 import DiscordIcon from '../components/DiscordIcon.vue'
 import KawaLogo from '../components/KawaLogo.vue'
@@ -433,8 +433,9 @@ const handleDiscordRegister = async () => {
       email: email.value || undefined,
     })
 
-    // Store token and user data
-    setToken(result.token)
+    // Session arrives as an httpOnly cookie; only cache the display data.
+    // Clear any dead-session flag left by an earlier 401 in this tab.
+    markSessionLive()
     userStore.setUser(discordAuthUserToUser(result.user))
 
     // Clear Discord registration session

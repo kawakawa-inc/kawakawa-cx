@@ -26,6 +26,7 @@ import {
 } from '../db/index.js'
 import { hashPassword, verifyPassword } from '../utils/password.js'
 import { generateToken } from '../utils/jwt.js'
+import { issueAuthCookie, revokeAuthCookie } from '../utils/authCookie.js'
 import { Unauthorized, Forbidden, BadRequest, Conflict } from '../utils/errors.js'
 import { getPermissions } from '../utils/permissionService.js'
 import { notificationService } from '@kawakawa/services/notifications'
@@ -48,6 +49,11 @@ interface ResetPasswordRequest {
 }
 
 interface AuthResponse {
+  /**
+   * @deprecated The session is delivered as an httpOnly cookie; the SPA no
+   * longer reads this. Retained so bundles loaded before the cookie migration
+   * keep working through the transition, and for non-browser API clients.
+   */
   token: string
   user: {
     id: number
@@ -153,6 +159,10 @@ export class AuthController extends Controller {
       tokenVersion: user.tokenVersion,
     })
 
+    // Deliver the session as an httpOnly cookie. Every tab on the origin picks
+    // this up automatically, so a stale tab cannot keep presenting a dead token.
+    issueAuthCookie(token)
+
     return {
       token,
       user: {
@@ -226,6 +236,8 @@ export class AuthController extends Controller {
       tokenVersion: newUser.tokenVersion,
     })
 
+    issueAuthCookie(token)
+
     // Notify admins (users with admin.manage_users permission) about new registration
     // Find roles that have admin.manage_users permission
     const adminRoleIds = await db
@@ -269,6 +281,21 @@ export class AuthController extends Controller {
         permissions: permissionIds,
       },
     }
+  }
+
+  /**
+   * End the current session.
+   *
+   * Required now that the session cookie is `httpOnly`: the SPA cannot delete it
+   * from JS, so logout must be a server round-trip. Deliberately unauthenticated
+   * and idempotent — logging out with an already-expired session should clear the
+   * cookie and succeed, not 401 and leave it in place.
+   */
+  @Post('logout')
+  @SuccessResponse('200', 'Logged out')
+  public async logout(): Promise<SuccessMessage> {
+    revokeAuthCookie()
+    return { message: 'Logged out' }
   }
 
   @Post('reset-password')

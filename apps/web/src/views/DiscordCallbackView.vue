@@ -34,7 +34,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '../services/api'
-import { setToken } from '../services/session'
+import { markSessionLive } from '../services/session'
 import { useUserStore } from '../stores/user'
 import KawaLogo from '../components/KawaLogo.vue'
 import type { User } from '../types'
@@ -104,8 +104,12 @@ const handleCallback = async () => {
 
     switch (result.type) {
       case 'login': {
-        // Successful login - store token and redirect
-        setToken(result.token)
+        // Successful login. The session cookie was set by the callback
+        // response; only the cached display data is stored here.
+        //
+        // Clear this tab's dead-session flag, which a previous 401 may have set,
+        // or the router guards would bounce us straight back to /login.
+        markSessionLive()
         userStore.setUser(discordAuthUserToUser(result.user))
 
         const redirectTo = sessionStorage.getItem('discord_auth_redirect') || '/market'

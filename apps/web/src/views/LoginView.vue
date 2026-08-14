@@ -9,6 +9,15 @@
           <v-card-title class="text-h5">Login</v-card-title>
           <v-card-text>
             <v-alert
+              v-if="notice"
+              :type="notice.type"
+              class="mb-4"
+              closable
+              @click:close="notice = null"
+            >
+              {{ notice.text }}
+            </v-alert>
+            <v-alert
               v-if="errorMessage"
               type="error"
               class="mb-4"
@@ -82,7 +91,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '../services/api'
-import { setToken } from '../services/session'
+import { markSessionLive } from '../services/session'
 import { useUserStore } from '../stores/user'
 import DiscordIcon from '../components/DiscordIcon.vue'
 import KawaLogo from '../components/KawaLogo.vue'
@@ -96,6 +105,40 @@ const loading = ref(false)
 const discordLoading = ref(false)
 const errorMessage = ref('')
 
+/**
+ * Explain *why* the user is looking at a login form.
+ *
+ * Without this an expired session was indistinguishable from a fresh visit: the
+ * user was bounced to a bare form with no explanation, tried again, and
+ * reasonably reported it as a "login loop".
+ *
+ * Keyed off a single `reason` query param. Callers that push a different key are
+ * silently ignored, so keep this table and the pushers in step.
+ */
+interface Notice {
+  type: 'info' | 'warning'
+  text: string
+}
+
+const REASON_NOTICES: Record<string, Notice> = {
+  expired: {
+    type: 'info',
+    text: 'Your session expired. Please sign in again.',
+  },
+  'logout-failed': {
+    type: 'warning',
+    text:
+      "We couldn't reach the server to sign you out, so your session may still be active on " +
+      "this device. If you're on a shared computer, sign in again and retry, or close the browser.",
+  },
+  'account-deleted': {
+    type: 'info',
+    text: 'Your account has been deleted.',
+  },
+}
+
+const notice = ref<Notice | null>(REASON_NOTICES[route.query.reason as string] ?? null)
+
 const handleLogin = async () => {
   loading.value = true
   errorMessage.value = ''
@@ -108,7 +151,13 @@ const handleLogin = async () => {
 
     if (response.ok) {
       const data = await response.json()
-      setToken(data.token)
+      // No token to store: the API set an httpOnly session cookie on this
+      // response, which every tab in this browser now shares.
+      //
+      // Clear this tab's dead-session flag, which a previous 401 may have set —
+      // otherwise the router guards keep reporting "no session" and bounce the
+      // user straight back here after a successful login.
+      markSessionLive()
       userStore.setUser(data.user)
 
       // Redirect to the intended destination or default to /market

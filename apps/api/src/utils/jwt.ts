@@ -10,7 +10,7 @@ import jwt from 'jsonwebtoken'
  * a token once it passes the halfway mark (see REFRESH_BEFORE_EXPIRY_SECONDS),
  * giving a sliding session that only lapses after a real period of inactivity.
  */
-const JWT_EXPIRES_IN_SECONDS = 24 * 60 * 60 // 24 hours
+export const JWT_EXPIRES_IN_SECONDS = 24 * 60 * 60 // 24 hours
 
 /**
  * Re-issue a token when its remaining life drops below this. At 12h with a 24h

@@ -1,6 +1,6 @@
 # Kawakawa CX - Development Commands
 
-.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web kill-sync-worker dev-bot dev-sync-worker bot-deploy start stop restart reload status logs search-logs logging-setup logging-status logging-recreate
+.PHONY: help install dev build test lint lint-fix format format-check knip generate checkpoint fio-wait db-init db-init-dev db-reset db-reset-mock db-drop db-mock-data db-studio fio-sync clean kill-dev kill-bot kill-api kill-web kill-sync-worker dev-bot dev-sync-worker bot-deploy start stop restart reload status logs search-logs logging-setup logging-status logging-recreate
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -56,21 +56,32 @@ db-init: ## Initialize database (migrate, seed, sync FIO) - idempotent, producti
 	pnpm --filter @kawakawa/api db:migrate
 	pnpm --filter @kawakawa/api db:init
 
+# NOTE on `fio:sync` + `fio:wait`: `fio:sync` only *enqueues* jobs. The work is
+# done by the sync-worker daemon in a separate process, so anything depending on
+# commodities/locations/stations must wait for the queue to drain. Without
+# `fio:wait`, `db-reset-mock` raced the stations job and died on a foreign-key
+# violation against BEN/ARC/HUB — intermittently, and looking exactly like
+# schema drift. `fio:wait` fails fast with a clear message if no worker is up.
 db-init-dev: ## Initialize database for development (push schema, seed, sync FIO)
 	pnpm --filter @kawakawa/api db:push
 	pnpm --filter @kawakawa/api db:init
 	pnpm --filter @kawakawa/api fio:sync
+	pnpm --filter @kawakawa/api fio:wait
 
 db-reset: ## Reset database with seed data only (WARNING: deletes all data)
 	pnpm --filter @kawakawa/api db:drop
 	pnpm --filter @kawakawa/api db:push --force
 	pnpm --filter @kawakawa/api fio:sync
+	pnpm --filter @kawakawa/api fio:wait
+	pnpm --filter @kawakawa/api fio:sync:prices
 	pnpm --filter @kawakawa/api db:seed
 
 db-reset-mock: ## Reset database with mock data (WARNING: deletes all data)
 	pnpm --filter @kawakawa/api db:drop
 	pnpm --filter @kawakawa/api db:push --force
 	pnpm --filter @kawakawa/api fio:sync
+	pnpm --filter @kawakawa/api fio:wait
+	pnpm --filter @kawakawa/api fio:sync:prices
 	pnpm --filter @kawakawa/api db:seed
 	pnpm --filter @kawakawa/api db:mock-data
 
@@ -83,8 +94,13 @@ db-mock-data: ## Load mock data into database (requires seeded DB)
 db-studio: ## Open Drizzle Studio (visual database browser)
 	pnpm --filter @kawakawa/api db:studio
 
-fio-sync: ## Sync FIO data (commodities, locations, stations)
+fio-sync: ## Sync FIO data (commodities, locations, stations, prices) - waits for completion
 	pnpm --filter @kawakawa/api fio:sync
+	pnpm --filter @kawakawa/api fio:wait
+	pnpm --filter @kawakawa/api fio:sync:prices
+
+fio-wait: ## Wait for queued FIO reference-data syncs to finish
+	pnpm --filter @kawakawa/api fio:wait
 
 admin-create: ## Create an administrator user (usage: make admin-create USERNAME="admin" NAME="Admin User")
 	@if [ -z "$(USERNAME)" ]; then \

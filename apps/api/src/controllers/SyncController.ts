@@ -3,6 +3,12 @@ import type { SyncState } from '@kawakawa/types'
 import type { JwtPayload } from '../utils/jwt.js'
 import { syncService } from '@kawakawa/services/sync-state'
 
+/**
+ * Authenticated sync endpoints. `@Security('jwt')` sits on the **class** so the
+ * default is closed and anything added here is protected without the author
+ * having to remember. The one public endpoint (`GET /sync/version`) lives in
+ * `SyncVersionController` for exactly that reason.
+ */
 @Route('sync')
 @Tags('Sync')
 @Security('jwt')

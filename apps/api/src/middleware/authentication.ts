@@ -11,6 +11,7 @@ import { getCachedRoles, setCachedRoles } from '../utils/roleCache.js'
 import { getRefreshedToken, setRefreshedToken } from '../utils/tokenRefreshCache.js'
 import { db, users, userRoles, rolePermissions } from '../db/index.js'
 import { setContextValue } from '../utils/requestContext.js'
+import { getTokenFromRequest } from '../utils/authCookie.js'
 import { Unauthorized, Forbidden } from '../utils/errors.js'
 import { createLogger } from '../utils/logger.js'
 
@@ -112,7 +113,10 @@ export async function expressAuthentication(
   scopes?: string[]
 ): Promise<unknown> {
   if (securityName === 'jwt') {
-    const token = request.headers.authorization?.split(' ')[1]
+    // Prefer the httpOnly session cookie; fall back to `Authorization: Bearer`
+    // so bundles loaded before the cookie migration keep working instead of
+    // being force-logged-out by the deploy.
+    const token = getTokenFromRequest(request)
 
     if (!token) {
       return Promise.reject(Unauthorized('No token provided'))
@@ -196,6 +200,10 @@ export async function expressAuthentication(
         roles: authInfo.roles,
         tokenVersion: authInfo.tokenVersion,
       }
+      // Signal the drift explicitly. The client used to detect this by decoding
+      // the re-issued JWT, which is impossible now the session is an httpOnly
+      // cookie — so the server has to say so. Surfaced as `X-Roles-Changed`.
+      setContextValue('rolesChanged', true)
     }
 
     // Re-issue the token when roles drifted, or when it is approaching expiry.

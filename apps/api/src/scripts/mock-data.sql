@@ -37,28 +37,42 @@ SELECT setval(pg_get_serial_sequence('shopping_lists', 'id'), COALESCE((SELECT M
 
 -- ==================== USERS ====================
 -- Password: password123 (bcrypt hash with $2b$ prefix from bcryptjs)
-INSERT INTO users (id, username, email, display_name, password_hash, is_active) VALUES
-  (1, 'admin', 'admin@kawakawa.local', 'Administrator', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (2, 'alice', 'alice@example.com', 'Alice Chen', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (3, 'bob', 'bob@example.com', 'Bob Williams', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (4, 'charlie', 'charlie@example.com', 'Charlie Davis', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (5, 'diana', 'diana@example.com', 'Diana Foster', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (6, 'ethan', 'ethan@example.com', 'Ethan Grant', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (7, 'fiona', 'fiona@example.com', 'Fiona Harper', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (8, 'george', 'george@example.com', 'George Irving', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (9, 'hannah', 'hannah@example.com', 'Hannah Jones', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (10, 'ivan', 'ivan@example.com', 'Ivan Kim', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (11, 'julia', 'julia@example.com', 'Julia Lee', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (12, 'kevin', 'kevin@example.com', 'Kevin Moore', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (13, 'luna', 'luna@example.com', 'Luna Nelson', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (14, 'mike', 'mike@example.com', 'Mike O''Brien', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (15, 'nora', 'nora@example.com', 'Nora Patel', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (16, 'oscar', 'oscar@example.com', 'Oscar Quinn', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (17, 'petra', 'petra@example.com', 'Petra Russo', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (18, 'quinn', 'quinn@example.com', 'Quinn Smith', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (19, 'rachel', 'rachel@example.com', 'Rachel Torres', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (20, 'steve', 'steve@example.com', 'Steve Upton', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true),
-  (21, 'tara', 'tara@example.com', 'Tara Vance', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', true);
+--
+-- `is_locked`, not the old `is_active`: renamed with inverted semantics in #36
+-- ("Change Active/Inactive to Unblocked/Blocked"), which missed this file.
+--
+-- `last_active_at` must be set. #37 (inactivity tracking) added an activity
+-- filter that every market query applies, and it treats NULL as inactive — so
+-- leaving it unset hides all 100 sell orders and renders an empty market. It is
+-- relative to NOW() rather than a literal so the fixture does not silently rot
+-- past the 10-day `activity.inactiveDays` default.
+--
+-- Ivan and Julia are deliberately stale (40 days) so the filter has something to
+-- exclude. They are members holding 7 sell orders each, chosen over the
+-- unverified users precisely because they have listings — excluding a user with
+-- nothing to list would demonstrate nothing.
+INSERT INTO users (id, username, email, display_name, password_hash, is_locked, last_active_at) VALUES
+  (1, 'admin', 'admin@kawakawa.local', 'Administrator', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (2, 'alice', 'alice@example.com', 'Alice Chen', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (3, 'bob', 'bob@example.com', 'Bob Williams', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (4, 'charlie', 'charlie@example.com', 'Charlie Davis', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (5, 'diana', 'diana@example.com', 'Diana Foster', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (6, 'ethan', 'ethan@example.com', 'Ethan Grant', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (7, 'fiona', 'fiona@example.com', 'Fiona Harper', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (8, 'george', 'george@example.com', 'George Irving', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (9, 'hannah', 'hannah@example.com', 'Hannah Jones', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (10, 'ivan', 'ivan@example.com', 'Ivan Kim', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '40 days'),
+  (11, 'julia', 'julia@example.com', 'Julia Lee', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '40 days'),
+  (12, 'kevin', 'kevin@example.com', 'Kevin Moore', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (13, 'luna', 'luna@example.com', 'Luna Nelson', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (14, 'mike', 'mike@example.com', 'Mike O''Brien', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (15, 'nora', 'nora@example.com', 'Nora Patel', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (16, 'oscar', 'oscar@example.com', 'Oscar Quinn', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (17, 'petra', 'petra@example.com', 'Petra Russo', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (18, 'quinn', 'quinn@example.com', 'Quinn Smith', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (19, 'rachel', 'rachel@example.com', 'Rachel Torres', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (20, 'steve', 'steve@example.com', 'Steve Upton', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day'),
+  (21, 'tara', 'tara@example.com', 'Tara Vance', '$2b$12$abfEy/SNGi.jJ8mfri7LjuqzrQ0sZHbeRCW9fC7nLasrc0UqXAQ8.', false, NOW() - INTERVAL '1 day');
 
 -- Update sequence after explicit ID inserts
 SELECT setval(pg_get_serial_sequence('users', 'id'), 21, true);

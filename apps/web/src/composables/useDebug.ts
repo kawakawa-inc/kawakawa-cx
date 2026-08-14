@@ -10,7 +10,17 @@ export interface DebugSection {
 const pageContextFn = ref<(() => Record<string, unknown>) | null>(null)
 const pageTitle = ref('')
 
-// Keys that should be redacted in the localStorage display
+// Keys redacted in the localStorage display, beyond the substring rules below.
+//
+// `jwt` is transition debt: this app no longer writes it — the session lives in
+// an httpOnly cookie — but anyone who loaded a pre-migration bundle still has
+// the old value sitting in localStorage, and it stays there until they clear it.
+// Deliberately not deleted here: a tab running the old bundle is still reading
+// that key to authenticate, and removing it from under them is the cross-tab
+// credential teardown this migration exists to eliminate.
+//
+// Remove with the rest of the Bearer-fallback debt, once the API stops logging
+// `authSource: 'bearer-fallback'` (see apps/api/src/utils/authCookie.ts).
 const SENSITIVE_KEYS = new Set(['jwt'])
 
 function isSensitiveKey(key: string): boolean {

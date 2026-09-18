@@ -12,12 +12,23 @@ index automatically.
 make logging-status     # mapped fields vs limit, template + pipeline presence, doc count
 make logging-setup      # provision pipeline, template, and field limit (idempotent)
 make logging-recreate   # DESTRUCTIVE: drop and rebuild the index from the template
-make search-logs ENV=prod SEARCH="JWT rejected" HOURS=2
+make search-logs SEARCH="JWT rejected" HOURS=2
 ```
+
+`make search-logs` accepts `SEARCH=`, `HOURS=`, `ERRORS=1`, `COMPONENT=`,
+`LIMIT=` and `RAW=1`. `SEARCH` is a plain case-insensitive substring — no query
+syntax, so punctuation and brackets are matched literally.
+
+There is only one log index, so there is no `ENV=` to choose: only the
+production app forwards logs to OpenSearch. Local dev logs go to files under
+`.dev/logs/` — use `make logs S=<service>` for those. (`ENV=prod` is still
+accepted and ignored, so older invocations keep working.)
 
 Connection details are read from `PROD_OPENSEARCH_URL` (a full
 `https://user:pass@host:port` URL) or, failing that, the discrete
-`LOGS_HOST` / `LOGS_USERNAME` / `LOGS_PASSWORD` / `LOGS_PORT` vars.
+`LOGS_HOST` / `LOGS_USERNAME` / `LOGS_PASSWORD` / `LOGS_PORT` vars. Both the
+repo root `.env` and `apps/api/.env` are loaded, in that order, and all three
+logging scripts resolve them through `apps/api/src/scripts/opensearch-connection.ts`.
 
 ## The failure this guards against
 
@@ -89,11 +100,41 @@ If `make logging-status` reports that `logs-kawakawa-cx` is a **concrete index**
 rather than an alias, rollover is not running — rebuild with
 `make logging-recreate`.
 
+## Document shape
+
+This is the thing to get right before writing any ad-hoc query. The DO forwarder
+wraps the application's stdout line, so the envelope sits at the top level and
+**every application field is nested under `log.*`**:
+
+| Field                       | Where     | Notes                                                                                                 |
+| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `@timestamp`                | top level | The field to range-query on. The app's own `time` is under `log`.                                     |
+| `do_component_name`         | top level | `kawa-api`, `kawa-web`, `kawa-bot`, `kawa-sync-worker`. Analysed `text` with **no** keyword subfield. |
+| `log.msg`, `log.level`, ... | nested    | `log.level` is a string label (`info`/`warn`/`error`), not a number.                                  |
+
+Three traps, each of which had shipped as a bug in `logs.ts`:
+
+- **Query `log.msg`, not `msg`.** A bare top-level field name matches nothing
+  and reports zero hits rather than an error — indistinguishable from "no logs".
+- **Filter components with `match_phrase`, not `match`.** `do_component_name` is
+  analysed with no keyword subfield, so `match: "kawa-api"` ORs the tokens
+  `kawa` and `api` and matches _every_ component.
+- **Prefer `wildcard` on a `.keyword` subfield for substring search.** A
+  `query_string` wildcard runs against analysed text, so it misses values
+  containing punctuation (`*sync-all*` finds nothing), and raises a
+  `query_shard_exception` on query-syntax characters.
+
+Add `track_total_hits: true` to any counting query; OpenSearch otherwise caps
+the reported total at 10,000 and flags it `gte`.
+
 ## Useful queries
 
 ```bash
 # Why are tokens being rejected?
-make search-logs ENV=prod SEARCH="JWT rejected" HOURS=24
+make search-logs SEARCH="JWT rejected" HOURS=24
+
+# Is anything still authenticating by Authorization header?
+make search-logs SEARCH="legacy header auth" HOURS=48
 ```
 
 `log.authFailure` is mapped as a keyword, so it can be aggregated directly:

@@ -8,18 +8,9 @@
  *   pnpm --filter @kawakawa/api opensearch:lifecycle remove   # Remove policy from all log indices
  */
 
-const LOGS_USERNAME = process.env.LOGS_USERNAME
-const LOGS_PASSWORD = process.env.LOGS_PASSWORD
-const LOGS_HOST = process.env.LOGS_HOST
-const LOGS_PORT = process.env.LOGS_PORT ?? '25060'
+import { resolveConnectionOrExit } from './opensearch-connection.js'
 
-if (!LOGS_USERNAME || !LOGS_PASSWORD || !LOGS_HOST) {
-  console.error('Missing LOGS_USERNAME, LOGS_PASSWORD, or LOGS_HOST in .env')
-  process.exit(1)
-}
-
-const BASE_URL = `https://${LOGS_HOST}:${LOGS_PORT}`
-const AUTH = Buffer.from(`${LOGS_USERNAME}:${LOGS_PASSWORD}`).toString('base64')
+const { baseUrl: BASE_URL, auth: AUTH } = resolveConnectionOrExit()
 
 const POLICY_ID = 'delete-after-30-days'
 const INDEX_PATTERN = 'logs-*'

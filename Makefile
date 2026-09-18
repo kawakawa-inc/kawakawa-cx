@@ -192,10 +192,11 @@ logging-status: ## Show OpenSearch logging status (mapped fields vs limit, templ
 logging-recreate: ## DESTRUCTIVE: drop and rebuild the log index from the template (deletes all logs)
 	CONFIRM=yes pnpm --filter @kawakawa/api opensearch:setup recreate
 
-search-logs: ## Search OpenSearch deploy logs (usage: make search-logs ENV=prod, add ERRORS=1, SEARCH="jwt", HOURS=2, COMPONENT=kawa-api)
-	pnpm --filter @kawakawa/api logs $(or $(ENV),dev) \
+search-logs: ## Search production OpenSearch logs (usage: make search-logs SEARCH="jwt" HOURS=2, add ERRORS=1, COMPONENT=kawa-api, LIMIT=n, RAW=1)
+	pnpm --filter @kawakawa/api logs \
 		$(if $(ERRORS),--errors) \
 		$(if $(SEARCH),--search "$(SEARCH)") \
 		$(if $(HOURS),--hours $(HOURS)) \
 		$(if $(COMPONENT),--component $(COMPONENT)) \
-		$(if $(LIMIT),--limit $(LIMIT))
+		$(if $(LIMIT),--limit $(LIMIT)) \
+		$(if $(RAW),--raw)

@@ -20,52 +20,9 @@
  *   pnpm --filter @kawakawa/api opensearch:setup recreate   # DESTRUCTIVE: drop + rebuild index
  */
 
-/**
- * Connection details come from either:
- *   PROD_OPENSEARCH_URL / OPENSEARCH_URL — a full https://user:pass@host:port URL
- *   or the discrete LOGS_HOST / LOGS_USERNAME / LOGS_PASSWORD / LOGS_PORT vars
- *     used by opensearch-lifecycle.ts.
- */
-function resolveConnection(): { baseUrl: string; auth: string } {
-  // Values pasted into .env are often quoted; a stray quote lands in the port
-  // and produces a confusing "port number was not a decimal" failure.
-  const rawUrl = (process.env.PROD_OPENSEARCH_URL ?? process.env.OPENSEARCH_URL ?? '').replace(
-    /['"]/g,
-    ''
-  )
+import { LOG_ALIAS, resolveConnectionOrExit } from './opensearch-connection.js'
 
-  if (rawUrl) {
-    const url = new URL(rawUrl)
-    const username = decodeURIComponent(url.username)
-    const password = decodeURIComponent(url.password)
-    url.username = ''
-    url.password = ''
-    return {
-      baseUrl: url.origin,
-      auth: Buffer.from(`${username}:${password}`).toString('base64'),
-    }
-  }
-
-  const host = process.env.LOGS_HOST
-  const username = process.env.LOGS_USERNAME
-  const password = process.env.LOGS_PASSWORD
-  const port = process.env.LOGS_PORT ?? '25060'
-
-  if (!host || !username || !password) {
-    console.error(
-      'Missing connection details. Set PROD_OPENSEARCH_URL (or OPENSEARCH_URL),\n' +
-        'or LOGS_HOST / LOGS_USERNAME / LOGS_PASSWORD in .env'
-    )
-    process.exit(1)
-  }
-
-  return {
-    baseUrl: `https://${host}:${port}`,
-    auth: Buffer.from(`${username}:${password}`).toString('base64'),
-  }
-}
-
-const { baseUrl: BASE_URL, auth: AUTH } = resolveConnection()
+const { baseUrl: BASE_URL, auth: AUTH } = resolveConnectionOrExit()
 
 /**
  * The name DigitalOcean's log forwarder writes to.
@@ -74,7 +31,7 @@ const { baseUrl: BASE_URL, auth: AUTH } = resolveConnection()
  * `logs-kawakawa-cx-000001`, `-000002`, ... The forwarder is unaffected — writes
  * to an alias with a designated write index land in the backing index.
  */
-const ALIAS = 'logs-kawakawa-cx'
+const ALIAS = LOG_ALIAS
 /** Concrete indices behind the alias. */
 const INDEX_PATTERN = `${ALIAS}-*`
 /** First backing index; ISM increments the suffix on each rollover. */

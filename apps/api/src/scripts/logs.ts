@@ -1,117 +1,192 @@
 /**
- * OpenSearch log search utility
- * Reads credentials from .env (LOGS_USERNAME, LOGS_PASSWORD, LOGS_HOST, LOGS_PORT)
+ * OpenSearch log search utility.
+ *
+ * Connection details come from the repo root `.env` (`PROD_OPENSEARCH_URL`) or
+ * the discrete `LOGS_*` vars — see `opensearch-connection.ts`.
+ *
+ * ## Reading the document shape
+ *
+ * The DO forwarder wraps each app log line, so **every application field is
+ * nested under `log.*`** (`log.msg`, `log.level`, ...) while the envelope
+ * (`@timestamp`, `do_component_name`) sits at the top level. Queries here must
+ * use the `log.` prefix; without it they match nothing at all, silently. This
+ * file previously queried bare `msg` and `level` and so `--errors` and
+ * `--search` always returned zero hits even when the data was there.
  *
  * Usage:
- *   pnpm --filter @kawakawa/api logs [env] [options]
+ *   pnpm --filter @kawakawa/api logs [options]
  *
  * Examples:
- *   pnpm --filter @kawakawa/api logs dev                  # Recent dev logs
- *   pnpm --filter @kawakawa/api logs prod --errors        # Prod errors only
- *   pnpm --filter @kawakawa/api logs dev --search "JWT"   # Search for keyword
- *   pnpm --filter @kawakawa/api logs prod --hours 4       # Last 4 hours
- *   pnpm --filter @kawakawa/api logs dev --component kawa-api  # Filter by component
- *   pnpm --filter @kawakawa/api logs dev --raw            # Show full JSON entries
+ *   pnpm --filter @kawakawa/api logs                      # Recent logs
+ *   pnpm --filter @kawakawa/api logs --errors             # Errors only
+ *   pnpm --filter @kawakawa/api logs --search "JWT"       # Search messages
+ *   pnpm --filter @kawakawa/api logs --hours 4            # Last 4 hours
+ *   pnpm --filter @kawakawa/api logs --component kawa-api # Filter by component
+ *   pnpm --filter @kawakawa/api logs --raw                # Show full JSON entries
  */
 
-const LOGS_USERNAME = process.env.LOGS_USERNAME
-const LOGS_PASSWORD = process.env.LOGS_PASSWORD
-const LOGS_HOST = process.env.LOGS_HOST
-const LOGS_PORT = process.env.LOGS_PORT ?? '25060'
+import { LOG_ALIAS, resolveConnection } from './opensearch-connection.js'
 
-if (!LOGS_USERNAME || !LOGS_PASSWORD || !LOGS_HOST) {
-  console.error('Missing LOGS_USERNAME, LOGS_PASSWORD, or LOGS_HOST in .env')
-  process.exit(1)
-}
+/** Application fields worth searching. All are `text` with a `keyword` subfield. */
+const SEARCH_FIELDS = ['log.msg', 'log.message', 'log.err.message', 'log.errorBody'] as const
 
-const BASE_URL = `https://${LOGS_HOST}:${LOGS_PORT}`
-const AUTH = Buffer.from(`${LOGS_USERNAME}:${LOGS_PASSWORD}`).toString('base64')
+/** Levels treated as "an error" by `--errors`. `fatal` would otherwise be missed. */
+const ERROR_LEVELS = ['error', 'fatal'] as const
 
+/** The forwarder's envelope, plus the nested application payload under `log`. */
 interface LogEntry {
-  msg?: string
-  level?: string
-  time?: string
   '@timestamp'?: string
   do_component_name?: string
-  hostname?: string
+  log?: {
+    msg?: string
+    level?: string
+    time?: string
+    hostname?: string
+    err?: { message?: string; stack?: string }
+    [key: string]: unknown
+  }
   [key: string]: unknown
 }
 
-async function search(index: string, query: Record<string, unknown>): Promise<LogEntry[]> {
-  const res = await fetch(`${BASE_URL}/${index}/_search`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Basic ${AUTH}`,
-    },
-    body: JSON.stringify(query),
-  })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`OpenSearch error ${res.status}: ${text}`)
-  }
-
-  const data = (await res.json()) as {
-    hits: { hits: Array<{ _source: LogEntry }> }
-  }
-  return data.hits.hits.map(h => h._source)
+export interface LogQueryOptions {
+  errors: boolean
+  hours: number
+  searchTerm: string | null
+  component: string | null
+  limit: number
+  raw: boolean
 }
 
-function parseArgs(args: string[]) {
-  const env = args[0] === 'dev' || args[0] === 'prod' ? args[0] : 'dev'
-  const startIdx = env === args[0] ? 1 : 0
-  const rest = args.slice(startIdx)
+/**
+ * Build the OpenSearch query body.
+ *
+ * Exported for testing: these clauses are the whole point of the script and
+ * every one of them has been wrong at some stage.
+ */
+export function buildQuery(options: LogQueryOptions): Record<string, unknown> {
+  const { errors, hours, searchTerm, component, limit } = options
 
-  let errors = false
-  let hours = 1
-  let searchTerm: string | null = null
-  let component: string | null = null
-  let limit = 50
-  let raw = false
+  const must: Record<string, unknown>[] = [{ range: { '@timestamp': { gte: `now-${hours}h` } } }]
+
+  if (errors) {
+    // `terms` on the keyword subfield. `match` on the analysed field would also
+    // match the *word* "error" inside a level-like field, and misses `fatal`.
+    must.push({ terms: { 'log.level.keyword': [...ERROR_LEVELS] } })
+  }
+
+  if (searchTerm) {
+    // Substring search against the *keyword* subfields rather than
+    // `query_string` against the analysed text. Three reasons, all found by
+    // testing against the real index:
+    //   - analysed wildcards break on tokenised punctuation: `*sync-all*`
+    //     matched 0 docs where the phrase matched 24;
+    //   - `query_string` is a user-facing query language, so a term containing
+    //     `[`, `/` or `"` raises a query_shard_exception instead of searching;
+    //   - matching a partial word (`eject` inside `rejected`) needs a wildcard,
+    //     which a phrase match cannot do.
+    // Wildcard-on-keyword handles all three. `log.msg.keyword` has no
+    // `ignore_above`, so messages are indexed in full.
+    must.push({
+      bool: {
+        should: SEARCH_FIELDS.map(field => ({
+          wildcard: {
+            [`${field}.keyword`]: {
+              value: `*${searchTerm.toLowerCase()}*`,
+              case_insensitive: true,
+            },
+          },
+        })),
+        minimum_should_match: 1,
+      },
+    })
+  }
+
+  if (component) {
+    // `match_phrase`, not `match`. `do_component_name` is analysed text with no
+    // keyword subfield, so `match: 'kawa-api'` ORs the tokens `kawa`/`api` and
+    // matches *every* component — 273,758 docs instead of 13,331, i.e. the
+    // filter silently did nothing.
+    must.push({ match_phrase: { do_component_name: component } })
+  }
+
+  return {
+    size: limit,
+    // Ask for a real total; OpenSearch otherwise caps the count at 10,000 and
+    // reports it as `gte`, which is misleading when summarising a result set.
+    track_total_hits: true,
+    sort: [{ '@timestamp': { order: 'desc' } }],
+    query: { bool: { must } },
+  }
+}
+
+export function parseArgs(args: string[]): LogQueryOptions {
+  // `dev`/`prod` used to select an index and are now meaningless: there is only
+  // one index. Still accepted and ignored so existing invocations and
+  // `make search-logs ENV=prod` keep working rather than treating "prod" as a
+  // search term.
+  const rest = args.filter(a => a !== 'dev' && a !== 'prod')
+
+  const options: LogQueryOptions = {
+    errors: false,
+    hours: 1,
+    searchTerm: null,
+    component: null,
+    limit: 50,
+    raw: false,
+  }
 
   for (let i = 0; i < rest.length; i++) {
     switch (rest[i]) {
       case '--errors':
       case '-e':
-        errors = true
+        options.errors = true
         break
       case '--hours':
       case '-h':
-        hours = parseInt(rest[++i], 10) || 1
+        options.hours = parseInt(rest[++i], 10) || 1
         break
       case '--search':
       case '-s':
-        searchTerm = rest[++i]
+        options.searchTerm = rest[++i] ?? null
         break
       case '--component':
       case '-c':
-        component = rest[++i]
+        options.component = rest[++i] ?? null
         break
       case '--limit':
       case '-n':
-        limit = parseInt(rest[++i], 10) || 50
+        options.limit = parseInt(rest[++i], 10) || 50
         break
       case '--raw':
       case '-r':
-        raw = true
+        options.raw = true
         break
     }
   }
 
-  return { env, errors, hours, searchTerm, component, limit, raw }
+  return options
 }
 
-function formatEntry(entry: LogEntry): string {
-  const ts = entry['@timestamp'] || entry.time || '?'
-  const time = ts !== '?' ? new Date(ts).toLocaleTimeString() : '?'
+export function formatEntry(entry: LogEntry): string {
+  const log = entry.log ?? {}
+  const ts = entry['@timestamp'] || log.time
+  const time = ts ? new Date(ts).toLocaleTimeString() : '?'
   const comp = entry.do_component_name ?? '?'
-  const level = (entry.level ?? 'info').toUpperCase().padEnd(5)
-  const msg = entry.msg ?? JSON.stringify(entry)
+  const level = (log.level ?? 'info').toUpperCase().padEnd(5)
+  // Fall back to the raw payload so a line with no `msg` still shows something
+  // useful instead of "undefined".
+  const msg = log.msg ?? JSON.stringify(log)
   let line = `${time} [${comp}] ${level} ${msg}`
 
-  // Show error details if present
-  const err = entry.err as Record<string, unknown> | undefined
+  // `message` carries the detail on request-level warnings ("No token
+  // provided"), where `msg` is only the generic "Client error".
+  const detail = typeof log.message === 'string' ? log.message : undefined
+  if (detail && detail !== log.msg) line += ` — ${detail}`
+
+  const status = log.statusCode ?? log.status
+  if (typeof status === 'number') line += ` (${status})`
+
+  const err = log.err
   if (err) {
     if (err.message) line += `\n       Error: ${err.message}`
     if (err.stack) line += `\n       ${String(err.stack).split('\n').join('\n       ')}`
@@ -120,59 +195,87 @@ function formatEntry(entry: LogEntry): string {
   return line
 }
 
+const HELP = `Usage: logs [options]
+
+  --errors, -e         Show only error/fatal logs
+  --hours N, -h N      Look back N hours (default: 1)
+  --search STR, -s STR Case-insensitive substring search of log messages
+  --component X, -c X  Filter by DO component (kawa-api, kawa-web, kawa-bot, kawa-sync-worker)
+  --limit N, -n N      Max results (default: 50)
+  --raw, -r            Show full raw JSON entries
+  --help               Show this help
+
+Logs are searched in ${LOG_ALIAS}. Only production ships logs to OpenSearch;
+for local dev logs use 'make logs S=<service>'.`
+
+async function search(
+  baseUrl: string,
+  auth: string,
+  query: Record<string, unknown>
+): Promise<{ entries: LogEntry[]; total: number }> {
+  const res = await fetch(`${baseUrl}/${LOG_ALIAS}/_search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${auth}`,
+    },
+    body: JSON.stringify(query),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    if (res.status === 404) {
+      throw new Error(`index ${LOG_ALIAS} not found. Run 'make logging-setup' to provision it.`)
+    }
+    throw new Error(`OpenSearch error ${res.status}: ${text}`)
+  }
+
+  const data = (await res.json()) as {
+    hits: { hits: Array<{ _source: LogEntry }>; total?: { value: number } }
+  }
+  return {
+    entries: data.hits.hits.map(h => h._source),
+    total: data.hits.total?.value ?? data.hits.hits.length,
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2)
 
   if (args.includes('--help')) {
-    console.log(`Usage: logs [dev|prod] [options]
-  --errors, -e         Show only error-level logs
-  --hours N, -h N      Look back N hours (default: 1)
-  --search STR, -s STR Search for keyword in messages
-  --component X, -c X  Filter by DO component name
-  --limit N, -n N      Max results (default: 50)
-  --raw, -r            Show full raw JSON entries
-  --help               Show this help`)
+    console.log(HELP)
     return
   }
 
-  const { env, errors, hours, searchTerm, component, limit, raw } = parseArgs(args)
-  const index = env === 'prod' ? 'logs-prod-kawakawa-cx' : 'logs-dev-kawakawa-cx'
+  const options = parseArgs(args)
+  const { baseUrl, auth } = resolveConnection()
+  const { entries, total } = await search(baseUrl, auth, buildQuery(options))
 
-  const must: Record<string, unknown>[] = [{ range: { '@timestamp': { gte: `now-${hours}h` } } }]
-
-  if (errors) {
-    must.push({ match: { level: 'error' } })
-  }
-  if (searchTerm) {
-    must.push({ query_string: { query: `*${searchTerm}*`, default_field: 'msg' } })
-  }
-  if (component) {
-    must.push({ match: { do_component_name: component } })
-  }
-
-  const entries = await search(index, {
-    size: limit,
-    sort: [{ '@timestamp': { order: 'desc' } }],
-    query: { bool: { must } },
-  })
+  const filters = [
+    options.errors ? 'errors only' : null,
+    options.searchTerm ? `search "${options.searchTerm}"` : null,
+    options.component ? `component ${options.component}` : null,
+  ].filter(Boolean)
+  const suffix = filters.length > 0 ? `, ${filters.join(', ')}` : ''
 
   if (entries.length === 0) {
-    console.log(`No logs found in ${index} (last ${hours}h)`)
+    console.log(`No logs found in ${LOG_ALIAS} (last ${options.hours}h${suffix})`)
     return
   }
 
-  console.log(`--- ${index} (last ${hours}h, ${entries.length} entries) ---\n`)
+  const shown = total > entries.length ? `${entries.length} of ${total}` : `${entries.length}`
+  console.log(`--- ${LOG_ALIAS} (last ${options.hours}h${suffix}, ${shown} entries) ---\n`)
+
   // Reverse so oldest is first (chronological order)
   for (const entry of entries.reverse()) {
-    if (raw) {
-      console.log(JSON.stringify(entry, null, 2))
-    } else {
-      console.log(formatEntry(entry))
-    }
+    console.log(options.raw ? JSON.stringify(entry, null, 2) : formatEntry(entry))
   }
 }
 
-main().catch(err => {
-  console.error('Failed:', err.message)
-  process.exit(1)
-})
+// Only run when invoked directly, so the exported helpers can be imported by tests.
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(err => {
+    console.error('Failed:', err.message)
+    process.exit(1)
+  })
+}

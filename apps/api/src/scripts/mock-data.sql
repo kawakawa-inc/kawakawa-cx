@@ -298,6 +298,12 @@ INSERT INTO fio_inventory (user_storage_id, commodity_ticker, quantity) VALUES
   (18, 'RAT', 6000);
 
 -- ==================== SELL ORDERS (100 orders) ====================
+-- Most prices have at most 3 significant figures, which the XIT Paste parser
+-- accepts as-is. These have more, so buying them from the market and submitting
+-- the invoice shows the XIT Paste Up/Reset/Down rounding group (refined-prun#247):
+--   3 DW 120.50 (alice, BEN)      8 MCG 421.50 (bob, ANT)    55 RCO 2234.00 (bob, ANT)
+--  22 FLX 65.75 (ethan, MOR)     27 BDE 279.90 (fiona, ANT) 31 MFL 683.40 (george, HRT)
+-- Each seller has FIO inventory of the item, so the listing shows as available.
 INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, currency, order_type, limit_mode, limit_quantity) VALUES
   -- Alice's sell orders (Lead)
   (1, 2, 'H2O', 'BEN', 50.00, 'CIS', 'internal', 'max_sell', 2000),
@@ -308,7 +314,7 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   (6, 2, 'SI', 'MOR', 180.00, 'CIS', 'internal', 'max_sell', 3000),
   -- Bob's sell orders (Lead)
   (7, 3, 'LST', 'ANT', 35.00, 'NCC', 'internal', 'none', NULL),
-  (8, 3, 'MCG', 'ANT', 420.00, 'CIS', 'internal', 'reserve', 1000),
+  (8, 3, 'MCG', 'ANT', 421.50, 'CIS', 'internal', 'reserve', 1000),
   (9, 3, 'GL', 'ANT', 95.00, 'CIS', 'partner', 'none', NULL),
   (10, 3, 'HE', 'KW-688c', 150.00, 'ICA', 'internal', 'none', NULL),
   (11, 3, 'NE', 'KW-688c', 280.00, 'CIS', 'internal', 'max_sell', 1000),
@@ -325,18 +331,18 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   (20, 5, 'GRN', 'BEN', 42.00, 'CIS', 'internal', 'none', NULL),
   (21, 5, 'HCP', 'ZV-194f', 850.00, 'CIS', 'internal', 'max_sell', 800),
   -- Ethan's sell orders (Member)
-  (22, 6, 'FLX', 'MOR', 65.00, 'CIS', 'internal', 'none', NULL),
+  (22, 6, 'FLX', 'MOR', 65.75, 'CIS', 'internal', 'none', NULL),
   (23, 6, 'OFF', 'MOR', 380.00, 'AIC', 'internal', 'none', NULL),
   (24, 6, 'PWO', 'MOR', 195.00, 'CIS', 'internal', 'reserve', 500),
   -- Fiona's sell orders (Member)
   (25, 7, 'BSE', 'ANT', 125.00, 'CIS', 'internal', 'none', NULL),
   (26, 7, 'BBH', 'ANT', 340.00, 'NCC', 'internal', 'max_sell', 1500),
-  (27, 7, 'BDE', 'ANT', 280.00, 'CIS', 'internal', 'none', NULL),
+  (27, 7, 'BDE', 'ANT', 279.90, 'CIS', 'internal', 'none', NULL),
   (28, 7, 'HE3', 'LS-300a', 4500.00, 'CIS', 'internal', 'reserve', 200),
   (29, 7, 'AMM', 'LS-300a', 55.00, 'ICA', 'internal', 'none', NULL),
   -- George's sell orders (Member)
   (30, 8, 'MFK', 'HRT', 520.00, 'CIS', 'internal', 'none', NULL),
-  (31, 8, 'MFL', 'HRT', 680.00, 'CIS', 'internal', 'max_sell', 1000),
+  (31, 8, 'MFL', 'HRT', 683.40, 'CIS', 'internal', 'max_sell', 1000),
   (32, 8, 'MFE', 'HRT', 890.00, 'AIC', 'internal', 'none', NULL),
   -- Hannah's sell orders (Member)
   (33, 9, 'TCL', 'BEN', 750.00, 'CIS', 'internal', 'reserve', 500),
@@ -368,7 +374,7 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   -- Additional sell orders to reach ~100
   (53, 2, 'OVE', 'BEN', 190.00, 'AIC', 'internal', 'none', NULL),
   (54, 2, 'COF', 'BEN', 380.00, 'CIS', 'partner', 'max_sell', 200),
-  (55, 3, 'RCO', 'ANT', 2200.00, 'CIS', 'internal', 'none', NULL),
+  (55, 3, 'RCO', 'ANT', 2234.00, 'CIS', 'internal', 'none', NULL),
   (56, 3, 'AR', 'KW-688c', 125.00, 'ICA', 'internal', 'none', NULL),
   (57, 4, 'H', 'ZV-759i', 18.00, 'CIS', 'internal', 'none', NULL),
   (58, 5, 'HMS', 'ZV-194f', 650.00, 'NCC', 'internal', 'reserve', 400),

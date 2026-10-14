@@ -6,3 +6,7 @@ coverage
 pnpm-lock.yaml
 *.d.ts
 apps/api/src/generated
+
+# Vendored from refined-prun; keep upstream formatting for clean re-vendor diffs
+packages/parser/src/xit/paste/paste-parse.ts
+packages/parser/src/xit/paste/paste-parse.test.ts

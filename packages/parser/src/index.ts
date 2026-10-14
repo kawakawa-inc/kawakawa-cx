@@ -47,6 +47,20 @@ export type { ListFormat, ListItem, ListParseResult } from './types.js'
 // XIT parser functions
 export { parseXitJson, isXitJson, aggregateMaterials } from './xit/parser.js'
 
+// XIT Paste (refined-prun ACT Paste material group)
+export {
+  parsePaste,
+  parseMaterials,
+  serializePaste,
+  roundPrice,
+  type MaterialBill,
+  type PasteRounding,
+  type PasteMaterial,
+  type PasteSerializeError,
+  type PasteAdjustment,
+  type PasteSerializeResult,
+} from './xit/paste/index.js'
+
 // List parser functions
 export { parseList, isList, detectFormat } from './list/parser.js'
 

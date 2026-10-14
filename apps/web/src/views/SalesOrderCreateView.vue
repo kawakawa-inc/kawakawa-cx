@@ -382,7 +382,7 @@ import {
   type CreatePickupLocationRequest,
 } from '../services/api'
 import { locationService } from '../services/locationService'
-import { useSnackbar, useDisplayHelpers, useUrlState } from '../composables'
+import { useClipboard, useSnackbar, useDisplayHelpers, useUrlState } from '../composables'
 import { useSettingsStore } from '../stores/settings'
 import { useUserStore } from '../stores/user'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
@@ -392,6 +392,7 @@ import { commodityService } from '../services/commodityService'
 
 const router = useRouter()
 const { snackbar, showSnackbar } = useSnackbar()
+const { copy } = useClipboard()
 const { getCommodityDisplay, getLocationDisplay } = useDisplayHelpers()
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
@@ -638,11 +639,9 @@ const copyMaterials = async () => {
 }
 
 const copyToClipboard = async (text: string, successMsg: string) => {
-  try {
-    await navigator.clipboard.writeText(text)
+  if (await copy(text)) {
     showSnackbar(successMsg)
-  } catch (error) {
-    console.error('Failed to copy to clipboard', error)
+  } else {
     showSnackbar('Failed to copy to clipboard', 'error')
   }
 }

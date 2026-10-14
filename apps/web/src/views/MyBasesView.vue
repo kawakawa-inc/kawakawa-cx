@@ -591,6 +591,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { api, authenticatedFetch } from '../services/api'
 import { usePageState } from '../composables/usePageState'
+import { useClipboard } from '../composables/useClipboard'
 import { useSettingsStore } from '../stores/settings'
 import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
@@ -741,6 +742,7 @@ function selectPriceList(code: string, version: number | null) {
 }
 
 const snackbar = reactive({ show: false, message: '', color: 'success' })
+const { copy } = useClipboard()
 
 // ==================== TABLE HEADERS ====================
 
@@ -1231,12 +1233,10 @@ function toCsvCell(v: unknown): string {
 
 async function copyCsv(headers: string[], rows: unknown[][], successLabel = 'CSV'): Promise<void> {
   const lines = [headers.map(toCsvCell).join(','), ...rows.map(r => r.map(toCsvCell).join(','))]
-  try {
-    await navigator.clipboard.writeText(lines.join('\n'))
+  if (await copy(lines.join('\n'))) {
     snackbar.message = `${successLabel} copied to clipboard`
     snackbar.color = 'success'
-  } catch (e) {
-    console.error('Clipboard write failed', e)
+  } else {
     snackbar.message = 'Failed to copy to clipboard'
     snackbar.color = 'error'
   }

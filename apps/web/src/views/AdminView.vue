@@ -2585,7 +2585,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useUrlTab, useDialogBehavior } from '../composables'
+import { useClipboard, useUrlTab, useDialogBehavior } from '../composables'
 import type { Role } from '../types'
 import type {
   DiscordSettings,
@@ -3012,6 +3012,7 @@ const resetLinkUrl = computed(() => {
   return `${window.location.origin}/reset-password?token=${resetLinkData.value.token}`
 })
 
+const { copy } = useClipboard()
 const showSnackbar = (message: string, color: 'success' | 'error' = 'success') => {
   snackbar.value = { show: true, message, color }
 }
@@ -3204,10 +3205,9 @@ const generateResetLink = async () => {
 }
 
 const copyResetLink = async () => {
-  try {
-    await navigator.clipboard.writeText(resetLinkUrl.value)
+  if (await copy(resetLinkUrl.value)) {
     showSnackbar('Reset link copied to clipboard')
-  } catch {
+  } else {
     showSnackbar('Failed to copy link', 'error')
   }
 }

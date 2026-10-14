@@ -80,11 +80,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { debugState } from '../composables/useDebug'
-import { useSnackbar } from '../composables'
+import { useClipboard, useSnackbar } from '../composables'
 
 const open = defineModel<boolean>({ default: false })
 
 const { showSnackbar } = useSnackbar()
+const { copy } = useClipboard()
 
 const sections = computed(() => debugState.getSections())
 
@@ -137,10 +138,9 @@ const openDetail = (key: string, val: unknown) => {
 }
 
 const copyDetail = async () => {
-  try {
-    await navigator.clipboard.writeText(detailFormatted.value)
+  if (await copy(detailFormatted.value)) {
     showSnackbar('Copied to clipboard', 'success')
-  } catch {
+  } else {
     showSnackbar('Failed to copy', 'error')
   }
 }
@@ -155,10 +155,9 @@ const copyToClipboard = async () => {
     })
     .join('\n\n')
 
-  try {
-    await navigator.clipboard.writeText(text)
+  if (await copy(text)) {
     showSnackbar('Copied to clipboard', 'success')
-  } catch {
+  } else {
     showSnackbar('Failed to copy', 'error')
   }
 }

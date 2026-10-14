@@ -106,8 +106,8 @@
       </v-card>
     </div>
 
-    <v-snackbar v-model="snackbar" :timeout="1500" color="success">
-      Copied: {{ snackbarMessage }}
+    <v-snackbar v-model="snackbar" :timeout="1500" :color="snackbarColor">
+      {{ snackbarMessage }}
     </v-snackbar>
   </div>
 </template>
@@ -117,6 +117,7 @@ import { computed, ref } from 'vue'
 import type { InvoiceLineItem, InvoiceDirection, Currency } from '@kawakawa/types'
 import { locationService } from '../../services/locationService'
 import { useUserStore } from '../../stores/user'
+import { useClipboard } from '../../composables'
 import CommodityDisplay from '../CommodityDisplay.vue'
 
 interface ContractGroup {
@@ -134,8 +135,10 @@ const props = defineProps<{
 }>()
 
 const userStore = useUserStore()
+const { copy } = useClipboard()
 const snackbar = ref(false)
 const snackbarMessage = ref('')
+const snackbarColor = ref<'success' | 'error'>('success')
 
 const getLocationDisplay = (locationId: string): string => {
   return locationService.getLocationDisplay(locationId, userStore.getLocationDisplayMode())
@@ -187,8 +190,9 @@ const contracts = computed<ContractGroup[]>(() => {
 })
 
 const copyText = async (text: string) => {
-  await navigator.clipboard.writeText(text)
-  snackbarMessage.value = text
+  const ok = await copy(text)
+  snackbarColor.value = ok ? 'success' : 'error'
+  snackbarMessage.value = ok ? `Copied: ${text}` : 'Failed to copy to clipboard'
   snackbar.value = true
 }
 </script>

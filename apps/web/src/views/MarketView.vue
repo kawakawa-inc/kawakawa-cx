@@ -935,6 +935,7 @@ import { locationService } from '../services/locationService'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
 import {
+  useClipboard,
   useSnackbar,
   useDisplayHelpers,
   useFormatters,
@@ -982,6 +983,7 @@ const shoppingListStore = useShoppingListStore()
 const route = useRoute()
 const router = useRouter()
 const { snackbar, showSnackbar } = useSnackbar()
+const { copy } = useClipboard()
 const { getLocationDisplay, getCommodityDisplay, getCommodityCategory, getCommodityName } =
   useDisplayHelpers()
 const { getFioAgeColor, formatRelativeTime } = useFormatters()
@@ -2622,11 +2624,13 @@ const onFilterSaved = (savedFilter: SavedMarketFilter) => {
   loadPinnedFilters()
 }
 
-const copyFilterLink = (filterId: number) => {
+const copyFilterLink = async (filterId: number) => {
   const url = `${window.location.origin}/market?filter=${filterId}`
-  navigator.clipboard.writeText(url).then(() => {
+  if (await copy(url)) {
     showSnackbar('Filter link copied to clipboard', 'success')
-  })
+  } else {
+    showSnackbar('Failed to copy filter link', 'error')
+  }
 }
 
 onMounted(() => {

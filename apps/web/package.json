@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@kawakawa/client": "workspace:*",
+    "@kawakawa/parser": "workspace:*",
     "@kawakawa/types": "workspace:*",
     "@mdi/font": "^7.4.47",
     "chart.js": "^4",
@@ -37,6 +38,7 @@
     "@playwright/test": "^1.57.0",
     "@types/cytoscape-dagre": "^2.3.4",
     "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/test-utils": "^2.4.6",
     "jsdom": "^30.0.1",
     "knip": "^5.74.0",
     "sass": "^1.69.0",

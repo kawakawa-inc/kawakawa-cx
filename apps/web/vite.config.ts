@@ -38,6 +38,7 @@ export default defineConfig({
       '@kawakawa/types/settings',
       '@kawakawa/types/xit',
       '@kawakawa/types/shopping-list',
+      '@kawakawa/parser/xit/paste',
     ],
   },
 })

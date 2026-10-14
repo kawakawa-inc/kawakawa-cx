@@ -98,7 +98,40 @@ describe.skipIf(!distBuilt)('built bundle is CSP-compatible', () => {
       expect(src, `${file} uses eval()`).not.toMatch(/\beval\(/)
       expect(src, `${file} uses new Function()`).not.toMatch(/new Function\(/)
       expect(src, `${file} uses new Worker()`).not.toMatch(/new Worker\(/)
-      expect(src, `${file} uses createObjectURL`).not.toMatch(/createObjectURL/)
+      expect(withoutPapaparseWorker(src), `${file} uses createObjectURL`).not.toMatch(
+        /createObjectURL/
+      )
     }
+  })
+})
+
+/**
+ * Strips papaparse's optional worker bootstrap, the one known-safe use of
+ * createObjectURL in the bundle.
+ *
+ * It only runs when Papa.parse is called with `worker: true`, which the vendored
+ * XIT Paste parser (packages/parser/src/xit/paste) never does. If it did run,
+ * `script-src 'self'` would block the blob: worker, so it cannot be used to get
+ * around the policy. The match is anchored on papaparse's IS_PAPA_WORKER marker
+ * so any other createObjectURL still fails.
+ */
+function withoutPapaparseWorker(src: string): string {
+  return src.replace(/createObjectURL\(new Blob\(\["var global = [^"]*IS_PAPA_WORKER=true;/g, '')
+}
+
+describe('papaparse worker allowance', () => {
+  it('removes papaparse’s worker bootstrap', () => {
+    const papa =
+      'c.BLOB_URL=F.createObjectURL(new Blob(["var global = (function() { return self; })(); global.IS_PAPA_WORKER=true; ", "(", M, ")();"]))'
+    expect(withoutPapaparseWorker(papa)).not.toMatch(/createObjectURL/)
+  })
+
+  it('keeps any other createObjectURL', () => {
+    expect(withoutPapaparseWorker('URL.createObjectURL(new Blob(["evil"]))')).toMatch(
+      /createObjectURL/
+    )
+    expect(
+      withoutPapaparseWorker('URL.createObjectURL(new Blob(["var global = x; evil()"]))')
+    ).toMatch(/createObjectURL/)
   })
 })

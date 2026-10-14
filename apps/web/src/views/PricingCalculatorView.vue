@@ -436,7 +436,13 @@ import { locationService } from '../services/locationService'
 import { commodityService } from '../services/commodityService'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
-import { useSnackbar, useDisplayHelpers, useCargoHold, useCalculatorImport } from '../composables'
+import {
+  useClipboard,
+  useSnackbar,
+  useDisplayHelpers,
+  useCargoHold,
+  useCalculatorImport,
+} from '../composables'
 import type { CargoHoldRow } from '../composables'
 import KeyValueAutocomplete, { type KeyValueItem } from '../components/KeyValueAutocomplete.vue'
 import CommodityIcon from '../components/CommodityIcon.vue'
@@ -459,6 +465,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 const { snackbar, showSnackbar } = useSnackbar()
+const { copy } = useClipboard()
 const { getLocationDisplay, getCommodityDisplay } = useDisplayHelpers()
 
 // Get commodity object for icon display
@@ -867,11 +874,9 @@ const copyAmounts = async () => {
     .map(r => `${r.commodityTicker} ${r.amount}`)
     .join('\n')
 
-  try {
-    await navigator.clipboard.writeText(text)
+  if (await copy(text)) {
     showSnackbar('Copied to clipboard')
-  } catch (error) {
-    console.error('Failed to copy to clipboard', error)
+  } else {
     showSnackbar('Failed to copy to clipboard', 'error')
   }
 }
@@ -886,11 +891,9 @@ const copyAll = async () => {
   })
   const csv = `Ticker,Amount,Unit Price,Total\n${lines.join('\n')}\nTotal,,,${grandTotal.value}`
 
-  try {
-    await navigator.clipboard.writeText(csv)
+  if (await copy(csv)) {
     showSnackbar('Copied to clipboard')
-  } catch (error) {
-    console.error('Failed to copy to clipboard', error)
+  } else {
     showSnackbar('Failed to copy to clipboard', 'error')
   }
 }

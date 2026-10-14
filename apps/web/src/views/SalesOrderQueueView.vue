@@ -368,13 +368,14 @@ import {
   type SalesSlipDocument,
 } from '../services/api'
 import { useUserStore } from '../stores/user'
-import { useSnackbar, useUrlState } from '../composables'
+import { useClipboard, useSnackbar, useUrlState } from '../composables'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import CommodityDisplay from '../components/CommodityDisplay.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const { snackbar, showSnackbar } = useSnackbar()
+const { copy } = useClipboard()
 
 const canCreate = computed(() => userStore.hasPermission(PERMISSIONS.SALES_ORDERS_CREATE))
 const canClaim = computed(() => userStore.hasPermission(PERMISSIONS.SALES_ORDERS_CLAIM))
@@ -548,11 +549,9 @@ const copySlip = async () => {
       : null,
     `Total\t\t\t${doc.total} ${doc.currency ?? ''}`,
   ].filter((l): l is string => l !== null)
-  try {
-    await navigator.clipboard.writeText(parts.join('\n'))
+  if (await copy(parts.join('\n'))) {
     showSnackbar('Sales slip copied to clipboard')
-  } catch (error) {
-    console.error('Failed to copy sales slip', error)
+  } else {
     showSnackbar('Failed to copy sales slip', 'error')
   }
 }

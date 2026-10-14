@@ -14,6 +14,10 @@
       "types": "./dist/xit/index.d.ts",
       "import": "./dist/xit/index.js"
     },
+    "./xit/paste": {
+      "types": "./dist/xit/paste/index.d.ts",
+      "import": "./dist/xit/paste/index.js"
+    },
     "./list": {
       "types": "./dist/list/index.d.ts",
       "import": "./dist/list/index.js"
@@ -31,8 +35,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@types/papaparse": "^5.5.2",
     "@vitest/coverage-v8": "^4.0.15",
     "typescript": "~5.3.0",
     "vitest": "^4.0.14"
+  },
+  "dependencies": {
+    "papaparse": "^5.7.0"
   }
 }

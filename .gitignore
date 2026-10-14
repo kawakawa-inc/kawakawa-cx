@@ -67,3 +67,5 @@ packages/client/src/*.ts
 
 # dev notes
 *.dev-only.*
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

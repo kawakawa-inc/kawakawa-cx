@@ -298,6 +298,12 @@ INSERT INTO fio_inventory (user_storage_id, commodity_ticker, quantity) VALUES
   (18, 'RAT', 6000);
 
 -- ==================== SELL ORDERS (100 orders) ====================
+-- Most prices have at most 3 significant figures, which the XIT Paste parser
+-- accepts as-is. These have more, so buying them from the market and submitting
+-- the invoice shows the XIT Paste Up/Reset/Down rounding group (refined-prun#247):
+--   3 DW 120.50 (alice, BEN)      8 MCG 421.50 (bob, ANT)    55 RCO 2234.00 (bob, ANT)
+--  22 FLX 65.75 (ethan, MOR)     27 BDE 279.90 (fiona, ANT) 31 MFL 683.40 (george, HRT)
+-- Each seller has FIO inventory of the item, so the listing shows as available.
 INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, currency, order_type, limit_mode, limit_quantity) VALUES
   -- Alice's sell orders (Lead)
   (1, 2, 'H2O', 'BEN', 50.00, 'CIS', 'internal', 'max_sell', 2000),
@@ -308,7 +314,7 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   (6, 2, 'SI', 'MOR', 180.00, 'CIS', 'internal', 'max_sell', 3000),
   -- Bob's sell orders (Lead)
   (7, 3, 'LST', 'ANT', 35.00, 'NCC', 'internal', 'none', NULL),
-  (8, 3, 'MCG', 'ANT', 420.00, 'CIS', 'internal', 'reserve', 1000),
+  (8, 3, 'MCG', 'ANT', 421.50, 'CIS', 'internal', 'reserve', 1000),
   (9, 3, 'GL', 'ANT', 95.00, 'CIS', 'partner', 'none', NULL),
   (10, 3, 'HE', 'KW-688c', 150.00, 'ICA', 'internal', 'none', NULL),
   (11, 3, 'NE', 'KW-688c', 280.00, 'CIS', 'internal', 'max_sell', 1000),
@@ -325,18 +331,18 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   (20, 5, 'GRN', 'BEN', 42.00, 'CIS', 'internal', 'none', NULL),
   (21, 5, 'HCP', 'ZV-194f', 850.00, 'CIS', 'internal', 'max_sell', 800),
   -- Ethan's sell orders (Member)
-  (22, 6, 'FLX', 'MOR', 65.00, 'CIS', 'internal', 'none', NULL),
+  (22, 6, 'FLX', 'MOR', 65.75, 'CIS', 'internal', 'none', NULL),
   (23, 6, 'OFF', 'MOR', 380.00, 'AIC', 'internal', 'none', NULL),
   (24, 6, 'PWO', 'MOR', 195.00, 'CIS', 'internal', 'reserve', 500),
   -- Fiona's sell orders (Member)
   (25, 7, 'BSE', 'ANT', 125.00, 'CIS', 'internal', 'none', NULL),
   (26, 7, 'BBH', 'ANT', 340.00, 'NCC', 'internal', 'max_sell', 1500),
-  (27, 7, 'BDE', 'ANT', 280.00, 'CIS', 'internal', 'none', NULL),
+  (27, 7, 'BDE', 'ANT', 279.90, 'CIS', 'internal', 'none', NULL),
   (28, 7, 'HE3', 'LS-300a', 4500.00, 'CIS', 'internal', 'reserve', 200),
   (29, 7, 'AMM', 'LS-300a', 55.00, 'ICA', 'internal', 'none', NULL),
   -- George's sell orders (Member)
   (30, 8, 'MFK', 'HRT', 520.00, 'CIS', 'internal', 'none', NULL),
-  (31, 8, 'MFL', 'HRT', 680.00, 'CIS', 'internal', 'max_sell', 1000),
+  (31, 8, 'MFL', 'HRT', 683.40, 'CIS', 'internal', 'max_sell', 1000),
   (32, 8, 'MFE', 'HRT', 890.00, 'AIC', 'internal', 'none', NULL),
   -- Hannah's sell orders (Member)
   (33, 9, 'TCL', 'BEN', 750.00, 'CIS', 'internal', 'reserve', 500),
@@ -368,7 +374,7 @@ INSERT INTO sell_orders (id, user_id, commodity_ticker, location_id, price, curr
   -- Additional sell orders to reach ~100
   (53, 2, 'OVE', 'BEN', 190.00, 'AIC', 'internal', 'none', NULL),
   (54, 2, 'COF', 'BEN', 380.00, 'CIS', 'partner', 'max_sell', 200),
-  (55, 3, 'RCO', 'ANT', 2200.00, 'CIS', 'internal', 'none', NULL),
+  (55, 3, 'RCO', 'ANT', 2234.00, 'CIS', 'internal', 'none', NULL),
   (56, 3, 'AR', 'KW-688c', 125.00, 'ICA', 'internal', 'none', NULL),
   (57, 4, 'H', 'ZV-759i', 18.00, 'CIS', 'internal', 'none', NULL),
   (58, 5, 'HMS', 'ZV-194f', 650.00, 'NCC', 'internal', 'reserve', 400),
@@ -669,9 +675,18 @@ INSERT INTO invoices (id, user_id, counterparty_user_id, status, name, submitted
   -- Fiona drafting a buy from Ivan (not yet submitted)
   (4, 7, 10, 'draft', 'ARC Industrials', NULL),
   -- Alice bought FE + AL from trade partner Nora (fulfilled 10 days ago)
-  (5, 2, 15, 'fulfilled', 'Partner FE/AL Order', NOW() - INTERVAL '10 days');
+  (5, 2, 15, 'fulfilled', 'Partner FE/AL Order', NOW() - INTERVAL '10 days'),
+  -- Invoices 6-8 exercise the XIT Paste button in the contract breakdown
+  -- (ContractBreakdown.vue). The XIT parser caps prices at 3 significant figures
+  -- (refined-prun#247), so each one covers a different case. Log in as alice.
+  -- Alice buying gold + metals from Charlie: one contract needs rounding, two are clean
+  (6, 2, 4, 'pending', 'HUB Gold Run', NOW() - INTERVAL '3 hours'),
+  -- Bob buying DW + H2O from Alice: a contract that needs rounding, on the sell side
+  (7, 3, 2, 'pending', 'BEN Drinks', NOW() - INTERVAL '2 hours'),
+  -- Alice buying SI from Bob at two prices: rounding cannot fix it
+  (8, 2, 3, 'pending', 'KW-688c Mixed Pricing', NOW() - INTERVAL '1 hour');
 
-SELECT setval(pg_get_serial_sequence('invoices', 'id'), 5, true);
+SELECT setval(pg_get_serial_sequence('invoices', 'id'), 8, true);
 
 -- ==================== INVOICE LINE ITEMS ====================
 -- commodity_ticker, location_id, quantity, unit_price, currency are snapshots at time of adding
@@ -692,7 +707,29 @@ INSERT INTO invoice_line_items (id, invoice_id, sell_order_id, buy_order_id, com
   (9,  5, 42,    1, 'FE',  'BEN',  3000,    82.00, 'CIS'),
   (10, 5, 43,    2, 'AL',  'BEN',  2000,   215.00, 'NCC');
 
-SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), 10, true);
+-- Invoices 6-8: XIT Paste cases. The money arithmetic is in the comments so a
+-- reviewer can check the UI against them.
+INSERT INTO invoice_line_items (id, invoice_id, sell_order_id, buy_order_id, commodity_ticker, location_id, quantity, unit_price, currency, price_list_code, notes) VALUES
+  -- Invoice 6, HUB CIS contract: needs rounding. AU comes from the TEST price list
+  -- (8500 +10% +5% = 9817.50, 5 sig figs). Up = 9820 (+50.00), Down = 9810 (-150.00).
+  (11, 6, 12, NULL, 'AU',  'HUB',       20,  9817.50, 'CIS', 'TEST', 'TEST list price incl. adjustments'),
+  (12, 6, 14, NULL, 'CU',  'HUB',      300,   450.00, 'CIS', NULL, NULL),
+  (13, 6, 93, NULL, 'AR',  'HUB',      500,   128.00, 'CIS', NULL, NULL),
+  -- Invoice 6, ZV-759i CIS contract: clean, copies directly
+  (14, 6, 17, NULL, 'N',   'ZV-759i', 1000,    32.00, 'CIS', NULL, NULL),
+  (15, 6, 57, NULL, 'H',   'ZV-759i', 2000,    18.00, 'CIS', NULL, NULL),
+  -- Invoice 6, HUB AIC contract: clean, separate currency
+  (16, 6, 69, NULL, 'RAT', 'HUB',      500,    94.00, 'AIC', NULL, NULL),
+  -- Invoice 7, BEN CIS: alice's view is a SELL contract. DW's listing is 120.50 (4 sig figs).
+  -- Up = 121 (+250.00), Down = 120 (-250.00).
+  (17, 7,  3, NULL, 'DW',  'BEN',      500,   120.50, 'CIS', NULL, NULL),
+  (18, 7,  1, NULL, 'H2O', 'BEN',     1000,    50.00, 'CIS', NULL, NULL),
+  -- Invoice 8, KW-688c CIS: SI at two prices in one contract. XIT allows one price per
+  -- ticker, so the button is disabled and no rounding is offered.
+  (19, 8, 82, NULL, 'SI',  'KW-688c',  400,   182.00, 'CIS', NULL, NULL),
+  (20, 8, 82, NULL, 'SI',  'KW-688c',  200,   175.00, 'CIS', NULL, 'Negotiated volume discount');
+
+SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), 20, true);
 
 -- Summary
 SELECT 'Mock data loaded successfully!' as status;

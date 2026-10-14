@@ -53,6 +53,7 @@
 import { ref, reactive, watch, onMounted } from 'vue'
 import { api } from '../services/api'
 import { usePageState } from '../composables/usePageState'
+import { useClipboard } from '../composables/useClipboard'
 import { useSettingsStore } from '../stores/settings'
 import CorpOverviewPanel from '../components/BurnRepair/CorpOverviewPanel.vue'
 import type {
@@ -107,6 +108,7 @@ const corpBuildings = ref<BurnRepairCorpBuildingsResponse | null>(null)
 const corpWorkforce = ref<BurnRepairCorpWorkforceResponse | null>(null)
 
 const snackbar = reactive({ show: false, message: '', color: 'success' })
+const { copy } = useClipboard()
 
 // ==================== DATA LOADING ====================
 
@@ -239,12 +241,10 @@ function toCsvCell(v: unknown): string {
 
 async function copyCsv(headers: string[], rows: unknown[][], successLabel = 'CSV'): Promise<void> {
   const lines = [headers.map(toCsvCell).join(','), ...rows.map(r => r.map(toCsvCell).join(','))]
-  try {
-    await navigator.clipboard.writeText(lines.join('\n'))
+  if (await copy(lines.join('\n'))) {
     snackbar.message = `${successLabel} copied to clipboard`
     snackbar.color = 'success'
-  } catch (e) {
-    console.error('Clipboard write failed', e)
+  } else {
     snackbar.message = 'Failed to copy to clipboard'
     snackbar.color = 'error'
   }

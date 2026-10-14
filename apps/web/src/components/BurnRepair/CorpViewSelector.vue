@@ -188,6 +188,7 @@
 import { computed, ref, watch } from 'vue'
 import type { CorpOverviewView, FilterPrivacy } from '@kawakawa/types'
 import { api } from '../../services/api'
+import { useClipboard } from '../../composables'
 import { BUILT_IN_ALL_VIEW, isBuiltInViewId, normalizeView } from './viewTemplates'
 
 const props = defineProps<{
@@ -207,6 +208,8 @@ const emit = defineEmits<{
   (e: 'rename', name: string): void
   (e: 'snackbar', message: string, color?: string): void
 }>()
+
+const { copy } = useClipboard()
 
 const menuOpen = ref(false)
 const tab = ref<'mine' | 'browse'>('mine')
@@ -291,11 +294,10 @@ function pickView(id: number): void {
 }
 
 async function copyLink(id: number): Promise<void> {
-  try {
-    const url = `${window.location.origin}${window.location.pathname}?view=${id}`
-    await navigator.clipboard.writeText(url)
+  const url = `${window.location.origin}${window.location.pathname}?view=${id}`
+  if (await copy(url)) {
     emit('snackbar', 'Link copied to clipboard', 'success')
-  } catch {
+  } else {
     emit('snackbar', 'Failed to copy link', 'error')
   }
 }

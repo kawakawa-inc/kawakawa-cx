@@ -352,6 +352,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, onMounted, watch } from 'vue'
 import { useShoppingListStore } from '../stores/shoppingList'
+import { useClipboard } from '../composables'
 import { useUserStore } from '../stores/user'
 import { useSettingsStore } from '../stores/settings'
 import { commodityService } from '../services/commodityService'
@@ -396,6 +397,7 @@ const emit = defineEmits<{
 }>()
 
 const shoppingListStore = useShoppingListStore()
+const { copy } = useClipboard()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 
@@ -777,17 +779,7 @@ const copyList = async () => {
     .map(([ticker, quantity]) => `${ticker} ${quantity}`)
     .join('\n')
 
-  try {
-    await navigator.clipboard.writeText(lines)
-  } catch {
-    // Fallback for older browsers
-    const textarea = document.createElement('textarea')
-    textarea.value = lines
-    document.body.appendChild(textarea)
-    textarea.select()
-    document.execCommand('copy')
-    document.body.removeChild(textarea)
-  }
+  await copy(lines)
 }
 
 // Handle clear

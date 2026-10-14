@@ -669,9 +669,18 @@ INSERT INTO invoices (id, user_id, counterparty_user_id, status, name, submitted
   -- Fiona drafting a buy from Ivan (not yet submitted)
   (4, 7, 10, 'draft', 'ARC Industrials', NULL),
   -- Alice bought FE + AL from trade partner Nora (fulfilled 10 days ago)
-  (5, 2, 15, 'fulfilled', 'Partner FE/AL Order', NOW() - INTERVAL '10 days');
+  (5, 2, 15, 'fulfilled', 'Partner FE/AL Order', NOW() - INTERVAL '10 days'),
+  -- Invoices 6-8 exercise the XIT Paste button in the contract breakdown
+  -- (ContractBreakdown.vue). The XIT parser caps prices at 3 significant figures
+  -- (refined-prun#247), so each one covers a different case. Log in as alice.
+  -- Alice buying gold + metals from Charlie: one contract needs rounding, two are clean
+  (6, 2, 4, 'pending', 'HUB Gold Run', NOW() - INTERVAL '3 hours'),
+  -- Bob buying DW + H2O from Alice: a contract that needs rounding, on the sell side
+  (7, 3, 2, 'pending', 'BEN Drinks', NOW() - INTERVAL '2 hours'),
+  -- Alice buying SI from Bob at two prices: rounding cannot fix it
+  (8, 2, 3, 'pending', 'KW-688c Mixed Pricing', NOW() - INTERVAL '1 hour');
 
-SELECT setval(pg_get_serial_sequence('invoices', 'id'), 5, true);
+SELECT setval(pg_get_serial_sequence('invoices', 'id'), 8, true);
 
 -- ==================== INVOICE LINE ITEMS ====================
 -- commodity_ticker, location_id, quantity, unit_price, currency are snapshots at time of adding
@@ -692,7 +701,29 @@ INSERT INTO invoice_line_items (id, invoice_id, sell_order_id, buy_order_id, com
   (9,  5, 42,    1, 'FE',  'BEN',  3000,    82.00, 'CIS'),
   (10, 5, 43,    2, 'AL',  'BEN',  2000,   215.00, 'NCC');
 
-SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), 10, true);
+-- Invoices 6-8: XIT Paste cases. The money arithmetic is in the comments so a
+-- reviewer can check the UI against them.
+INSERT INTO invoice_line_items (id, invoice_id, sell_order_id, buy_order_id, commodity_ticker, location_id, quantity, unit_price, currency, price_list_code, notes) VALUES
+  -- Invoice 6, HUB CIS contract: needs rounding. AU comes from the TEST price list
+  -- (8500 +10% +5% = 9817.50, 5 sig figs). Up = 9820 (+50.00), Down = 9810 (-150.00).
+  (11, 6, 12, NULL, 'AU',  'HUB',       20,  9817.50, 'CIS', 'TEST', 'TEST list price incl. adjustments'),
+  (12, 6, 14, NULL, 'CU',  'HUB',      300,   450.00, 'CIS', NULL, NULL),
+  (13, 6, 93, NULL, 'AR',  'HUB',      500,   128.00, 'CIS', NULL, NULL),
+  -- Invoice 6, ZV-759i CIS contract: clean, copies directly
+  (14, 6, 17, NULL, 'N',   'ZV-759i', 1000,    32.00, 'CIS', NULL, NULL),
+  (15, 6, 57, NULL, 'H',   'ZV-759i', 2000,    18.00, 'CIS', NULL, NULL),
+  -- Invoice 6, HUB AIC contract: clean, separate currency
+  (16, 6, 69, NULL, 'RAT', 'HUB',      500,    94.00, 'AIC', NULL, NULL),
+  -- Invoice 7, BEN CIS: alice's view is a SELL contract. DW's listing is 120.50 (4 sig figs).
+  -- Up = 121 (+250.00), Down = 120 (-250.00).
+  (17, 7,  3, NULL, 'DW',  'BEN',      500,   120.50, 'CIS', NULL, NULL),
+  (18, 7,  1, NULL, 'H2O', 'BEN',     1000,    50.00, 'CIS', NULL, NULL),
+  -- Invoice 8, KW-688c CIS: SI at two prices in one contract. XIT allows one price per
+  -- ticker, so the button is disabled and no rounding is offered.
+  (19, 8, 82, NULL, 'SI',  'KW-688c',  400,   182.00, 'CIS', NULL, NULL),
+  (20, 8, 82, NULL, 'SI',  'KW-688c',  200,   175.00, 'CIS', NULL, 'Negotiated volume discount');
+
+SELECT setval(pg_get_serial_sequence('invoice_line_items', 'id'), 20, true);
 
 -- Summary
 SELECT 'Mock data loaded successfully!' as status;
